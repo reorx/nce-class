@@ -24,7 +24,7 @@ NCE Class 帮助英语老师在课堂上对学生分组、即时加减分（"加
 **纳入 M1：**
 - 老师端 · 管理界面：班级 / 学生 / 分组方案 / 家长邀请 / 上课记录。
 - 老师端 · 课前配置：选班 → 本节课信息 → 选分组方案 → 开始课堂。
-- 老师端 · 课堂界面：分组看板、加减分、背书检查、作业检查、调组、撤销、结束课堂生成 recap。
+- 老师端 · 课堂界面：分组看板、加减分、背书检查、作业检查、出勤点名、调组、撤销、结束课堂生成 recap。
 - 老师端 · 学生成长档案（持续追踪）。
 - 学生端 H5：加入班级 onboarding；课堂 recap 查看。
 
@@ -85,7 +85,7 @@ TemplateMembership(id, templateGroupId, studentId)
 
 ClassSession(id, classId, teacherId, date, lessonNumber?, lessonTitle?, status[ongoing|ended], startedAt, endedAt)
 SessionGroup(id, sessionId, name, emoji, orderIndex)   // 开课时由模板快照生成，可课中调整
-SessionMembership(id, sessionId, studentId, sessionGroupId?)  // sessionGroupId 为空 = 未分组/缺席，本节不计分
+SessionMembership(id, sessionId, studentId, sessionGroupId?, attendance[present|absent])  // 默认 present；attendance=absent 或 sessionGroupId 为空 = 本节不计分
 
 ScoreEvent(id, sessionId, targetType[group|student], targetId,
            sessionGroupId,   // 学生事件记录"当时所在组"，组事件记录该组
@@ -113,7 +113,7 @@ CheckRecord(id, sessionId, studentId, type[recitation|homework],
   - **亮眼** = 本节个人净加分 ≥ 2 的学生（默认阈值 2；若希望"取前 N 名"亦可配置，但 M1 默认用固定阈值，保证确定性）。
 - **撤销**：撤销最近一次 ScoreEvent（课堂界面 dock 提供）。
 - 背书 / 作业为**定性标签**，本身不直接加减分；老师若要因其表现奖惩，仍走独立的 ±1。数据完整留存，供日后成绩评定纳入考量。
-- 缺席 / 未分组（SessionMembership.sessionGroupId 为空）的学生本节不参与计分。
+- 未出勤（attendance=absent）或未分组（sessionGroupId 为空）的学生本节不参与计分。出勤状态可在课前配置的缺席暂存区，或课堂界面的「出勤」点名 view 中切换（见 §7.3），二者共享同一份出勤状态。
 
 ## 7. 功能与界面
 
@@ -136,20 +136,20 @@ CheckRecord(id, sessionId, studentId, type[recitation|homework],
 - 顶部：返回班级列表 + 班级名 + 学生数。
 - **本节课**（可选）：课次号 + 课题，进入 recap 与档案。
 - **分组方案**：选已存方案（默认 / 其他）或 `+ 新建分组`；下方预览各组成员，可拖拽微调。
-- **未分组 / 今日缺席**暂存区：缺席学生拖入；留在此处则本节不计分。
+- **未分组 / 今日缺席**暂存区：缺席学生拖入；留在此处则本节不计分。出勤也可在课堂界面的「出勤」点名 view 中调整（见 §7.3），二者共享同一出勤状态。
 - `开始课堂 →` 进入课堂界面（按当前分组生成 SessionGroup 快照）。
 
 ### 7.3 老师端 · 课堂界面（核心，投屏）
 
-整体：**看板列**（每组一列，列头含组名/emoji + 组分）+ 顶部信息条（班级、课次、计时）+ 底部 **dock**。dock 含 **view 切换**：`上课`（默认）/ `背书检查` / `作业检查` / `调组`，以及 `撤销`、`结束课堂`。四个 view 共用同一套数据，仅呈现/交互不同——一致性强。
+整体：**看板列**（每组一列，列头含组名/emoji + 组分）+ 顶部信息条（班级、课次、计时）+ 底部 **dock**。dock 左侧含 **view 切换** tab：`上课`（默认）/ `背书检查` / `作业检查` / `调组`，tab 组左侧另置独立的 `出勤` 按钮（快捷点名，非常态教学 view，故不并入 tab）；dock 右侧为 `撤销`、`结束课堂`。各 view 共用同一套数据，仅呈现/交互不同——一致性强。
 
 **上课 view**
 - 每组一列，列内学生卡（头像 + 名字 + 本节个人分）；卡上两个状态 label：`背`（背书）/ `作`（作业），按状态着色（统一配色见 §8：绿/黄/蓝/红，灰=未检查）。
-- 点**学生卡** → 屏幕**居中浮窗**：
+- 投屏常态**清晰不虚化**；点**学生卡**才在屏幕**居中弹出浮窗**、背景轻虚化聚焦（清晰版与浮窗版为同一界面的两个状态，浮窗是就地交互而非独立页面）：
   - 加分区：等宽大按钮 `−1`（红）/ `+1⭐`（绿），可连点，实时显示本次累计（提示"个人+N，小组同步+N"）。
   - `背书`区：已背完 / 背完部分 / 没背（当前高亮）。
   - `作业`区：优秀 / 完成 / 没交（当前高亮）。
-  - 浮窗**停留**：加分连点、背书/作业选完高亮，点"完成"或点窗外关闭。
+  - 浮窗**停留**：加分连点、背书/作业选完高亮，点"完成"或点窗外关闭；关闭后背景恢复清晰。
 - 点**列头** → 给整组 +1⭐（快捷）；列头亦提供 `−`（组级 −1）。组级加减分对应 `ScoreEvent(targetType=group)`，只计入组分、不分摊到个人。
 
 **背书检查 view / 作业检查 view**
@@ -159,6 +159,11 @@ CheckRecord(id, sessionId, studentId, type[recitation|homework],
 - 每段：标题（配色圆点）+ 人数；下方学生以**带头像的 badge** 横向流式排列（与课堂卡片风格一致），badge 按所在段着色，保留小组号小标签做参考。
 - 点 badge → 居中浮窗选状态 → badge 归入对应段。顶部显示总进度（如"已检查 11/16"）。
 - 作业检查可选**盖章式批改**：先选一个章（如"完成"），再连点学生快速盖（大批同状态时提速）。此为可延后的 nice-to-have，非 M1 关键路径。
+
+**出勤点名 view**
+- 由 dock 左下角的独立 `出勤` 按钮进入；结构与背书/作业检查同构（状态分段 + 带头像 badge 的横向流式名单），但只有两段：`已到勤` / `未到勤`。
+- **默认全员已到勤**。点「已到勤」段的学生 → 移入「未到勤」；点「未到勤」的学生可移回。顶部显示 `已到勤 N / 总数`，全员到齐时未到勤段显示占位提示。
+- 未到勤即写 `SessionMembership.attendance=absent`，本节不参与计分（见 §6）；与课前配置的缺席暂存区共享同一出勤状态，课中可随时改。
 
 **调组**
 - 拖拽学生卡在组间移动；课中可随时调整。调组只影响后续事件归属，不回溯历史组分。
@@ -217,7 +222,7 @@ CheckRecord(id, sessionId, studentId, type[recitation|homework],
 
 1. **基础**：数据模型（Drizzle schema，全程带 `orgId`）+ 迁移 + 自建认证（用户名+密码，预留微信登录）+ 存储抽象层接入。
 2. **老师管理端**：班级 / 学生（含通用邀请链接、删除合并）/ 分组方案 / 班级详情。
-3. **课堂引擎**：开始课堂（分组快照）→ 四视图（上课/背书检查/作业检查/调组）→ 事件流计分 → 撤销 → 结束课堂。
+3. **课堂引擎**：开始课堂（分组快照）→ 四视图（上课/背书检查/作业检查/调组）+ 出勤点名 → 事件流计分 → 撤销 → 结束课堂。
 4. **派生与档案**：组分/个人分/累计总分计算、recap 生成、学生成长档案。
 5. **学生端 H5**：onboarding 自助加入 + 学生专属链接 recap。
 
@@ -225,4 +230,4 @@ CheckRecord(id, sessionId, studentId, type[recitation|homework],
 
 ## 附：界面 mockup
 
-设计阶段的 HTML mockup 位于 `.brainstorming/`（已加入 .gitignore），涵盖：范围总览、课堂主界面+居中浮窗、背书/作业检查 view、课前配置、管理界面、学生成长档案、学生端 H5。
+当前 HTML mockup 位于 `kb/prototypes/`（含 `index.html` 总览导航；早期设计草稿另存于已 gitignore 的 `.brainstorming/`），涵盖：范围总览、课堂主界面（清晰看板 + 点学生卡居中浮窗 + 出勤点名，**已合并为单一界面**）、背书/作业检查 view、课前配置、管理界面、学生成长档案、学生端 H5。

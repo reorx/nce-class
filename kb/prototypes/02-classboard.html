@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>课堂主界面 · 清晰版</title>
+<title>课堂主界面</title>
 <link rel="stylesheet" href="base.css">
 </head>
 <body>
-<h2>课堂主界面（上课 view）· 清晰版</h2>
-<p class="subtitle">无浮窗、不虚化 —— 投屏常态。点学生卡→居中浮窗（见浮窗版）；点列头=整组±1；卡角背/作两标为状态</p>
+<h2>课堂主界面（上课 view）</h2>
+<p class="subtitle">投屏常态：点学生卡 → 屏幕正中弹出浮窗（加/扣分 + 背书 + 作业）；左下「出勤」→ 出勤点名，默认全到，点人变未到</p>
 
 <style>
   .wrap { position:relative; background:#1f2233; border-radius:14px; padding:14px; color:#fff; overflow:hidden;}
@@ -20,7 +20,8 @@
   .gcol-h { display:flex; justify-content:space-between; align-items:center; padding:6px 8px; border-radius:9px; background:#363c5a; margin-bottom:8px;}
   .gcol-h .gname { font-weight:800; font-size:.88rem;}
   .gcol-h .gscore { color:#fbbf24; font-weight:900; font-size:1rem;}
-  .scard { background:#f7f8fc; color:#222; border-radius:10px; padding:7px 9px; margin-bottom:7px; display:flex; align-items:center; gap:8px; position:relative;}
+  .scard { background:#f7f8fc; color:#222; border-radius:10px; padding:7px 9px; margin-bottom:7px; display:flex; align-items:center; gap:8px; position:relative; cursor:pointer;}
+  .scard:hover { outline:2px solid #4f7cff;}
   .scard .av { width:26px; height:26px; border-radius:50%; background:#cfd5e6; flex:none;}
   .scard .nm { font-size:.8rem; font-weight:700; flex:1;}
   .badges { position:absolute; right:6px; top:-7px; display:flex; gap:3px;}
@@ -28,11 +29,66 @@
   .bg.gray{ background:#b7bccb;} .bg.g{ background:#22c55e;} .bg.a{ background:#f59e0b;} .bg.r{ background:#ef4444;}
 
   .dock { margin-top:12px; background:#11131f; border-radius:12px; padding:9px; display:flex; gap:8px; align-items:center; justify-content:space-between;}
+  .dock-left { display:flex; gap:10px; align-items:center;}
+  .dock-right { display:flex; gap:8px;}
   .tabs{ display:flex; background:#2a2e44; border-radius:9px; padding:3px; gap:2px; font-size:.78rem; font-weight:700;}
-  .tabs .t{ color:#aab; padding:6px 13px; border-radius:7px;}
+  .tabs .t{ color:#aab; padding:6px 13px; border-radius:7px; cursor:pointer;}
   .tabs .t.on{ background:#4f7cff; color:#fff;}
-  .dbtn { background:#2a2e44; color:#dfe3f0; padding:7px 12px; border-radius:9px; font-size:.78rem; font-weight:700;}
+  .dbtn { background:#2a2e44; color:#dfe3f0; padding:7px 12px; border-radius:9px; font-size:.78rem; font-weight:700; cursor:pointer;}
   .dbtn.end { background:#ef476f; color:#fff;}
+  .dbtn.attend-btn.on { background:#4f7cff; color:#fff;}
+
+  /* center modal —— 默认隐藏，点学生卡后由 .modal-open 打开 */
+  .veil{ position:absolute; inset:0; background:rgba(8,9,15,.55); display:none;}
+  .modal{ position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:330px; background:#fff; color:#1f2233; border-radius:18px; padding:18px 20px; box-shadow:0 24px 60px rgba(0,0,0,.5); display:none;}
+  .wrap.modal-open .veil,
+  .wrap.modal-open .modal { display:block;}
+  /* 浮窗打开时背景虚化（原浮窗版效果，改为按需触发） */
+  .wrap.modal-open .cols,
+  .wrap.modal-open .dock { filter:blur(1px) brightness(.6);}
+  .mhead{ display:flex; align-items:center; gap:12px; margin-bottom:4px;}
+  .mhead .av{ width:46px; height:46px; border-radius:50%; background:#cfd5e6;}
+  .mhead .nm{ font-size:1.15rem; font-weight:900;}
+  .mhead .mt{ font-size:.72rem; opacity:.55;}
+  .mhead .close{ margin-left:auto; font-size:1.1rem; opacity:.4; cursor:pointer;}
+  .sec{ margin-top:14px;}
+  .sec .lbl{ font-size:.7rem; font-weight:800; opacity:.5; letter-spacing:.05em; margin-bottom:7px;}
+  .scorerow{ display:flex; align-items:center; gap:8px;}
+  .bigplus{ flex:1; background:#22c55e; color:#fff; font-weight:900; font-size:1.15rem; padding:15px 0; border-radius:12px; text-align:center; cursor:pointer;}
+  .bigminus{ flex:1; background:#fdeaea; color:#d64545; font-weight:900; font-size:1.15rem; padding:15px 0; border-radius:12px; text-align:center; cursor:pointer;}
+  .running{ font-size:.72rem; color:#16a34a; font-weight:800; margin-top:6px; text-align:center;}
+  .opts{ display:flex; gap:7px;}
+  .opt{ flex:1; text-align:center; font-size:.82rem; font-weight:700; padding:9px 0; border-radius:10px; background:#f0f1f6; color:#7b8194; border:2px solid transparent; cursor:pointer;}
+  .opt.g{ background:#e7f7ee; color:#1d9a57; border-color:#5fce93;}
+  .opt.a{ background:#fef3e2; color:#d98014; border-color:#f3bc6b;}
+  .opt.r{ background:#fdeaea; color:#d64545; border-color:#ef8d8d;}
+  .opt.bl{ background:#e8eefe; color:#3a5fd0; border-color:#9bb4f5;}
+  .donebtn{ margin-top:16px; width:100%; background:#1f2233; color:#fff; font-weight:800; padding:11px 0; border-radius:12px; text-align:center; cursor:pointer;}
+  .nestnote{ font-size:.64rem; opacity:.5; text-align:center; margin-top:6px;}
+
+  /* 出勤 view —— 与背书/作业检查同构：状态分段 + 人名 badge，点人切换到未到勤 */
+  .attend{ flex:1; display:none; flex-direction:column; background:#2a2e44; border-radius:12px; padding:16px 18px; overflow:auto;}
+  .wrap.attend-open .cols{ display:none;}
+  .wrap.attend-open .attend{ display:flex;}
+  .attend-head{ display:flex; align-items:center; gap:14px; margin-bottom:12px;}
+  .attend-back{ font-size:.8rem; font-weight:700; color:#aab4d4; background:#363c5a; padding:6px 12px; border-radius:8px; cursor:pointer;}
+  .attend-title{ font-size:1.05rem; font-weight:800;}
+  .attend-prog{ margin-left:auto; font-size:.85rem; font-weight:700; color:#c7ccda;}
+  .attend-prog b{ color:#4ade80;}
+  .attend-seg{ padding:14px 0; border-top:1px solid #363c5a;}
+  .attend-seg:first-of-type{ border-top:none;}
+  .attend-seg-h{ font-size:.9rem; font-weight:800; margin-bottom:12px; display:flex; align-items:center; gap:8px; color:#dfe3f0;}
+  .attend-seg-h .dot{ width:10px; height:10px; border-radius:50%;}
+  .attend-seg-h .cnt{ font-size:.76rem; font-weight:700; color:#8b91a8;}
+  .d-present{ background:#22c55e;} .d-absent{ background:#ef4444;}
+  .attend .names{ display:flex; flex-wrap:wrap; gap:10px; min-height:36px;}
+  .attend .b{ display:inline-flex; align-items:center; gap:7px; border-radius:999px; padding:5px 15px 5px 5px; font-size:.9rem; font-weight:700; cursor:pointer; user-select:none;}
+  .attend .b .av{ width:26px; height:26px; border-radius:50%; background:#cfd5e6; flex:none;}
+  #presentNames .b{ background:#e9f8ef; border:1px solid #bfe9cf; color:#15803d;}
+  #absentNames .b{ background:#fdebeb; border:1px solid #f4c4c4; color:#b91c1c;}
+  #absentNames:empty::after{ content:"全部到齐 🎉"; font-size:.82rem; color:#6b728a;}
+  .attend-hint{ margin-top:auto; padding-top:14px; font-size:.72rem; color:#8b91a8;}
+
   /* 自适应屏幕高度：整体撑满，列随之拉高，居中浮窗不被裁切 */
   html, body { height: 100%; }
   body { display: flex; flex-direction: column; min-height: 100vh; }
@@ -41,10 +97,11 @@
   .cols > .gcol { flex: 1; }
 </style>
 
-<div class="wrap">
+<div class="wrap" id="wrap">
   <div class="topbar"><div class="cls">🏫 三年级A班 · 第3课</div><div class="timer">⏱ 12:30</div></div>
 
-  <div class="cols">
+  <!-- 上课 view：学生卡片，点卡片弹浮窗 -->
+  <div class="cols" id="board">
     <div class="gcol">
       <div class="gcol-h"><span class="gname">🦁 第1组</span><span class="gscore">⭐12</span></div>
       <div class="scard"><div class="av"></div><div class="nm">小明</div><div class="badges"><span class="bg g">背</span><span class="bg g">作</span></div></div>
@@ -67,11 +124,151 @@
     </div>
   </div>
 
+  <!-- 出勤 view：默认全部已到勤，点已到勤的人 → 移到未到勤 -->
+  <div class="attend" id="attend">
+    <div class="attend-head">
+      <span class="attend-back" id="attendBack">← 返回上课</span>
+      <div class="attend-title">📝 出勤点名</div>
+      <div class="attend-prog">已到勤 <b id="presentCount">0</b> / <span id="totalCount">0</span></div>
+    </div>
+    <div class="attend-seg">
+      <div class="attend-seg-h"><span class="dot d-present"></span>已到勤 <span class="cnt" id="presentSegCount">0</span></div>
+      <div class="names" id="presentNames"></div>
+    </div>
+    <div class="attend-seg">
+      <div class="attend-seg-h"><span class="dot d-absent"></span>未到勤 <span class="cnt" id="absentSegCount">0</span></div>
+      <div class="names" id="absentNames"></div>
+    </div>
+    <div class="attend-hint">默认全员已到勤 · 点「已到勤」的学生 → 移到「未到勤」；点「未到勤」的学生可移回</div>
+  </div>
+
   <div class="dock">
-    <div class="tabs"><span class="t on">上课</span><span class="t">背书检查</span><span class="t">作业检查</span><span class="t">调组</span></div>
-    <div style="display:flex; gap:8px;"><span class="dbtn">↩︎ 撤销</span><span class="dbtn end">结束课堂</span></div>
+    <div class="dock-left">
+      <span class="dbtn attend-btn" id="attendBtn">📝 出勤</span>
+      <div class="tabs"><span class="t on">上课</span><span class="t">背书检查</span><span class="t">作业检查</span><span class="t">调组</span></div>
+    </div>
+    <div class="dock-right"><span class="dbtn">↩︎ 撤销</span><span class="dbtn end">结束课堂</span></div>
+  </div>
+
+  <!-- center modal（合并自浮窗版） -->
+  <div class="veil" id="veil"></div>
+  <div class="modal" id="modal">
+    <div class="mhead">
+      <div class="av"></div>
+      <div><div class="nm" id="modalName">小红</div><div class="mt" id="modalMeta">第1组 · 上课加分</div></div>
+      <div class="close" id="modalClose">✕</div>
+    </div>
+
+    <div class="sec">
+      <div class="lbl">加分 / 扣分</div>
+      <div class="scorerow">
+        <span class="bigminus">−1</span>
+        <span class="bigplus">+1 ⭐</span>
+      </div>
+      <div class="running">加分同步计入个人分与小组分</div>
+    </div>
+
+    <div class="sec">
+      <div class="lbl">📖 背书</div>
+      <div class="opts" data-single><span class="opt g">已背完</span><span class="opt">背完部分</span><span class="opt">没背</span></div>
+    </div>
+
+    <div class="sec">
+      <div class="lbl">📋 作业</div>
+      <div class="opts" data-single><span class="opt">优秀</span><span class="opt bl">完成</span><span class="opt">没交</span></div>
+    </div>
+
+    <div class="donebtn" id="modalDone">完成</div>
+    <div class="nestnote">点浮窗外空白处也可关闭</div>
   </div>
 </div>
+
+<script>
+  const wrap = document.getElementById('wrap');
+
+  /* ---------- 学生卡 → 居中浮窗 ---------- */
+  const board = document.getElementById('board');
+  const veil = document.getElementById('veil');
+  const modalName = document.getElementById('modalName');
+  const modalMeta = document.getElementById('modalMeta');
+
+  board.addEventListener('click', (e) => {
+    const card = e.target.closest('.scard');
+    if (!card) return;
+    modalName.textContent = card.querySelector('.nm').textContent;
+    const gname = card.closest('.gcol').querySelector('.gname').textContent.trim();
+    modalMeta.textContent = gname + ' · 上课加分';
+    wrap.classList.add('modal-open');
+  });
+
+  const closeModal = () => wrap.classList.remove('modal-open');
+  veil.addEventListener('click', closeModal);
+  document.getElementById('modalClose').addEventListener('click', closeModal);
+  document.getElementById('modalDone').addEventListener('click', closeModal);
+
+  // 浮窗内背书/作业单选高亮
+  document.querySelectorAll('.opts[data-single]').forEach((row) => {
+    row.addEventListener('click', (e) => {
+      const opt = e.target.closest('.opt');
+      if (!opt) return;
+      row.querySelectorAll('.opt').forEach((o) => o.classList.remove('g', 'a', 'r', 'bl'));
+      opt.classList.add('g');
+    });
+  });
+
+  /* ---------- 出勤点名 ---------- */
+  const students = [
+    { name: '小明', group: '🦁 第1组' },
+    { name: '小红', group: '🦁 第1组' },
+    { name: '小刚', group: '🦁 第1组' },
+    { name: '丽丽', group: '🐯 第2组' },
+    { name: '大壮', group: '🐯 第2组' },
+    { name: '军军', group: '🐻 第3组' },
+    { name: '欣欣', group: '🐻 第3组' },
+    { name: '悦悦', group: '🦊 第4组' },
+  ].map((s) => ({ ...s, present: true })); // 默认全部已到勤
+
+  const attend = document.getElementById('attend');
+  const presentNames = document.getElementById('presentNames');
+  const absentNames = document.getElementById('absentNames');
+  const presentCount = document.getElementById('presentCount');
+  const presentSegCount = document.getElementById('presentSegCount');
+  const absentSegCount = document.getElementById('absentSegCount');
+  document.getElementById('totalCount').textContent = students.length;
+
+  const badge = (s, i) => `<span class="b" data-idx="${i}"><span class="av"></span>${s.name}</span>`;
+
+  function renderAttend() {
+    const present = [], absent = [];
+    students.forEach((s, i) => (s.present ? present : absent).push(badge(s, i)));
+    presentNames.innerHTML = present.join('');
+    absentNames.innerHTML = absent.join('');
+    presentCount.textContent = present.length;
+    presentSegCount.textContent = present.length;
+    absentSegCount.textContent = absent.length;
+  }
+
+  attend.addEventListener('click', (e) => {
+    const b = e.target.closest('.b');
+    if (!b) return;
+    const i = +b.dataset.idx;
+    students[i].present = !students[i].present; // 已到勤 ⇄ 未到勤
+    renderAttend();
+  });
+
+  const attendBtn = document.getElementById('attendBtn');
+  attendBtn.addEventListener('click', () => {
+    const open = wrap.classList.toggle('attend-open');
+    attendBtn.classList.toggle('on', open);
+    if (open) renderAttend();
+  });
+  document.getElementById('attendBack').addEventListener('click', () => {
+    wrap.classList.remove('attend-open');
+    attendBtn.classList.remove('on');
+  });
+
+  renderAttend();
+</script>
 
 </body>
 </html>
