@@ -221,7 +221,7 @@ function ClassCard({ c, ci }: { c: ClassListItem; ci: number }) {
       <div style={{ height: 1, background: '#eef0f3', margin: '15px 0 13px' }} />
       <div style={{ display: 'flex', gap: 9 }}>
         <Link
-          to={`/classes/${c.id}`}
+          to={`/classes/${c.id}/classroom`}
           style={{
             flex: 1,
             display: 'flex',

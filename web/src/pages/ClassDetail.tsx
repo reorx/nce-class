@@ -58,9 +58,8 @@ export function ClassDetail({ me }: { me: Me | null }) {
               {d?.studentCount ?? 0} 名学生 · {d?.groupCount ?? 0} 个分组 · 负责老师 {d?.teacherName ?? ''}
             </div>
           </div>
-          <a
-            href="#"
-            onClick={(e) => e.preventDefault()}
+          <Link
+            to={`/classes/${id}/classroom`}
             style={{
               marginLeft: 'auto',
               height: 40,
@@ -78,7 +77,7 @@ export function ClassDetail({ me }: { me: Me | null }) {
             }}
           >
             <span style={{ fontSize: 9 }}>▶</span>开始上课
-          </a>
+          </Link>
         </div>
 
         <div style={{ display: 'flex', gap: 2, borderBottom: '1px solid #ebedf1', marginBottom: 22 }}>

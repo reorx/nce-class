@@ -3,6 +3,7 @@ import { Route, Routes } from 'react-router-dom';
 import { api, type Me } from './lib/api';
 import { ClassDetail } from './pages/ClassDetail';
 import { ClassList } from './pages/ClassList';
+import { Classroom } from './pages/Classroom';
 import { Teachers } from './pages/Teachers';
 
 export function App() {
@@ -17,6 +18,7 @@ export function App() {
     <Routes>
       <Route path="/" element={<ClassList me={me} />} />
       <Route path="/classes/:id" element={<ClassDetail me={me} />} />
+      <Route path="/classes/:id/classroom" element={<Classroom />} />
       <Route path="/teachers" element={<Teachers me={me} />} />
     </Routes>
   );

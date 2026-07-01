@@ -1,6 +1,6 @@
 # AGENTS.md
 
-新概念英语课堂教学辅助系统。当前进度：**M1 · 基础框架 + 老师端班级管理页面**。
+新概念英语课堂教学辅助系统。当前进度：**M1 · 基础框架 + 老师端班级管理页面 + 课堂主界面（前端）**。
 需求/设计以 `kb/plans/2026-06-30-nce-class-m1-prd.md` 为准。设计还原参考 `nce-class-v1-design/*.dc.html`（gitignored）。
 
 ## 结构
@@ -13,8 +13,10 @@ server/   Express + TS · Drizzle ORM + SQLite (better-sqlite3)
   src/auth/password.ts                 自建密码认证 scaffold（预留微信）
   src/storage/                         StorageClient 抽象层（local 实现，Minio/OSS 待接）
   src/server.ts                        REST API
-web/      React + Vite + TS · 老师端桌面 Web（IBM Plex 字体）
+web/      React + Vite + TS · 老师端桌面 Web（管理页 IBM Plex；课堂界面 Nunito/Baloo 2）
   src/pages/{ClassList,ClassDetail,Teachers}.tsx
+  src/pages/Classroom.tsx              课堂主界面：看板/背书/作业/出勤/调组 五视图 + 学生/小组浮窗 + recap
+  src/lib/session.ts (+ .test.ts)      课堂事件流计分派生（sScore/gScore/recap）+ Lesson 3 demo scenario
 ```
 
 ## 开发命令
@@ -25,9 +27,9 @@ pnpm db:reset    # 重建并填充 SQLite mock 数据 → server/data/app.db
 pnpm dev         # server :5177 + web :5173（vite 代理 /api、/uploads）
 ```
 
-单独启动 `pnpm dev:server` / `pnpm dev:web`。类型检查 `pnpm --filter <pkg> exec tsc --noEmit`。
+单独启动 `pnpm dev:server` / `pnpm dev:web`。类型检查 `pnpm --filter <pkg> exec tsc --noEmit`；前端单测 `pnpm --filter web test`（vitest，覆盖计分派生）。
 
-已实现页面：班级列表 `/`；班级详情 `/classes/c1?tab=students|groups|invite|sessions`。
+已实现页面：班级列表 `/`；班级详情 `/classes/c1?tab=students|groups|invite|sessions`；课堂主界面 `/classes/c1/classroom`（「开始上课」入口）。
 API：`/api/me`、`/api/classes`、`/api/classes/:id`。
 
 ## 须知 / 约定
@@ -41,4 +43,5 @@ API：`/api/me`、`/api/classes`、`/api/classes/:id`。
 
 ## 待做（后续阶段）
 
-课前配置 → 课堂四视图引擎 → 成长档案 → 学生端 H5；老师管理页当前仅占位；Minio/OSS 存储实现。
+- **课堂主界面已完成前端**（还原 `课堂主界面.dc.html`，与 `tmp/goal-images/课堂主界面/` 截图一致），但仍是**自包含 demo 态**：状态源自 `lib/session.ts` 的 Lesson 3 场景，未接后端 session 引擎。下一步：课前配置页 → 开始课堂生成 SessionGroup/SessionMembership 快照 → 计分/背书/作业/出勤/调组写入 REST API（真正持久化事件流）。
+- 成长档案 → 学生端 H5；老师管理页当前仅占位；Minio/OSS 存储实现。
