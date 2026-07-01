@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>学生成长档案</title>
+<link rel="stylesheet" href="base.css">
+</head>
+<body>
+<h2>学生成长档案 · 持续追踪</h2>
+<p class="subtitle">从班级名单点进某个学生：累计总分 + 个人分趋势 + 每节课明细（组/组分、个人分、作业、背书）</p>
+
+<style>
+  .scr{ background:#f6f7fb; border:1px solid #e6e8f0; border-radius:14px; padding:18px 20px;}
+  .crumb{ font-size:.82rem; color:#9aa0b0; margin-bottom:14px;}
+  .crumb b{ color:#2b2f3a;}
+  .hero{ background:#fff; border:1px solid #ebedf3; border-radius:12px; padding:16px 18px; display:flex; align-items:center; gap:18px; margin-bottom:14px;}
+  .hero .av{ width:64px; height:64px; border-radius:50%; background:#cfd5e6; flex:none;}
+  .hero .nm{ font-size:1.3rem; font-weight:800;}
+  .hero .cls{ font-size:.82rem; color:#9aa0b0; margin-top:2px;}
+  .stats{ margin-left:auto; display:flex; gap:24px; text-align:center;}
+  .stat .v{ font-size:1.5rem; font-weight:900;}
+  .stat .v.amber{ color:#f59e0b;} .stat .v.green{ color:#16a34a;} .stat .v.red{ color:#dc2626;}
+  .stat .k{ font-size:.72rem; color:#9aa0b0; margin-top:2px;}
+
+  .panel{ background:#fff; border:1px solid #ebedf3; border-radius:12px; padding:14px 16px; margin-bottom:14px;}
+  .lbl{ font-size:.74rem; font-weight:800; color:#9aa0b0; letter-spacing:.04em; margin-bottom:12px;}
+  .spark{ display:flex; align-items:flex-end; gap:8px; height:80px;}
+  .bar{ flex:1; background:linear-gradient(#7aa0ff,#4f7cff); border-radius:5px 5px 0 0; position:relative;}
+  .bar span{ position:absolute; top:-16px; left:0; right:0; text-align:center; font-size:.66rem; color:#6b7280; font-weight:700;}
+  .bar small{ position:absolute; bottom:-16px; left:0; right:0; text-align:center; font-size:.6rem; color:#aab;}
+
+  table{ width:100%; border-collapse:collapse; font-size:.85rem;}
+  th{ text-align:left; font-size:.72rem; color:#9aa0b0; font-weight:800; padding:8px 10px; border-bottom:1px solid #ebedf3;}
+  td{ padding:10px; border-bottom:1px solid #f2f3f7;}
+  .pill{ font-size:.72rem; font-weight:800; padding:2px 9px; border-radius:999px;}
+  .p-grp{ background:#eef3ff; color:#2f5fe0;}
+  .p-plus{ color:#16a34a; font-weight:800;}
+  .p-minus{ color:#dc2626; font-weight:800;}
+  .done{ background:#e9f8ef; color:#15803d;} .part{ background:#fef5e1; color:#b45309;} .no{ background:#fdebeb; color:#b91c1c;}
+  .exc{ background:#e9f8ef; color:#15803d;} .fin{ background:#e7eefe; color:#1d4ed8;} .miss{ background:#fdebeb; color:#b91c1c;}
+</style>
+
+<div class="scr">
+  <div class="crumb">班级 / 三年级A班 / <b>小明</b></div>
+
+  <div class="hero">
+    <div class="av"></div>
+    <div><div class="nm">小明</div><div class="cls">三年级A班 · 已上 12 节课</div></div>
+    <div class="stats">
+      <div class="stat"><div class="v amber">42</div><div class="k">个人总分</div></div>
+      <div class="stat"><div class="v green">45</div><div class="k">累计加星</div></div>
+      <div class="stat"><div class="v red">3</div><div class="k">累计扣分</div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="lbl">个人分趋势（近 6 节）</div>
+    <div class="spark">
+      <div class="bar" style="height:40%"><span>+1</span><small>第1课</small></div>
+      <div class="bar" style="height:70%"><span>+3</span><small>第2课</small></div>
+      <div class="bar" style="height:20%"><span>0</span><small>第3课</small></div>
+      <div class="bar" style="height:55%"><span>+2</span><small>第4课</small></div>
+      <div class="bar" style="height:85%"><span>+4</span><small>第5课</small></div>
+      <div class="bar" style="height:50%"><span>+2</span><small>第6课</small></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="lbl">每节课明细</div>
+    <table>
+      <tr><th>日期 / 课次</th><th>所在组</th><th>个人分</th><th>作业</th><th>背书</th></tr>
+      <tr>
+        <td>6/28 · 第3课《What's your name?》</td>
+        <td><span class="pill p-grp">🐻 3组 · ⭐15</span></td>
+        <td><span class="p-plus">+2</span></td>
+        <td><span class="pill exc">优秀</span></td>
+        <td><span class="pill done">已背完</span></td>
+      </tr>
+      <tr>
+        <td>6/26 · 第2课《Nice to meet you》</td>
+        <td><span class="pill p-grp">🦁 1组 · ⭐12</span></td>
+        <td><span class="p-plus">+3</span></td>
+        <td><span class="pill fin">完成</span></td>
+        <td><span class="pill part">背完部分</span></td>
+      </tr>
+      <tr>
+        <td>6/24 · 第1课《Hello》</td>
+        <td><span class="pill p-grp">🦁 1组 · ⭐9</span></td>
+        <td><span class="p-minus">−1</span></td>
+        <td><span class="pill miss">没交</span></td>
+        <td><span class="pill no">没背</span></td>
+      </tr>
+    </table>
+  </div>
+</div>
+
+</body>
+</html>

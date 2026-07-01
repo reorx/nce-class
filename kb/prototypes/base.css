@@ -1,0 +1,16 @@
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  margin: 0; padding: 24px; background: #eef0f4; color: #1f2233;
+  -webkit-font-smoothing: antialiased;
+}
+h2 { font-size: 1.4rem; margin: 0 0 4px; }
+.subtitle { color: #6b7280; margin: 0 0 20px; font-size: .9rem; }
+.cap { color: #6b7280; font-size: .82rem; margin-top: 14px; }
+/* generic building blocks a couple fragments rely on */
+.cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.card { background: #fff; border: 1px solid #e6e8f0; border-radius: 14px; overflow: hidden; }
+.card-image { border-bottom: 1px solid #eef0f4; }
+.card-body { padding: 14px 16px; }
+.card-body h3 { margin: 0 0 6px; font-size: 1rem; }
+.card-body p { margin: 0; color: #6b7280; font-size: .85rem; line-height: 1.5; }

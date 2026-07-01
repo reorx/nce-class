@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>学生端 H5</title>
+<link rel="stylesheet" href="base.css">
+</head>
+<body>
+<h2>学生端 H5 · 加入班级 + 课堂 recap</h2>
+<p class="subtitle">微信内打开，家长使用。左：邀请加入；右：每堂课后的回顾</p>
+
+<style>
+  .phones{ display:flex; gap:28px; justify-content:center; flex-wrap:wrap;}
+  .phone{ width:300px; background:#fff; border-radius:26px; border:8px solid #1f2233; overflow:hidden; box-shadow:0 16px 40px rgba(0,0,0,.18);}
+  .wx{ background:#ededed; color:#222; text-align:center; font-size:.8rem; font-weight:700; padding:9px 0; position:relative; border-bottom:1px solid #e0e0e0;}
+  .wx .bk{ position:absolute; left:12px; color:#576b95; font-weight:400;}
+  .pg{ padding:18px 16px;}
+
+  /* onboarding */
+  .invhero{ text-align:center; margin-bottom:18px;}
+  .invhero .tav{ width:54px; height:54px; border-radius:50%; background:#cfd5e6; margin:0 auto 8px;}
+  .invhero .l1{ font-size:.86rem; color:#6b7280;}
+  .invhero .l2{ font-size:1.18rem; font-weight:800; margin-top:3px;}
+  .invhero .l3{ font-size:.78rem; color:#9aa0b0; margin-top:3px;}
+  .upload{ width:104px; height:104px; border-radius:50%; border:2px dashed #c9cedb; background:#fafbff; margin:6px auto 6px; display:flex; flex-direction:column; align-items:center; justify-content:center; color:#9aa0b0; font-size:.78rem; gap:4px;}
+  .upload .ic{ font-size:1.6rem;}
+  .uptip{ text-align:center; font-size:.72rem; color:#aab; margin-bottom:16px;}
+  .field{ margin-bottom:13px;}
+  .field .fl{ font-size:.76rem; font-weight:700; color:#6b7280; margin-bottom:6px;}
+  .field .fi{ border:1px solid #d8dbe4; border-radius:10px; padding:11px 12px; font-size:.9rem; color:#9aa0b0; background:#fbfcfe;}
+  .cta{ background:#07c160; color:#fff; text-align:center; font-weight:800; padding:13px 0; border-radius:11px; font-size:.95rem; margin-top:6px;}
+  .ftip{ text-align:center; font-size:.7rem; color:#aab; margin-top:10px;}
+
+  /* recap */
+  .rhead{ text-align:center; margin-bottom:14px;}
+  .rhead .t{ font-size:1.05rem; font-weight:800;}
+  .rhead .s{ font-size:.76rem; color:#9aa0b0; margin-top:3px;}
+  .mine{ background:linear-gradient(135deg,#fff7e6,#ffeccc); border:1px solid #ffe0b0; border-radius:14px; padding:14px; margin-bottom:16px; text-align:center;}
+  .mine .nm{ font-weight:800; font-size:.95rem; margin-bottom:8px;}
+  .mine .row{ display:flex; justify-content:center; gap:8px; flex-wrap:wrap;}
+  .tag{ font-size:.74rem; font-weight:800; padding:3px 10px; border-radius:999px; background:#fff;}
+  .t-grp{ color:#2f5fe0;} .t-star{ color:#d97706;} .t-hw{ color:#15803d;} .t-rec{ color:#15803d;}
+  .sec{ margin-bottom:16px;}
+  .sec .h{ font-size:.82rem; font-weight:800; margin-bottom:9px;}
+  .rank{ display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:9px; margin-bottom:5px; background:#f6f7fb; font-size:.84rem;}
+  .rank.me{ background:#eef3ff; border:1px solid #c2d3fb; font-weight:800;}
+  .rank .sc{ margin-left:auto; font-weight:800; color:#f59e0b;}
+  .rank .medal{ width:22px; text-align:center;}
+  .names{ display:flex; flex-wrap:wrap; gap:8px;}
+  .b{ display:inline-flex; align-items:center; gap:6px; border-radius:999px; padding:4px 12px 4px 4px; font-size:.82rem; font-weight:700;}
+  .b .av{ width:22px; height:22px; border-radius:50%; background:#cfd5e6;}
+  .b.good{ background:#e9f8ef; color:#15803d;}
+  .b.warn{ background:#fdebeb; color:#b91c1c;}
+</style>
+
+<div class="phones">
+
+  <!-- onboarding -->
+  <div class="phone">
+    <div class="wx"><span class="bk">‹</span>班级邀请</div>
+    <div class="pg">
+      <div class="invhero">
+        <div class="tav"></div>
+        <div class="l1">👩‍🏫 王老师 邀请你加入</div>
+        <div class="l2">三年级A班</div>
+        <div class="l3">阳光英语 · 新概念课堂</div>
+      </div>
+      <div class="upload"><span class="ic">📷</span>上传学生照片</div>
+      <div class="uptip">课堂上展示，方便老师认人</div>
+      <div class="field">
+        <div class="fl">学生名字</div>
+        <div class="fi">请输入孩子的名字</div>
+      </div>
+      <div class="cta">确认加入班级</div>
+      <div class="ftip">加入后可在微信里查看每节课的课堂回顾</div>
+    </div>
+  </div>
+
+  <!-- recap -->
+  <div class="phone">
+    <div class="wx"><span class="bk">‹</span>课堂回顾</div>
+    <div class="pg">
+      <div class="rhead">
+        <div class="t">三年级A班 · 课堂回顾</div>
+        <div class="s">第3课《What's your name?》 · 6/28</div>
+      </div>
+
+      <div class="mine">
+        <div class="nm">⭐ 小明今天的表现</div>
+        <div class="row">
+          <span class="tag t-grp">🐻 第3组</span>
+          <span class="tag t-star">个人 +2⭐</span>
+          <span class="tag t-hw">作业 优秀</span>
+          <span class="tag t-rec">背书 已背完</span>
+        </div>
+      </div>
+
+      <div class="sec">
+        <div class="h">🏆 各组得分</div>
+        <div class="rank me"><span class="medal">🥇</span>🐻 第3组（你的组）<span class="sc">15</span></div>
+        <div class="rank"><span class="medal">🥈</span>🦁 第1组<span class="sc">12</span></div>
+        <div class="rank"><span class="medal">🥉</span>🐯 第2组<span class="sc">9</span></div>
+        <div class="rank"><span class="medal">　</span>🦊 第4组<span class="sc">7</span></div>
+      </div>
+
+      <div class="sec">
+        <div class="h">🌟 今天表现亮眼</div>
+        <div class="names">
+          <span class="b good"><span class="av"></span>小明</span>
+          <span class="b good"><span class="av"></span>丽丽</span>
+          <span class="b good"><span class="av"></span>军军</span>
+        </div>
+      </div>
+
+      <div class="sec">
+        <div class="h">⚠️ 今天被老师提醒</div>
+        <div class="names">
+          <span class="b warn"><span class="av"></span>大壮</span>
+          <span class="b warn"><span class="av"></span>小刚</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

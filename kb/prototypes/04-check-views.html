@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>背书 / 作业检查 view</title>
+<link rel="stylesheet" href="base.css">
+</head>
+<body>
+<h2>背书检查 / 作业检查 · 状态分段 + 人名 badge</h2>
+<p class="subtitle">按状态分段、横向流式；每个人名是带头像的小 badge（与早前版本一致）。点 badge → 居中浮窗选状态</p>
+
+<style>
+  .board { background:#fff; border:1px solid #e6e8f0; border-radius:14px; padding:20px 22px; margin-bottom:18px;}
+  .bh { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px;}
+  .bh .ttl{ font-size:1.1rem; font-weight:800;}
+  .bh .prog{ font-size:.82rem; font-weight:700; color:#6b7280;}
+  .seg{ padding:14px 0; border-top:1px solid #f0f1f5;}
+  .seg:first-of-type{ border-top:none;}
+  .seg-h{ font-size:.92rem; font-weight:800; margin-bottom:11px; display:flex; align-items:center; gap:8px;}
+  .seg-h .dot{ width:10px; height:10px; border-radius:50%;}
+  .seg-h .cnt{ font-size:.76rem; font-weight:700; color:#9aa0b0;}
+  .names{ display:flex; flex-wrap:wrap; gap:10px; }
+
+  /* badge = avatar + name, consistent with earlier version */
+  .b{ display:inline-flex; align-items:center; gap:7px; background:#f5f6fa; border:1px solid #e6e6ee; border-radius:999px; padding:4px 13px 4px 4px; font-size:.9rem; font-weight:700; color:#2b2f3a; cursor:pointer;}
+  .b .av{ width:26px; height:26px; border-radius:50%; background:#cfd5e6; flex:none;}
+
+  /* status accents on the badge */
+  .todo .b{ background:#f3f4f7; color:#6b7280; border:1px dashed #d5d8e0;}
+  .done .b{ background:#e9f8ef; border-color:#bfe9cf; color:#15803d;}
+  .part .b{ background:#fef5e1; border-color:#f3dca6; color:#b45309;}
+  .no   .b{ background:#fdebeb; border-color:#f4c4c4; color:#b91c1c;}
+  .exc  .b{ background:#e9f8ef; border-color:#bfe9cf; color:#15803d;}
+  .fin  .b{ background:#e7eefe; border-color:#c2d3fb; color:#1d4ed8;}
+  .miss .b{ background:#fdebeb; border-color:#f4c4c4; color:#b91c1c;}
+
+  .d-todo{ background:#aeb4c2;} .d-done{ background:#16a34a;} .d-part{ background:#d97706;}
+  .d-no{ background:#dc2626;} .d-exc{ background:#16a34a;} .d-fin{ background:#2563eb;} .d-miss{ background:#dc2626;}
+</style>
+
+<!-- 背书检查 -->
+<div class="board">
+  <div class="bh"><div class="ttl">📖 背书检查</div><div class="prog">已检查 11 / 16</div></div>
+
+  <div class="seg todo">
+    <div class="seg-h"><span class="dot d-todo"></span>未检查 <span class="cnt">5</span></div>
+    <div class="names">
+      <span class="b"><span class="av"></span>小红</span><span class="b"><span class="av"></span>静静</span>
+      <span class="b"><span class="av"></span>欣欣</span><span class="b"><span class="av"></span>悦悦</span>
+      <span class="b"><span class="av"></span>浩浩</span>
+    </div>
+  </div>
+
+  <div class="seg done">
+    <div class="seg-h"><span class="dot d-done"></span>已背完 <span class="cnt">6</span></div>
+    <div class="names">
+      <span class="b"><span class="av"></span>小明</span><span class="b"><span class="av"></span>丽丽</span>
+      <span class="b"><span class="av"></span>军军</span><span class="b"><span class="av"></span>大宝</span>
+      <span class="b"><span class="av"></span>果果</span><span class="b"><span class="av"></span>朵朵</span>
+    </div>
+  </div>
+
+  <div class="seg part">
+    <div class="seg-h"><span class="dot d-part"></span>背完部分 <span class="cnt">3</span></div>
+    <div class="names">
+      <span class="b"><span class="av"></span>大壮</span><span class="b"><span class="av"></span>乐乐</span>
+      <span class="b"><span class="av"></span>萌萌</span>
+    </div>
+  </div>
+
+  <div class="seg no">
+    <div class="seg-h"><span class="dot d-no"></span>没背 <span class="cnt">2</span></div>
+    <div class="names">
+      <span class="b"><span class="av"></span>小刚</span><span class="b"><span class="av"></span>壮壮</span>
+    </div>
+  </div>
+</div>
+
+<!-- 作业检查 -->
+<div class="board">
+  <div class="bh"><div class="ttl">📋 作业检查（批改模式）</div><div class="prog">已批改 10 / 16</div></div>
+
+  <div class="seg todo">
+    <div class="seg-h"><span class="dot d-todo"></span>未批改 <span class="cnt">6</span></div>
+    <div class="names">
+      <span class="b"><span class="av"></span>小刚</span><span class="b"><span class="av"></span>欣欣</span>
+      <span class="b"><span class="av"></span>浩浩</span><span class="b"><span class="av"></span>悦悦</span>
+      <span class="b"><span class="av"></span>乐乐</span><span class="b"><span class="av"></span>果果</span>
+    </div>
+  </div>
+
+  <div class="seg exc">
+    <div class="seg-h"><span class="dot d-exc"></span>优秀 <span class="cnt">2</span></div>
+    <div class="names">
+      <span class="b"><span class="av"></span>小明</span><span class="b"><span class="av"></span>军军</span>
+    </div>
+  </div>
+
+  <div class="seg fin">
+    <div class="seg-h"><span class="dot d-fin"></span>完成 <span class="cnt">7</span></div>
+    <div class="names">
+      <span class="b"><span class="av"></span>小红</span><span class="b"><span class="av"></span>丽丽</span>
+      <span class="b"><span class="av"></span>静静</span><span class="b"><span class="av"></span>大宝</span>
+      <span class="b"><span class="av"></span>朵朵</span><span class="b"><span class="av"></span>乐天</span>
+      <span class="b"><span class="av"></span>果壮</span>
+    </div>
+  </div>
+
+  <div class="seg miss">
+    <div class="seg-h"><span class="dot d-miss"></span>没交 <span class="cnt">1</span></div>
+    <div class="names">
+      <span class="b"><span class="av"></span>大壮</span>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

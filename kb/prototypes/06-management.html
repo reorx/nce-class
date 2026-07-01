@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>管理界面</title>
+<link rel="stylesheet" href="base.css">
+</head>
+<body>
+<h2>管理界面 · 班级列表 + 班级详情</h2>
+<p class="subtitle">老师登录后的主界面：管理班级、学生、分组方案、家长邀请</p>
+
+<style>
+  .app{ background:#f6f7fb; border:1px solid #e6e8f0; border-radius:14px; padding:0; overflow:hidden; margin-bottom:18px;}
+  .appbar{ background:#fff; border-bottom:1px solid #ebedf3; padding:12px 18px; display:flex; align-items:center; justify-content:space-between;}
+  .brand{ font-weight:800; font-size:1rem;}
+  .brand .sub{ color:#9aa0b0; font-weight:600; font-size:.82rem; margin-left:6px;}
+  .nav{ display:flex; gap:6px;}
+  .navi{ font-size:.84rem; font-weight:700; padding:6px 13px; border-radius:8px; color:#6b7280;}
+  .navi.on{ background:#eef3ff; color:#2f5fe0;}
+  .who{ font-size:.84rem; color:#4b5161; font-weight:700;}
+  .body{ padding:18px;}
+
+  .clsgrid{ display:grid; grid-template-columns:repeat(3,1fr); gap:14px;}
+  .ccard{ background:#fff; border:1px solid #ebedf3; border-radius:12px; padding:15px;}
+  .ccard .nm{ font-size:1.05rem; font-weight:800;}
+  .ccard .mt{ color:#9aa0b0; font-size:.8rem; margin:5px 0 13px;}
+  .ccard .acts{ display:flex; gap:8px;}
+  .btn{ font-size:.82rem; font-weight:700; padding:8px 13px; border-radius:9px;}
+  .btn.go{ background:#2bb673; color:#fff; flex:1; text-align:center;}
+  .btn.mng{ background:#eef0f6; color:#4b5161;}
+  .ccard.new{ border:1.5px dashed #c9cedb; display:flex; align-items:center; justify-content:center; color:#8b91a1; font-weight:700;}
+</style>
+
+<!-- 班级列表（首页） -->
+<div class="app">
+  <div class="appbar">
+    <div><span class="brand">🏫 阳光英语<span class="sub">新概念课堂</span></span></div>
+    <div class="nav"><span class="navi on">班级</span><span class="navi">老师</span></div>
+    <div class="who">👩‍🏫 王老师 ▾</div>
+  </div>
+  <div class="body">
+    <div class="clsgrid">
+      <div class="ccard">
+        <div class="nm">三年级A班</div>
+        <div class="mt">16 名学生 · 上次上课 6/28</div>
+        <div class="acts"><span class="btn go">▶ 开始上课</span><span class="btn mng">管理</span></div>
+      </div>
+      <div class="ccard">
+        <div class="nm">四年级B班</div>
+        <div class="mt">12 名学生 · 上次上课 6/27</div>
+        <div class="acts"><span class="btn go">▶ 开始上课</span><span class="btn mng">管理</span></div>
+      </div>
+      <div class="ccard new">+ 新建班级</div>
+    </div>
+  </div>
+</div>
+
+<!-- 班级详情 -->
+<style>
+  .crumb{ font-size:.82rem; color:#9aa0b0; margin-bottom:2px;}
+  .crumb b{ color:#2b2f3a;}
+  .subtabs{ display:flex; gap:6px; margin:12px 0 16px; border-bottom:1px solid #ebedf3;}
+  .st{ font-size:.86rem; font-weight:700; padding:9px 13px; color:#6b7280; border-bottom:2px solid transparent; margin-bottom:-1px;}
+  .st.on{ color:#2f5fe0; border-color:#2f5fe0;}
+  .two{ display:grid; grid-template-columns:1.5fr 1fr; gap:16px;}
+  .panel{ background:#fff; border:1px solid #ebedf3; border-radius:12px; padding:14px 16px;}
+  .panel .lbl{ font-size:.74rem; font-weight:800; color:#9aa0b0; letter-spacing:.04em; margin-bottom:12px;}
+  .roster{ display:grid; grid-template-columns:repeat(4,1fr); gap:12px;}
+  .stu{ text-align:center;}
+  .stu .av{ width:48px; height:48px; border-radius:50%; background:#cfd5e6; margin:0 auto 5px;}
+  .stu .nm{ font-size:.84rem; font-weight:700;}
+  .stu .sc{ font-size:.7rem; color:#f59e0b; font-weight:800;}
+  .stu.add .av{ background:#eef0f6; color:#8b91a1; display:flex; align-items:center; justify-content:center; font-size:1.4rem;}
+  .stu.pending .av{ background:#fff3e0; border:1px dashed #f3cd9b;}
+  .stu.pending .nm{ color:#c2792a;}
+
+  .invite{ }
+  .qr{ width:120px; height:120px; background:repeating-conic-gradient(#222 0 25%, #fff 0 50%) 0/16px 16px; border-radius:10px; margin:0 auto 10px;}
+  .link{ background:#f4f5f8; border:1px solid #e3e5ee; border-radius:8px; padding:8px 10px; font-size:.74rem; color:#4b5161; word-break:break-all; margin-bottom:10px;}
+  .copy{ background:#2f5fe0; color:#fff; text-align:center; font-weight:700; padding:9px 0; border-radius:9px; font-size:.84rem;}
+  .ghint{ font-size:.72rem; color:#9aa0b0; margin-top:10px;}
+</style>
+
+<div class="app">
+  <div class="appbar">
+    <div><span class="brand">🏫 阳光英语</span></div>
+    <div class="who">👩‍🏫 王老师 ▾</div>
+  </div>
+  <div class="body">
+    <div class="crumb">班级 / <b>三年级A班</b></div>
+    <div class="subtabs">
+      <span class="st on">学生 (16)</span>
+      <span class="st">分组方案 (2)</span>
+      <span class="st">邀请家长</span>
+      <span class="st">上课记录</span>
+    </div>
+
+    <div class="two">
+      <div class="panel">
+        <div class="lbl">学生名单（点学生看成长档案）</div>
+        <div class="roster">
+          <div class="stu"><div class="av"></div><div class="nm">小明</div><div class="sc">总分 42</div></div>
+          <div class="stu"><div class="av"></div><div class="nm">小红</div><div class="sc">总分 38</div></div>
+          <div class="stu"><div class="av"></div><div class="nm">丽丽</div><div class="sc">总分 51</div></div>
+          <div class="stu"><div class="av"></div><div class="nm">军军</div><div class="sc">总分 33</div></div>
+          <div class="stu"><div class="av"></div><div class="nm">大壮</div><div class="sc">总分 29</div></div>
+          <div class="stu"><div class="av"></div><div class="nm">欣欣</div><div class="sc">总分 44</div></div>
+          <div class="stu pending"><div class="av">⏳</div><div class="nm">待家长完善</div><div class="sc">&nbsp;</div></div>
+          <div class="stu add"><div class="av">＋</div><div class="nm">手动添加</div></div>
+        </div>
+      </div>
+
+      <div class="panel invite">
+        <div class="lbl">邀请家长加入</div>
+        <div class="qr"></div>
+        <div class="link">https://nce.app/join/3A-x7k2</div>
+        <div class="copy">复制邀请链接</div>
+        <div class="ghint">家长在微信打开 → 上传照片、填名字 → 加入班级。新加入的会出现在左边"待完善"。</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

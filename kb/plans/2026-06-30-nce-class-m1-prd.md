@@ -38,7 +38,7 @@ NCE Class 帮助英语老师在课堂上对学生分组、即时加减分（"加
 
 | 术语 | 含义 |
 |------|------|
-| 学校（School） | 整个教学系统实例，M1 为单一学校 |
+| 组织 / 学校（Organization） | 数据隔离单位；采用多组织设计，M1 只运行单个学校，模型全程带 `orgId` |
 | 老师（Teacher） | 需登录；多老师共享同校的班级与学生 |
 | 班级（Class） | 隶属学校，含一批学生与若干分组方案 |
 | 学生（Student） | 隶属班级；有名字、照片(可选)；来源 `source` = parent(家长自助加入) / teacher(老师手动添加) |
@@ -53,24 +53,30 @@ NCE Class 帮助英语老师在课堂上对学生分组、即时加减分（"加
 - **前后端分离**：
   - 老师端：React + Vite + TypeScript（桌面 Web 应用）。
   - 学生端：React H5（微信内打开，移动端布局）。
-  - 后端：独立 Node 服务（建议 Hono 或 NestJS）+ TypeScript。
-  - 数据库：PostgreSQL（建议 Prisma 作 ORM）。
-  - 对象存储：S3 兼容（学生照片）。本地开发可用 MinIO。
+  - 后端：独立 Node 服务，**Express + TypeScript**。
+  - 数据库：**SQLite + Drizzle ORM**（起步够用，后续可平滑迁移到更重的库）。
+  - 对象存储：**存储抽象层**——定义统一的 `StorageClient` 接口，两个 vendor 各用各自官方 SDK 实现（参考 `../tenderbuddy` 的做法）：
+    - `StorageClient`（interface，`base.ts`）
+    - `MinioStorageClient` → `minio` SDK（`minio.ts`，本地开发）
+    - `OssStorageClient` → `ali-oss` SDK（`oss.ts`，生产）
+    - `createStorageClient()` 依 `S3_VENDOR` 环境变量 switch（`index.ts`），导出全局单例 `storageClient`。
 - **认证**：
-  - 老师：账号登录（建议 Better Auth，邮箱+密码起步）。多老师·单校，校内数据共享，M1 不做细粒度权限。
+  - 老师：**自建用户表 + 自实现认证登录**，架构简洁清晰。**用户名 + 密码**登录；凭据 / 身份与用户解耦，为后续对接**微信登录**预留架构空间。校内数据共享，M1 不做细粒度权限。
   - 家长：无需登录。每个学生有不可猜测的 `recapToken`，家长凭学生专属链接查看该生 recap（含历史各堂回顾，详见 §7.5）。家长侧不提供老师端的成长档案（§7.4 为老师专用）。
+- **多组织（学校）设计**：数据按**组织 / 学校（Organization）**隔离；组织表起步保持简洁，M1 只需支撑单个学校运行，但模型与查询**从一开始就带 `orgId`**，为多校预留。
 - **部署**：M1 先本地 / 容器开发，部署后置（后续若要微信内低延迟，倾向国内云）。
 
-> 以上框架为建议默认值，实现时可按团队偏好调整，但需保持"前后端分离 + 关系型数据库 + 事件流计分"的核心结构。
+> 核心结构：前后端分离 + 关系型库（SQLite/Drizzle）+ 事件流计分 + 存储抽象层 + 自建认证（预留微信登录）+ 按 `orgId` 的多组织隔离。
 
 ## 5. 数据模型（核心）
 
 计分采用**事件流（ledger）**为单一事实来源，所有派生分数从事件计算。
 
 ```
-School(id, name)
-Teacher(id, schoolId, name, email, passwordHash)
-Class(id, schoolId, name)
+Organization(id, name)                              // 学校/组织；M1 单条即可，模型全程带 orgId
+Teacher(id, orgId, name, username, passwordHash)    // 自建认证：用户名+密码
+Credential(id, teacherId, provider[password|wechat], secret/openid, ...)  // 预留：解耦登录方式，便于后续微信登录
+Class(id, orgId, name)
 Student(id, classId, name, photoUrl?, source[parent|teacher], recapToken, createdAt)
 
 GroupTemplate(id, classId, name, isDefault)
@@ -117,7 +123,7 @@ CheckRecord(id, sessionId, studentId, type[recitation|homework],
 - 顶部：学校名 + 导航（`班级` / `老师`）+ 当前老师菜单。
 - 班级卡片：班级名、学生数、上次上课时间、`▶ 开始上课`、`管理`。
 - `+ 新建班级`。
-- `老师` 导航：多老师·单校的老师管理（M1 可极简：列表 + 邀请老师）。
+- `老师` 导航：同一组织内的老师管理（M1 可极简：列表 + 邀请老师）。
 
 **班级详情**（子标签）
 - `学生`：头像 + 名字 + 累计总分的名单网格；点学生 → 成长档案。学生有两个来源：家长经班级邀请链接**自助加入**（`source=parent`，填完照片+名字即为正式学生），或老师 `手动添加`（`source=teacher`，可仅填名字、照片占位，老师可后补照片）。因班级通用链接不做认领匹配，可能出现重复学生，老师可在名单里**删除 / 合并**重复项。
@@ -209,7 +215,7 @@ CheckRecord(id, sessionId, studentId, type[recitation|homework],
 
 本 PRD 覆盖老师管理、四视图课堂、成长档案、学生端 H5、认证与存储——作为一个 milestone 合理，但作为单个实现计划偏大。建议下游实现计划按以下顺序分阶段，每阶段可独立验证：
 
-1. **基础**：数据模型 + 迁移 + 老师认证（多老师·单校）+ 对象存储接入。
+1. **基础**：数据模型（Drizzle schema，全程带 `orgId`）+ 迁移 + 自建认证（用户名+密码，预留微信登录）+ 存储抽象层接入。
 2. **老师管理端**：班级 / 学生（含通用邀请链接、删除合并）/ 分组方案 / 班级详情。
 3. **课堂引擎**：开始课堂（分组快照）→ 四视图（上课/背书检查/作业检查/调组）→ 事件流计分 → 撤销 → 结束课堂。
 4. **派生与档案**：组分/个人分/累计总分计算、recap 生成、学生成长档案。

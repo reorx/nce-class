@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>课堂主界面 · 清晰版</title>
+<link rel="stylesheet" href="base.css">
+</head>
+<body>
+<h2>课堂主界面（上课 view）· 清晰版</h2>
+<p class="subtitle">无浮窗、不虚化 —— 投屏常态。点学生卡→居中浮窗（见浮窗版）；点列头=整组±1；卡角背/作两标为状态</p>
+
+<style>
+  .wrap { position:relative; background:#1f2233; border-radius:14px; padding:14px; color:#fff; overflow:hidden;}
+  .topbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;}
+  .topbar .cls { font-size:.95rem; font-weight:800;}
+  .topbar .timer { background:#2dd4bf; color:#06302b; font-weight:800; padding:3px 10px; border-radius:8px; font-size:.8rem;}
+  .cols { display:grid; grid-template-columns:repeat(4,1fr); gap:12px;}
+  .gcol { background:#2a2e44; border-radius:12px; padding:10px;}
+  .gcol-h { display:flex; justify-content:space-between; align-items:center; padding:6px 8px; border-radius:9px; background:#363c5a; margin-bottom:8px;}
+  .gcol-h .gname { font-weight:800; font-size:.88rem;}
+  .gcol-h .gscore { color:#fbbf24; font-weight:900; font-size:1rem;}
+  .scard { background:#f7f8fc; color:#222; border-radius:10px; padding:7px 9px; margin-bottom:7px; display:flex; align-items:center; gap:8px; position:relative;}
+  .scard .av { width:26px; height:26px; border-radius:50%; background:#cfd5e6; flex:none;}
+  .scard .nm { font-size:.8rem; font-weight:700; flex:1;}
+  .badges { position:absolute; right:6px; top:-7px; display:flex; gap:3px;}
+  .bg { width:16px; height:16px; border-radius:5px; font-size:.52rem; font-weight:800; display:flex; align-items:center; justify-content:center; color:#fff;}
+  .bg.gray{ background:#b7bccb;} .bg.g{ background:#22c55e;} .bg.a{ background:#f59e0b;} .bg.r{ background:#ef4444;}
+
+  .dock { margin-top:12px; background:#11131f; border-radius:12px; padding:9px; display:flex; gap:8px; align-items:center; justify-content:space-between;}
+  .tabs{ display:flex; background:#2a2e44; border-radius:9px; padding:3px; gap:2px; font-size:.78rem; font-weight:700;}
+  .tabs .t{ color:#aab; padding:6px 13px; border-radius:7px;}
+  .tabs .t.on{ background:#4f7cff; color:#fff;}
+  .dbtn { background:#2a2e44; color:#dfe3f0; padding:7px 12px; border-radius:9px; font-size:.78rem; font-weight:700;}
+  .dbtn.end { background:#ef476f; color:#fff;}
+  /* 自适应屏幕高度：整体撑满，列随之拉高，居中浮窗不被裁切 */
+  html, body { height: 100%; }
+  body { display: flex; flex-direction: column; min-height: 100vh; }
+  .wrap { flex: 1; display: flex; flex-direction: column; }
+  .cols { display: flex; flex: 1; }      /* grid → flex，使各列拉伸到满高 */
+  .cols > .gcol { flex: 1; }
+</style>
+
+<div class="wrap">
+  <div class="topbar"><div class="cls">🏫 三年级A班 · 第3课</div><div class="timer">⏱ 12:30</div></div>
+
+  <div class="cols">
+    <div class="gcol">
+      <div class="gcol-h"><span class="gname">🦁 第1组</span><span class="gscore">⭐12</span></div>
+      <div class="scard"><div class="av"></div><div class="nm">小明</div><div class="badges"><span class="bg g">背</span><span class="bg g">作</span></div></div>
+      <div class="scard"><div class="av"></div><div class="nm">小红</div><div class="badges"><span class="bg gray">背</span><span class="bg gray">作</span></div></div>
+      <div class="scard"><div class="av"></div><div class="nm">小刚</div><div class="badges"><span class="bg gray">背</span><span class="bg gray">作</span></div></div>
+    </div>
+    <div class="gcol">
+      <div class="gcol-h"><span class="gname">🐯 第2组</span><span class="gscore">⭐9</span></div>
+      <div class="scard"><div class="av"></div><div class="nm">丽丽</div><div class="badges"><span class="bg g">背</span><span class="bg g">作</span></div></div>
+      <div class="scard"><div class="av"></div><div class="nm">大壮</div><div class="badges"><span class="bg gray">背</span><span class="bg gray">作</span></div></div>
+    </div>
+    <div class="gcol">
+      <div class="gcol-h"><span class="gname">🐻 第3组</span><span class="gscore">⭐15</span></div>
+      <div class="scard"><div class="av"></div><div class="nm">军军</div><div class="badges"><span class="bg gray">背</span><span class="bg gray">作</span></div></div>
+      <div class="scard"><div class="av"></div><div class="nm">欣欣</div><div class="badges"><span class="bg gray">背</span><span class="bg gray">作</span></div></div>
+    </div>
+    <div class="gcol">
+      <div class="gcol-h"><span class="gname">🦊 第4组</span><span class="gscore">⭐7</span></div>
+      <div class="scard"><div class="av"></div><div class="nm">悦悦</div><div class="badges"><span class="bg gray">背</span><span class="bg gray">作</span></div></div>
+    </div>
+  </div>
+
+  <div class="dock">
+    <div class="tabs"><span class="t on">上课</span><span class="t">背书检查</span><span class="t">作业检查</span><span class="t">调组</span></div>
+    <div style="display:flex; gap:8px;"><span class="dbtn">↩︎ 撤销</span><span class="dbtn end">结束课堂</span></div>
+  </div>
+</div>
+
+</body>
+</html>

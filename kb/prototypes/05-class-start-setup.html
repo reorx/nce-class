@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>课前配置 · 开始课堂</title>
+<link rel="stylesheet" href="base.css">
+</head>
+<body>
+<h2>开始课堂 · 课前配置</h2>
+<p class="subtitle">选好班级后进入这一步：定本节课信息 + 选分组方案，点"开始课堂"进入课堂界面</p>
+
+<style>
+  .scr{ background:#f6f7fb; border:1px solid #e6e8f0; border-radius:14px; padding:18px 20px;}
+  .top{ display:flex; align-items:center; gap:12px; margin-bottom:16px;}
+  .back{ font-size:.85rem; color:#6b7280;}
+  .top .cls{ font-size:1.15rem; font-weight:800;}
+  .top .meta{ font-size:.8rem; color:#9aa0b0;}
+  .card{ background:#fff; border:1px solid #ebedf3; border-radius:12px; padding:14px 16px; margin-bottom:14px;}
+  .lbl{ font-size:.74rem; font-weight:800; color:#9aa0b0; letter-spacing:.04em; margin-bottom:9px;}
+  .lessonrow{ display:flex; gap:10px; align-items:center;}
+  .inp{ border:1px solid #d8dbe4; border-radius:9px; padding:8px 12px; font-size:.9rem; background:#fbfcfe;}
+  .inp.num{ width:90px;}
+  .inp.title{ flex:1;}
+  .opt-note{ font-size:.7rem; color:#aab; margin-left:4px;}
+
+  .tabs{ display:flex; gap:8px; flex-wrap:wrap;}
+  .gtab{ padding:7px 14px; border-radius:9px; font-size:.85rem; font-weight:700; background:#f0f1f6; color:#4b5161; border:2px solid transparent;}
+  .gtab.on{ background:#eef3ff; color:#2f5fe0; border-color:#9bb4f5;}
+  .gtab.new{ background:#fff; border:1.5px dashed #c9cedb; color:#6b7280;}
+
+  .groups{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:6px;}
+  .g{ background:#fafbff; border:1px solid #e9ebf2; border-radius:10px; padding:9px;}
+  .g-h{ font-weight:800; font-size:.85rem; margin-bottom:8px; display:flex; justify-content:space-between;}
+  .g-h .cnt{ color:#9aa0b0; font-size:.72rem; font-weight:700;}
+  .b{ display:flex; align-items:center; gap:7px; background:#fff; border:1px solid #e6e6ee; border-radius:8px; padding:4px 8px; margin-bottom:5px; font-size:.82rem; font-weight:600; cursor:grab;}
+  .b .av{ width:22px; height:22px; border-radius:50%; background:#cfd5e6; flex:none;}
+  .b .gx{ margin-left:auto; color:#c3c8d4; font-size:.7rem;}
+
+  .bench{ background:#fff7ed; border:1px dashed #f3cd9b; border-radius:10px; padding:9px 12px; margin-top:12px;}
+  .bench .lbl{ color:#c2792a;}
+  .benchrow{ display:flex; flex-wrap:wrap; gap:7px;}
+  .bb{ display:inline-flex; align-items:center; gap:6px; background:#fff; border:1px solid #f0d9b8; border-radius:999px; padding:3px 11px 3px 3px; font-size:.8rem; font-weight:600;}
+  .bb .av{ width:20px; height:20px; border-radius:50%; background:#e8d4b6;}
+
+  .footer{ display:flex; justify-content:space-between; align-items:center; margin-top:18px;}
+  .hint{ font-size:.74rem; color:#9aa0b0;}
+  .start{ background:#2bb673; color:#fff; font-weight:800; font-size:1rem; padding:12px 26px; border-radius:12px;}
+</style>
+
+<div class="scr">
+  <div class="top">
+    <span class="back">← 班级列表</span>
+    <span class="cls">🏫 三年级A班</span>
+    <span class="meta">16 名学生</span>
+  </div>
+
+  <div class="card">
+    <div class="lbl">本节课 <span class="opt-note">（可选，进 recap / 档案）</span></div>
+    <div class="lessonrow">
+      <span class="inp num">第 3 课</span>
+      <span class="inp title">《What's your name?》</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="lbl">分组方案</div>
+    <div class="tabs">
+      <span class="gtab on">默认分组 ✓</span>
+      <span class="gtab">周五分组</span>
+      <span class="gtab new">+ 新建分组</span>
+    </div>
+
+    <div class="groups">
+      <div class="g">
+        <div class="g-h">🦁 第1组 <span class="cnt">4人</span></div>
+        <div class="b"><span class="av"></span>小明<span class="gx">⠿</span></div>
+        <div class="b"><span class="av"></span>小红<span class="gx">⠿</span></div>
+        <div class="b"><span class="av"></span>小刚<span class="gx">⠿</span></div>
+        <div class="b"><span class="av"></span>大宝<span class="gx">⠿</span></div>
+      </div>
+      <div class="g">
+        <div class="g-h">🐯 第2组 <span class="cnt">4人</span></div>
+        <div class="b"><span class="av"></span>丽丽<span class="gx">⠿</span></div>
+        <div class="b"><span class="av"></span>大壮<span class="gx">⠿</span></div>
+        <div class="b"><span class="av"></span>静静<span class="gx">⠿</span></div>
+        <div class="b"><span class="av"></span>乐乐<span class="gx">⠿</span></div>
+      </div>
+      <div class="g">
+        <div class="g-h">🐻 第3组 <span class="cnt">4人</span></div>
+        <div class="b"><span class="av"></span>军军<span class="gx">⠿</span></div>
+        <div class="b"><span class="av"></span>欣欣<span class="gx">⠿</span></div>
+        <div class="b"><span class="av"></span>果果<span class="gx">⠿</span></div>
+        <div class="b"><span class="av"></span>壮壮<span class="gx">⠿</span></div>
+      </div>
+      <div class="g">
+        <div class="g-h">🦊 第4组 <span class="cnt">3人</span></div>
+        <div class="b"><span class="av"></span>浩浩<span class="gx">⠿</span></div>
+        <div class="b"><span class="av"></span>悦悦<span class="gx">⠿</span></div>
+        <div class="b"><span class="av"></span>萌萌<span class="gx">⠿</span></div>
+      </div>
+    </div>
+
+    <div class="bench">
+      <div class="lbl">未分组 / 今日缺席（1）</div>
+      <div class="benchrow">
+        <span class="bb"><span class="av"></span>朵朵</span>
+        <span style="font-size:.72rem;color:#c2792a;align-self:center;">拖到组里参与 · 留在这里则本节不计分</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span class="hint">拖拽学生可微调；课中也能随时改（调组模式）</span>
+    <span class="start">开始课堂 →</span>
+  </div>
+</div>
+
+</body>
+</html>

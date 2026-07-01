@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>课堂主界面 · 浮窗版</title>
+<link rel="stylesheet" href="base.css">
+</head>
+<body>
+<h2>主界面（上课 view）· 居中浮窗</h2>
+<p class="subtitle">点学生 → 屏幕正中弹出浮窗，加分/扣分 + 背书 + 作业 都在这。底部按钮改成 view 切换</p>
+
+<style>
+  .wrap { position:relative; background:#1f2233; border-radius:14px; padding:14px; color:#fff; overflow:hidden;}
+  .topbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;}
+  .topbar .cls { font-size:.95rem; font-weight:800;}
+  .topbar .timer { background:#2dd4bf; color:#06302b; font-weight:800; padding:3px 10px; border-radius:8px; font-size:.8rem;}
+  .cols { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; filter:blur(1px) brightness(.6);}
+  .gcol { background:#2a2e44; border-radius:12px; padding:10px;}
+  .gcol-h { display:flex; justify-content:space-between; align-items:center; padding:6px 8px; border-radius:9px; background:#363c5a; margin-bottom:8px;}
+  .gcol-h .gname { font-weight:800; font-size:.88rem;}
+  .gcol-h .gscore { color:#fbbf24; font-weight:900; font-size:1rem;}
+  .scard { background:#f7f8fc; color:#222; border-radius:10px; padding:7px 9px; margin-bottom:7px; display:flex; align-items:center; gap:8px; position:relative;}
+  .scard .av { width:26px; height:26px; border-radius:50%; background:#cfd5e6; flex:none;}
+  .scard .nm { font-size:.8rem; font-weight:700; flex:1;}
+  .badges { position:absolute; right:6px; top:-7px; display:flex; gap:3px;}
+  .bg { width:16px; height:16px; border-radius:5px; font-size:.52rem; font-weight:800; display:flex; align-items:center; justify-content:center; color:#fff;}
+  .bg.gray{ background:#b7bccb;} .bg.g{ background:#22c55e;} .bg.a{ background:#f59e0b;} .bg.r{ background:#ef4444;}
+
+  .dock { margin-top:12px; background:#11131f; border-radius:12px; padding:9px; display:flex; gap:8px; align-items:center; justify-content:space-between; filter:blur(1px) brightness(.6);}
+  .tabs{ display:flex; background:#2a2e44; border-radius:9px; padding:3px; gap:2px; font-size:.78rem; font-weight:700;}
+  .tabs .t{ color:#aab; padding:6px 13px; border-radius:7px;}
+  .tabs .t.on{ background:#4f7cff; color:#fff;}
+  .dbtn { background:#2a2e44; color:#dfe3f0; padding:7px 12px; border-radius:9px; font-size:.78rem; font-weight:700;}
+  .dbtn.end { background:#ef476f; color:#fff;}
+
+  /* center modal */
+  .veil{ position:absolute; inset:0; background:rgba(8,9,15,.55);}
+  .modal{ position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:330px; background:#fff; color:#1f2233; border-radius:18px; padding:18px 20px; box-shadow:0 24px 60px rgba(0,0,0,.5);}
+  .mhead{ display:flex; align-items:center; gap:12px; margin-bottom:4px;}
+  .mhead .av{ width:46px; height:46px; border-radius:50%; background:#cfd5e6;}
+  .mhead .nm{ font-size:1.15rem; font-weight:900;}
+  .mhead .mt{ font-size:.72rem; opacity:.55;}
+  .mhead .close{ margin-left:auto; font-size:1.1rem; opacity:.4;}
+  .sec{ margin-top:14px;}
+  .sec .lbl{ font-size:.7rem; font-weight:800; opacity:.5; letter-spacing:.05em; margin-bottom:7px;}
+  .scorerow{ display:flex; align-items:center; gap:8px;}
+  .bigplus{ flex:1; background:#22c55e; color:#fff; font-weight:900; font-size:1.15rem; padding:15px 0; border-radius:12px; text-align:center;}
+  .bigminus{ flex:1; background:#fdeaea; color:#d64545; font-weight:900; font-size:1.15rem; padding:15px 0; border-radius:12px; text-align:center;}
+  .running{ font-size:.72rem; color:#16a34a; font-weight:800; margin-top:6px; text-align:center;}
+  .opts{ display:flex; gap:7px;}
+  .opt{ flex:1; text-align:center; font-size:.82rem; font-weight:700; padding:9px 0; border-radius:10px; background:#f0f1f6; color:#7b8194; border:2px solid transparent;}
+  .opt.g{ background:#e7f7ee; color:#1d9a57; border-color:#5fce93;}
+  .opt.a{ background:#fef3e2; color:#d98014; border-color:#f3bc6b;}
+  .opt.r{ background:#fdeaea; color:#d64545; border-color:#ef8d8d;}
+  .opt.bl{ background:#e8eefe; color:#3a5fd0; border-color:#9bb4f5;}
+  .donebtn{ margin-top:16px; width:100%; background:#1f2233; color:#fff; font-weight:800; padding:11px 0; border-radius:12px; text-align:center;}
+  .nestnote{ font-size:.64rem; opacity:.5; text-align:center; margin-top:6px;}
+  /* 自适应屏幕高度：整体撑满，列随之拉高，居中浮窗不被裁切 */
+  html, body { height: 100%; }
+  body { display: flex; flex-direction: column; min-height: 100vh; }
+  .wrap { flex: 1; display: flex; flex-direction: column; }
+  .cols { display: flex; flex: 1; }      /* grid → flex，使各列拉伸到满高 */
+  .cols > .gcol { flex: 1; }
+</style>
+
+<div class="wrap">
+  <div class="topbar"><div class="cls">🏫 三年级A班 · 第3课</div><div class="timer">⏱ 12:30</div></div>
+
+  <div class="cols">
+    <div class="gcol">
+      <div class="gcol-h"><span class="gname">🦁 第1组</span><span class="gscore">⭐12</span></div>
+      <div class="scard"><div class="av"></div><div class="nm">小明</div><div class="badges"><span class="bg g">背</span><span class="bg g">作</span></div></div>
+      <div class="scard"><div class="av"></div><div class="nm">小红</div><div class="badges"><span class="bg gray">背</span><span class="bg gray">作</span></div></div>
+      <div class="scard"><div class="av"></div><div class="nm">小刚</div><div class="badges"><span class="bg gray">背</span><span class="bg gray">作</span></div></div>
+    </div>
+    <div class="gcol">
+      <div class="gcol-h"><span class="gname">🐯 第2组</span><span class="gscore">⭐9</span></div>
+      <div class="scard"><div class="av"></div><div class="nm">丽丽</div><div class="badges"><span class="bg g">背</span><span class="bg g">作</span></div></div>
+      <div class="scard"><div class="av"></div><div class="nm">大壮</div><div class="badges"><span class="bg gray">背</span><span class="bg gray">作</span></div></div>
+    </div>
+    <div class="gcol">
+      <div class="gcol-h"><span class="gname">🐻 第3组</span><span class="gscore">⭐15</span></div>
+      <div class="scard"><div class="av"></div><div class="nm">军军</div><div class="badges"><span class="bg gray">背</span><span class="bg gray">作</span></div></div>
+      <div class="scard"><div class="av"></div><div class="nm">欣欣</div><div class="badges"><span class="bg gray">背</span><span class="bg gray">作</span></div></div>
+    </div>
+    <div class="gcol">
+      <div class="gcol-h"><span class="gname">🦊 第4组</span><span class="gscore">⭐7</span></div>
+      <div class="scard"><div class="av"></div><div class="nm">悦悦</div><div class="badges"><span class="bg gray">背</span><span class="bg gray">作</span></div></div>
+    </div>
+  </div>
+
+  <div class="dock">
+    <div class="tabs"><span class="t on">上课</span><span class="t">背书检查</span><span class="t">作业检查</span><span class="t">调组</span></div>
+    <div style="display:flex; gap:8px;"><span class="dbtn">↩︎ 撤销</span><span class="dbtn end">结束课堂</span></div>
+  </div>
+
+  <!-- center modal -->
+  <div class="veil"></div>
+  <div class="modal">
+    <div class="mhead">
+      <div class="av"></div>
+      <div><div class="nm">小红</div><div class="mt">第1组 · 本节个人分 +1</div></div>
+      <div class="close">✕</div>
+    </div>
+
+    <div class="sec">
+      <div class="lbl">加分 / 扣分</div>
+      <div class="scorerow">
+        <span class="bigminus">−1</span>
+        <span class="bigplus">+1 ⭐</span>
+      </div>
+      <div class="running">本次已加 +2 ⭐（个人+2，小组同步+2）</div>
+    </div>
+
+    <div class="sec">
+      <div class="lbl">📖 背书</div>
+      <div class="opts"><span class="opt g">已背完</span><span class="opt">背完部分</span><span class="opt">没背</span></div>
+    </div>
+
+    <div class="sec">
+      <div class="lbl">📋 作业</div>
+      <div class="opts"><span class="opt">优秀</span><span class="opt bl">完成</span><span class="opt">没交</span></div>
+    </div>
+
+    <div class="donebtn">完成</div>
+    <div class="nestnote">点浮窗外空白处也可关闭</div>
+  </div>
+</div>
+
+</body>
+</html>

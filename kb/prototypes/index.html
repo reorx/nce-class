@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NCE Class · 原型总览</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
+  .layout { display: flex; height: 100vh; }
+  .side { width: 210px; flex: none; background: #1f2233; color: #fff; padding: 16px 12px; overflow-y: auto; }
+  .side h1 { font-size: 1rem; margin: 4px 6px 16px; }
+  .navi { display: block; width: 100%; text-align: left; background: transparent; color: #c7ccda;
+          border: none; padding: 10px 12px; border-radius: 9px; font-size: .88rem; cursor: pointer; margin-bottom: 4px; }
+  .navi:hover { background: #2a2e44; color: #fff; }
+  .navi.on { background: #4f7cff; color: #fff; font-weight: 700; }
+  .main { flex: 1; background: #eef0f4; }
+  iframe { width: 100%; height: 100%; border: none; }
+</style>
+</head>
+<body>
+  <div class="layout">
+    <nav class="side">
+      <h1>🏫 NCE Class 原型</h1>
+      <button class="navi on" data-src="01-scope-map.html">范围总览</button>
+      <button class="navi" data-src="02-classboard.html">课堂主界面 · 清晰版</button>
+      <button class="navi" data-src="03-classboard-popup.html">课堂主界面 · 浮窗版</button>
+      <button class="navi" data-src="04-check-views.html">背书 / 作业检查</button>
+      <button class="navi" data-src="05-class-start-setup.html">课前配置</button>
+      <button class="navi" data-src="06-management.html">管理界面</button>
+      <button class="navi" data-src="07-student-profile.html">学生成长档案</button>
+      <button class="navi" data-src="08-student-h5.html">学生端 H5</button>
+    </nav>
+    <div class="main"><iframe id="stage" src="01-scope-map.html"></iframe></div>
+  </div>
+  <script>
+    const stage = document.getElementById("stage");
+    document.querySelectorAll(".navi").forEach((b) => {
+      b.addEventListener("click", () => {
+        document.querySelectorAll(".navi").forEach((x) => x.classList.remove("on"));
+        b.classList.add("on");
+        stage.src = b.dataset.src;
+      });
+    });
+  </script>
+</body>
+</html>
