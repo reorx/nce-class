@@ -63,6 +63,7 @@
   .opt.a{ background:#fef3e2; color:#d98014; border-color:#f3bc6b;}
   .opt.r{ background:#fdeaea; color:#d64545; border-color:#ef8d8d;}
   .opt.bl{ background:#e8eefe; color:#3a5fd0; border-color:#9bb4f5;}
+  .opt.gray{ background:#eef0f4; color:#6b7280; border-color:#c9cedb;}
   .donebtn{ margin-top:16px; width:100%; background:#1f2233; color:#fff; font-weight:800; padding:11px 0; border-radius:12px; text-align:center; cursor:pointer;}
   .nestnote{ font-size:.64rem; opacity:.5; text-align:center; margin-top:6px;}
 
@@ -170,12 +171,12 @@
 
     <div class="sec">
       <div class="lbl">📖 背书</div>
-      <div class="opts" data-single><span class="opt g">已背完</span><span class="opt">背完部分</span><span class="opt">没背</span></div>
+      <div class="opts" data-single><span class="opt g" data-hl="g">已背完</span><span class="opt" data-hl="a">背完部分</span><span class="opt" data-hl="r">没背</span></div>
     </div>
 
     <div class="sec">
       <div class="lbl">📋 作业</div>
-      <div class="opts" data-single><span class="opt">优秀</span><span class="opt bl">完成</span><span class="opt">没交</span></div>
+      <div class="opts" data-single><span class="opt" data-hl="g">完成</span><span class="opt gray" data-hl="gray">没交</span></div>
     </div>
 
     <div class="donebtn" id="modalDone">完成</div>
@@ -211,8 +212,8 @@
     row.addEventListener('click', (e) => {
       const opt = e.target.closest('.opt');
       if (!opt) return;
-      row.querySelectorAll('.opt').forEach((o) => o.classList.remove('g', 'a', 'r', 'bl'));
-      opt.classList.add('g');
+      row.querySelectorAll('.opt').forEach((o) => o.classList.remove('g', 'a', 'r', 'bl', 'gray'));
+      opt.classList.add(opt.dataset.hl || 'g');
     });
   });
 

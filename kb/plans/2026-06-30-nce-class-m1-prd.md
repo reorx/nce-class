@@ -22,8 +22,8 @@ NCE Class 帮助英语老师在课堂上对学生分组、即时加减分（"加
 ## 2. 范围（Milestone 1）
 
 **纳入 M1：**
-- 老师端 · 管理界面：班级 / 学生 / 分组方案 / 家长邀请 / 上课记录。
-- 老师端 · 课前配置：选班 → 本节课信息 → 选分组方案 → 开始课堂。
+- 老师端 · 管理界面：班级 / 学生 / 默认分组 / 家长邀请 / 上课记录。
+- 老师端 · 课前配置：选班 → 本节课信息 → 确认/微调默认分组 → 开始课堂。
 - 老师端 · 课堂界面：分组看板、加减分、背书检查、作业检查、出勤点名、调组、撤销、结束课堂生成 recap。
 - 老师端 · 学生成长档案（持续追踪）。
 - 学生端 H5：加入班级 onboarding；课堂 recap 查看。
@@ -40,10 +40,10 @@ NCE Class 帮助英语老师在课堂上对学生分组、即时加减分（"加
 |------|------|
 | 组织 / 学校（Organization） | 数据隔离单位；采用多组织设计，M1 只运行单个学校，模型全程带 `orgId` |
 | 老师（Teacher） | 需登录；多老师共享同校的班级与学生 |
-| 班级（Class） | 隶属学校，含一批学生与若干分组方案 |
+| 班级（Class） | 隶属学校，含一批学生与一套默认分组 |
 | 学生（Student） | 隶属班级；有名字、照片(可选)；来源 `source` = parent(家长自助加入) / teacher(老师手动添加) |
 | 家长 | 学生端使用者；M1 不需登录，凭学生专属链接查看 recap |
-| 分组方案（GroupTemplate） | 班级下可复用的分组（如"默认分组""周五分组"） |
+| 默认分组（ClassGroup 集合） | 班级**唯一**的一套分组；在班级管理中编辑，开课时作为初始分组，课前微调后回写更新（M1 不做多方案） |
 | 课堂（ClassSession） | 一次"开始课堂"产生的会话；含日期、课次、分组快照、计分 |
 | 加星 / 计分 | 以 ±1 为单位的奖惩，计入行为事件流 |
 | recap | 一堂课结束后生成的回顾，供家长查看 |
@@ -79,12 +79,14 @@ Credential(id, teacherId, provider[password|wechat], secret/openid, ...)  // 预
 Class(id, orgId, name)
 Student(id, classId, name, photoUrl?, source[parent|teacher], recapToken, createdAt)
 
-GroupTemplate(id, classId, name, isDefault)
-TemplateGroup(id, templateId, name, emoji, orderIndex)
-TemplateMembership(id, templateGroupId, studentId)
+// 班级唯一的一套「默认分组」，直接挂在班级下（不再有多方案/模板层）
+ClassGroup(id, classId, name, emoji, orderIndex)       // 默认分组下的各小组（如 🦁第1组）
+ClassGroupMembership(id, classGroupId, studentId)      // 学生 → 所属默认小组
 
-ClassSession(id, classId, teacherId, date, lessonNumber?, lessonTitle?, status[ongoing|ended], startedAt, endedAt)
-SessionGroup(id, sessionId, name, emoji, orderIndex)   // 开课时由模板快照生成，可课中调整
+ClassSession(id, classId, teacherId, date, lessonNumber?, lessonTitle?, status[ongoing|ended],
+             plannedDurationMin,   // 课前配置的课堂总时长，默认 120（2h）；驱动课堂界面倒计时
+             startedAt, endedAt)   // 实际上课时长 = endedAt − startedAt，结束时定格；提前结束即记录较短的真实时长
+SessionGroup(id, sessionId, name, emoji, orderIndex)   // 开课时由班级默认分组快照生成，可课中调整
 SessionMembership(id, sessionId, studentId, sessionGroupId?, attendance[present|absent])  // 默认 present；attendance=absent 或 sessionGroupId 为空 = 本节不计分
 
 ScoreEvent(id, sessionId, targetType[group|student], targetId,
@@ -93,7 +95,7 @@ ScoreEvent(id, sessionId, targetType[group|student], targetId,
            createdAt, createdBy)
 
 CheckRecord(id, sessionId, studentId, type[recitation|homework],
-            status, updatedAt)   // 见 §8 枚举；缺记录视为"未检查"
+            status, updatedAt)   // 见 §8 枚举；缺记录：背书视为"未检查"，作业视为"没交"
 ```
 
 **派生计算规则：**
@@ -107,7 +109,7 @@ CheckRecord(id, sessionId, studentId, type[recitation|homework],
 ## 6. 计分机制（规则细节）
 
 - 加分 / 扣分均以 **±1** 为单位，可连续点击累加。
-- 两个计分目标：**小组**（点列头）与**个人**（学生浮窗）。个人加分嵌套计入其组（见 §5）。
+- 两个计分目标：**小组**（点组表头 → 组浮窗）与**个人**（点学生卡 → 学生浮窗）。个人加分嵌套计入其组；组级加减分只计入组分、不分摊到个人（见 §5）。
 - 所有加减分写成 `ScoreEvent`，满足"记录行为"诉求；recap 的"亮眼 / 被提醒"名单从事件流派生，规则如下（阈值可配置）：
   - **被提醒** = 本节存在任意负向事件（任一 −1）的学生。
   - **亮眼** = 本节个人净加分 ≥ 2 的学生（默认阈值 2；若希望"取前 N 名"亦可配置，但 M1 默认用固定阈值，保证确定性）。
@@ -127,7 +129,7 @@ CheckRecord(id, sessionId, studentId, type[recitation|homework],
 
 **班级详情**（子标签）
 - `学生`：头像 + 名字 + 累计总分的名单网格；点学生 → 成长档案。学生有两个来源：家长经班级邀请链接**自助加入**（`source=parent`，填完照片+名字即为正式学生），或老师 `手动添加`（`source=teacher`，可仅填名字、照片占位，老师可后补照片）。因班级通用链接不做认领匹配，可能出现重复学生，老师可在名单里**删除 / 合并**重复项。
-- `分组方案`：管理默认 / 其他分组方案。
+- `分组`：编辑班级**唯一的默认分组**（增删小组、改名 / emoji、拖拽学生调整成员）。此处保存即更新默认分组；下次开课以此为初始状态。
 - `邀请家长`：邀请链接 + 二维码 + 复制；家长微信打开完善信息即加入。
 - `上课记录`：历次 ClassSession 列表，可查看对应 recap。
 
@@ -135,27 +137,33 @@ CheckRecord(id, sessionId, studentId, type[recitation|homework],
 
 - 顶部：返回班级列表 + 班级名 + 学生数。
 - **本节课**（可选）：课次号 + 课题，进入 recap 与档案。
-- **分组方案**：选已存方案（默认 / 其他）或 `+ 新建分组`；下方预览各组成员，可拖拽微调。
+- **课堂时间**：本节课计划时长，**默认 `2 小时`（120 分钟）**，可调；写入 `ClassSession.plannedDurationMin`，驱动课堂界面右上角倒计时（见 §7.3）。
+- **分组**：默认呈现班级的**默认分组**（无需选择方案）；可现场微调——拖拽成员、增删小组、改名 / emoji。
 - **未分组 / 今日缺席**暂存区：缺席学生拖入；留在此处则本节不计分。出勤也可在课堂界面的「出勤」点名 view 中调整（见 §7.3），二者共享同一出勤状态。
-- `开始课堂 →` 进入课堂界面（按当前分组生成 SessionGroup 快照）。
+- `开始课堂 →` 先将当前（微调后）分组**回写为该班默认分组**（更新 ClassGroup / ClassGroupMembership），再据此生成 SessionGroup / SessionMembership 快照，进入课堂界面。即：课前的调整会沉淀为下次的默认起点。
 
 ### 7.3 老师端 · 课堂界面（核心，投屏）
 
-整体：**看板列**（每组一列，列头含组名/emoji + 组分）+ 顶部信息条（班级、课次、计时）+ 底部 **dock**。dock 左侧含 **view 切换** tab：`上课`（默认）/ `背书检查` / `作业检查` / `调组`，tab 组左侧另置独立的 `出勤` 按钮（快捷点名，非常态教学 view，故不并入 tab）；dock 右侧为 `撤销`、`结束课堂`。各 view 共用同一套数据，仅呈现/交互不同——一致性强。
+整体：**看板列**（每组一列，列头含组名/emoji + 组分）+ 顶部信息条（班级、课次、**倒计时**）+ 底部 **dock**。dock 左侧含 **view 切换** tab：`上课`（默认）/ `背书检查` / `作业检查` / `调组`，tab 组左侧另置独立的 `出勤` 按钮（快捷点名，非常态教学 view，故不并入 tab）；dock 右侧为 `撤销`、`结束课堂`。各 view 共用同一套数据，仅呈现/交互不同——一致性强。
+
+右上角**倒计时**按课前配置的课堂时长（`plannedDurationMin`，默认 2h）从满时长开始倒数；归零后转为**超时计时**（如 `+03:12`）提示，仅作提醒、**不自动结束课堂**（是否放学由老师点"结束课堂"决定）。
 
 **上课 view**
-- 每组一列，列内学生卡（头像 + 名字 + 本节个人分）；卡上两个状态 label：`背`（背书）/ `作`（作业），按状态着色（统一配色见 §8：绿/黄/蓝/红，灰=未检查）。
+- 每组一列，列内学生卡（头像 + 名字 + 本节个人分）；卡上两个状态 label：`背`（背书）/ `作`（作业），按状态着色（统一配色见 §8）。
 - 投屏常态**清晰不虚化**；点**学生卡**才在屏幕**居中弹出浮窗**、背景轻虚化聚焦（清晰版与浮窗版为同一界面的两个状态，浮窗是就地交互而非独立页面）：
   - 加分区：等宽大按钮 `−1`（红）/ `+1⭐`（绿），可连点，实时显示本次累计（提示"个人+N，小组同步+N"）。
   - `背书`区：已背完 / 背完部分 / 没背（当前高亮）。
-  - `作业`区：优秀 / 完成 / 没交（当前高亮）。
+  - `作业`区：完成 / 没交（当前高亮；默认没交）。
   - 浮窗**停留**：加分连点、背书/作业选完高亮，点"完成"或点窗外关闭；关闭后背景恢复清晰。
-- 点**列头** → 给整组 +1⭐（快捷）；列头亦提供 `−`（组级 −1）。组级加减分对应 `ScoreEvent(targetType=group)`，只计入组分、不分摊到个人。
+- 点**列头（组名 / 表头位置）** → 屏幕**居中弹出组浮窗**（与学生浮窗同构，背景同样轻虚化聚焦）：
+  - 顶部显示 组名 / emoji + **本组本节组分**（当前分数）。
+  - 加分区：等宽大按钮 `−1`（红）/ `+1⭐`（绿），可连点，实时显示本次累计；点"完成"或点窗外关闭。
+  - 组级加减分对应 `ScoreEvent(targetType=group)`：**独立计入该组组分，不计入任何学生的个人分**（区别于学生浮窗"个人 + 小组同步"——组浮窗只动组分）。
 
 **背书检查 view / 作业检查 view**
 - 切换为"按状态分段"的视角（非看板、非按组）：有几个状态就分几段。
   - 背书：`未检查` / `已背完` / `背完部分` / `没背`。
-  - 作业：`未批改` / `优秀` / `完成` / `没交`。
+  - 作业：`完成` / `没交`（仅两段，默认没交，无"未批改"段）。
 - 每段：标题（配色圆点）+ 人数；下方学生以**带头像的 badge** 横向流式排列（与课堂卡片风格一致），badge 按所在段着色，保留小组号小标签做参考。
 - 点 badge → 居中浮窗选状态 → badge 归入对应段。顶部显示总进度（如"已检查 11/16"）。
 - 作业检查可选**盖章式批改**：先选一个章（如"完成"），再连点学生快速盖（大批同状态时提速）。此为可延后的 nice-to-have，非 M1 关键路径。
@@ -169,7 +177,8 @@ CheckRecord(id, sessionId, studentId, type[recitation|homework],
 - 拖拽学生卡在组间移动；课中可随时调整。调组只影响后续事件归属，不回溯历史组分。
 
 **结束课堂**
-- 结束 session（status=ended），生成本堂 recap。
+- 结束 session（status=ended），记录 `endedAt`；**实际上课时长 = endedAt − startedAt**。提前放学（早于计划时长即点"结束课堂"）也如实记录真实时长，与计划时长 `plannedDurationMin` 各自留存、互不覆盖。
+- 生成本堂 recap。
 
 ### 7.4 老师端 · 学生成长档案（持续追踪）
 
@@ -197,10 +206,10 @@ CheckRecord(id, sessionId, studentId, type[recitation|homework],
 
 ## 8. 状态枚举
 
-- **作业（homework）**：`优秀` / `完成` / `没交`；默认 `未检查`。
+- **作业（homework）**：`完成` / `没交` 两种状态；**默认 `没交`**（完成=绿，没交=灰）。
 - **背书（recitation）**：`已背完` / `背完部分` / `没背`；默认 `未检查`。
-- 两者都存于 `CheckRecord.status`；"未检查" = 该 session 该生该类型**无记录**（非独立枚举值）。作业检查 view 里分段标题写作"未批改"，与此处"未检查"是**同一状态**，仅措辞不同。
-- 课堂卡片角标与检查 view 配色：绿（已背完/优秀）/ 黄（背完部分）/ 蓝（完成）/ 红（没背/没交）/ 灰（未检查）。
+- 两者都存于 `CheckRecord.status`。背书的"未检查" = 该 session 该生该类型**无记录**（非独立枚举值）；作业无"未检查/未批改"态，缺记录即视为 `没交`。
+- 课堂卡片角标与检查 view 配色：绿（已背完 / 作业完成）/ 黄（背完部分）/ 红（没背）/ 灰（背书未检查 / 作业没交）。
 
 ## 9. 隐私与边界
 
@@ -221,7 +230,7 @@ CheckRecord(id, sessionId, studentId, type[recitation|homework],
 本 PRD 覆盖老师管理、四视图课堂、成长档案、学生端 H5、认证与存储——作为一个 milestone 合理，但作为单个实现计划偏大。建议下游实现计划按以下顺序分阶段，每阶段可独立验证：
 
 1. **基础**：数据模型（Drizzle schema，全程带 `orgId`）+ 迁移 + 自建认证（用户名+密码，预留微信登录）+ 存储抽象层接入。
-2. **老师管理端**：班级 / 学生（含通用邀请链接、删除合并）/ 分组方案 / 班级详情。
+2. **老师管理端**：班级 / 学生（含通用邀请链接、删除合并）/ 默认分组编辑 / 班级详情。
 3. **课堂引擎**：开始课堂（分组快照）→ 四视图（上课/背书检查/作业检查/调组）+ 出勤点名 → 事件流计分 → 撤销 → 结束课堂。
 4. **派生与档案**：组分/个人分/累计总分计算、recap 生成、学生成长档案。
 5. **学生端 H5**：onboarding 自助加入 + 学生专属链接 recap。
