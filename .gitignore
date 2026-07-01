@@ -3,3 +3,7 @@ node_modules/
 .DS_Store
 tmp/
 nce-class-v1-design/
+dist/
+server/data/
+*.local
+.env

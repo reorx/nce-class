@@ -1,0 +1,16 @@
+{
+  "name": "nce-class",
+  "version": "0.1.0",
+  "private": true,
+  "description": "NCE Class · M1 — teacher admin + classroom assistant",
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "dev:server": "pnpm --filter server dev",
+    "dev:web": "pnpm --filter web dev",
+    "db:reset": "pnpm --filter server db:reset",
+    "db:generate": "pnpm --filter server db:generate"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["better-sqlite3", "esbuild"]
+  }
+}

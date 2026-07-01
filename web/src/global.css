@@ -1,0 +1,50 @@
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+body {
+  font-family: 'IBM Plex Sans', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  background: #f6f7f9;
+  color: #1e2430;
+  -webkit-font-smoothing: antialiased;
+}
+input {
+  font-family: inherit;
+}
+input:focus {
+  outline: none;
+}
+button {
+  font-family: inherit;
+}
+a {
+  color: inherit;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #dde1e7;
+  border-radius: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+.mono {
+  font-family: 'IBM Plex Mono', monospace;
+}
+@keyframes dc-pop {
+  from {
+    transform: translateY(8px) scale(0.985);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
