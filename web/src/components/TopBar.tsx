@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { Me } from '../lib/api';
+import { api, type Me } from '../lib/api';
 
 const navBtn = (active: boolean): React.CSSProperties => ({
   padding: '7px 13px',
@@ -125,7 +125,16 @@ export function TopBar({ me, active = 'classes' }: { me: Me | null; active?: 'cl
                 </button>
               ))}
               <div style={{ height: 1, background: '#f1f3f6', margin: '5px 0' }} />
-              <button style={menuItem('#cf4444')}>退出登录</button>
+              <button
+                style={menuItem('#cf4444')}
+                onClick={async () => {
+                  await api.logout().catch(() => {});
+                  // Full reload clears in-memory auth state and re-runs the guard.
+                  window.location.assign('/login');
+                }}
+              >
+                退出登录
+              </button>
             </div>
           </>
         )}

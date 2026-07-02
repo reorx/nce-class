@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url';
 import * as schema from './schema.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-export const DB_PATH = resolve(__dirname, '../../data/app.db');
+// Overridable so integration tests can point at a throwaway temp database.
+export const DB_PATH = process.env.NCE_DB_PATH || resolve(__dirname, '../../data/app.db');
 
 const dir = dirname(DB_PATH);
 if (!existsSync(dir)) mkdirSync(dir, { recursive: true });

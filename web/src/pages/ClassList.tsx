@@ -1,19 +1,50 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Modal } from '../components/Modal';
 import { TopBar } from '../components/TopBar';
+import { useToast } from '../components/Toast';
 import { api, type ClassListItem, type Me } from '../lib/api';
 import { GREEN, GREEN_DARK, PAL } from '../lib/theme';
+
+const LEVELS = ['新概念一册', '新概念二册', '新概念三册'];
 
 export function ClassList({ me }: { me: Me | null }) {
   const [classes, setClasses] = useState<ClassListItem[]>([]);
   const [search, setSearch] = useState('');
+  const [createOpen, setCreateOpen] = useState(false);
+  const [name, setName] = useState('');
+  const [level, setLevel] = useState<string>(LEVELS[1]);
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+  const nav = useNavigate();
 
-  useEffect(() => {
+  const reload = () =>
     api
       .classes()
       .then(setClasses)
       .catch(() => {});
+
+  useEffect(() => {
+    reload();
   }, []);
+
+  async function submitCreate() {
+    const nm = name.trim();
+    if (!nm || busy) return;
+    setBusy(true);
+    try {
+      const created = await api.createClass(nm, level || null);
+      await reload();
+      toast(`已创建「${nm}」`);
+      setCreateOpen(false);
+      setName('');
+      nav(`/classes/${created.id}`);
+    } catch {
+      toast('创建失败，请重试', 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const list = useMemo(
     () => classes.filter((c) => !search.trim() || c.name.includes(search.trim())),
@@ -65,6 +96,7 @@ export function ClassList({ me }: { me: Me | null }) {
               />
             </div>
             <button
+              onClick={() => setCreateOpen(true)}
               style={{
                 height: 38,
                 display: 'flex',
@@ -99,9 +131,98 @@ export function ClassList({ me }: { me: Me | null }) {
           </div>
         )}
       </div>
+
+      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="新建班级">
+        <label style={labelStyle}>班级名称</label>
+        <input
+          value={name}
+          autoFocus
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && submitCreate()}
+          placeholder="如 三年级C班"
+          style={fieldStyle}
+        />
+        <label style={{ ...labelStyle, marginTop: 15 }}>课程级别</label>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {LEVELS.map((lv) => {
+            const on = level === lv;
+            return (
+              <button
+                key={lv}
+                onClick={() => setLevel(lv)}
+                style={{
+                  padding: '8px 13px',
+                  borderRadius: 8,
+                  border: `1px solid ${on ? GREEN : '#e2e5ea'}`,
+                  background: on ? '#eef7f0' : '#fff',
+                  color: on ? '#2c7a48' : '#5b6472',
+                  fontWeight: 600,
+                  fontSize: 13,
+                  cursor: 'pointer',
+                }}
+              >
+                {lv}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 22 }}>
+          <button
+            style={{
+              height: 40,
+              padding: '0 18px',
+              background: '#fff',
+              color: '#5b6472',
+              border: '1px solid #e2e5ea',
+              borderRadius: 9,
+              fontWeight: 600,
+              fontSize: 14,
+              cursor: 'pointer',
+            }}
+            onClick={() => setCreateOpen(false)}
+          >
+            取消
+          </button>
+          <button
+            style={{
+              height: 40,
+              padding: '0 18px',
+              background: GREEN,
+              color: '#fff',
+              border: 'none',
+              borderRadius: 9,
+              fontWeight: 600,
+              fontSize: 14,
+              cursor: 'pointer',
+              opacity: name.trim() && !busy ? 1 : 0.55,
+            }}
+            onClick={submitCreate}
+          >
+            {busy ? '创建中…' : '创建班级'}
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }
+
+const labelStyle: CSSProperties = {
+  display: 'block',
+  fontSize: 12.5,
+  fontWeight: 600,
+  color: '#5b6472',
+  marginBottom: 6,
+};
+const fieldStyle: CSSProperties = {
+  width: '100%',
+  height: 40,
+  padding: '0 12px',
+  border: '1px solid #e2e5ea',
+  borderRadius: 9,
+  fontSize: 14,
+  color: '#1e2430',
+  background: '#fbfcfd',
+};
 
 function ClassCard({ c, ci }: { c: ClassListItem; ci: number }) {
   const shown = c.roster.slice(0, 4);
