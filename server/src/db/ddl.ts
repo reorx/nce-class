@@ -13,19 +13,45 @@ CREATE TABLE IF NOT EXISTS teachers (
 );
 CREATE TABLE IF NOT EXISTS credentials (
   id TEXT PRIMARY KEY, teacher_id TEXT NOT NULL, provider TEXT NOT NULL,
-  secret TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  secret TEXT, wechat_account_id TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS wechat_accounts (
+  id TEXT PRIMARY KEY, openid TEXT NOT NULL UNIQUE, unionid TEXT,
+  nickname TEXT, avatar_url TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')), last_login_at TEXT
 );
 CREATE TABLE IF NOT EXISTS classes (
   id TEXT PRIMARY KEY, org_id TEXT NOT NULL, name TEXT NOT NULL,
   level TEXT, teacher_id TEXT,
-  invite_token TEXT NOT NULL UNIQUE,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS class_invites (
+  id TEXT PRIMARY KEY, class_id TEXT NOT NULL, token TEXT NOT NULL UNIQUE,
+  created_by TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS students (
   id TEXT PRIMARY KEY, class_id TEXT NOT NULL, name TEXT NOT NULL,
+  en_name TEXT, parent_phone TEXT,
   photo_url TEXT, source TEXT NOT NULL, recap_token TEXT NOT NULL UNIQUE,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS student_wechat_bindings (
+  id TEXT PRIMARY KEY, student_id TEXT NOT NULL, wechat_account_id TEXT NOT NULL,
+  created_by TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_student_wechat
+  ON student_wechat_bindings(student_id, wechat_account_id);
+CREATE TABLE IF NOT EXISTS join_requests (
+  id TEXT PRIMARY KEY, class_id TEXT NOT NULL, wechat_account_id TEXT NOT NULL,
+  invite_id TEXT, cn_name TEXT NOT NULL, en_name TEXT, parent_phone TEXT,
+  photo_key TEXT, status TEXT NOT NULL DEFAULT 'pending',
+  linked_student_id TEXT, handled_by TEXT, handled_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_join_request_pending
+  ON join_requests(class_id, wechat_account_id) WHERE status = 'pending';
 CREATE TABLE IF NOT EXISTS class_groups (
   id TEXT PRIMARY KEY, class_id TEXT NOT NULL, name TEXT NOT NULL,
   emoji TEXT, order_index INTEGER NOT NULL DEFAULT 0

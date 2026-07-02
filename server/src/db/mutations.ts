@@ -1,8 +1,5 @@
 import type DatabaseType from 'better-sqlite3';
-import { customAlphabet, nanoid } from 'nanoid';
-
-// Parents type this by hand in the miniapp, so lowercase alphanumerics only.
-const inviteToken = customAlphabet('abcdefghijkmnpqrstuvwxyz23456789', 10);
+import { nanoid } from 'nanoid';
 
 type DB = DatabaseType.Database;
 
@@ -61,8 +58,8 @@ export function createClass(
 ): string {
   const id = `c-${nanoid(10)}`;
   sqlite
-    .prepare(`INSERT INTO classes (id, org_id, name, level, teacher_id, invite_token) VALUES (?,?,?,?,?,?)`)
-    .run(id, p.orgId, p.name, p.level, p.teacherId, inviteToken());
+    .prepare(`INSERT INTO classes (id, org_id, name, level, teacher_id) VALUES (?,?,?,?,?)`)
+    .run(id, p.orgId, p.name, p.level, p.teacherId);
   return id;
 }
 
@@ -75,22 +72,119 @@ export function addStudent(sqlite: DB, p: { classId: string; name: string }): st
   return id;
 }
 
-/** Parent self-join (§7.5): create a parent-sourced student with a fresh recap token. */
-export function addParentStudent(
-  sqlite: DB,
-  p: { classId: string; name: string; photoKey: string | null },
-): { id: string; recapToken: string } {
-  const id = `s-${nanoid(10)}`;
-  const recapToken = nanoid(24);
+/** wx.login upsert: create the account on first sight, stamp last_login_at. Returns the id. */
+export function upsertWechatAccount(sqlite: DB, p: { openid: string; unionid: string | null }): string {
+  const existing = sqlite.prepare(`SELECT id FROM wechat_accounts WHERE openid=?`).get(p.openid) as any;
+  if (existing) {
+    sqlite.prepare(`UPDATE wechat_accounts SET last_login_at=datetime('now') WHERE id=?`).run(existing.id);
+    return existing.id;
+  }
+  const id = `wa-${nanoid(10)}`;
   sqlite
-    .prepare(`INSERT INTO students (id, class_id, name, photo_url, source, recap_token) VALUES (?,?,?,?,?,?)`)
-    .run(id, p.classId, p.name, p.photoKey, 'parent', recapToken);
-  return { id, recapToken };
+    .prepare(`INSERT INTO wechat_accounts (id, openid, unionid, last_login_at) VALUES (?,?,?,datetime('now'))`)
+    .run(id, p.openid, p.unionid);
+  return id;
+}
+
+/** Bind a wechat account to a teacher: one provider='wechat' credential row. */
+export function bindTeacherWechat(sqlite: DB, p: { teacherId: string; wechatAccountId: string }): void {
+  sqlite
+    .prepare(`INSERT INTO credentials (id, teacher_id, provider, wechat_account_id) VALUES (?,?,'wechat',?)`)
+    .run(nanoid(), p.teacherId, p.wechatAccountId);
+}
+
+/** One-shot expiring invite (default 7 days). Returns the row for sharing. */
+export function createInvite(
+  sqlite: DB,
+  p: { classId: string; teacherId: string },
+): { id: string; token: string; expiresAt: string } {
+  const id = `inv-${nanoid(10)}`;
+  const token = nanoid(16);
+  sqlite
+    .prepare(
+      `INSERT INTO class_invites (id, class_id, token, created_by, expires_at)
+       VALUES (?,?,?,?, datetime('now', '+7 days'))`,
+    )
+    .run(id, p.classId, token, p.teacherId);
+  const row = sqlite.prepare(`SELECT expires_at FROM class_invites WHERE id=?`).get(id) as any;
+  return { id, token, expiresAt: row.expires_at };
+}
+
+export interface JoinRequestInput {
+  classId: string;
+  wechatAccountId: string;
+  inviteId: string;
+  cnName: string;
+  enName: string | null;
+  parentPhone: string | null;
+  photoKey: string | null;
+}
+
+/**
+ * Register through an invite. A resubmit while still pending overwrites the
+ * pending row's fields (decision: 覆盖更新) instead of erroring on the partial
+ * unique index. Returns the join_request id.
+ */
+export function upsertJoinRequest(sqlite: DB, p: JoinRequestInput): string {
+  const existing = sqlite
+    .prepare(`SELECT id FROM join_requests WHERE class_id=? AND wechat_account_id=? AND status='pending'`)
+    .get(p.classId, p.wechatAccountId) as any;
+  if (existing) {
+    sqlite
+      .prepare(`UPDATE join_requests SET invite_id=?, cn_name=?, en_name=?, parent_phone=?, photo_key=? WHERE id=?`)
+      .run(p.inviteId, p.cnName, p.enName, p.parentPhone, p.photoKey, existing.id);
+    return existing.id;
+  }
+  const id = `jr-${nanoid(10)}`;
+  sqlite
+    .prepare(
+      `INSERT INTO join_requests (id, class_id, wechat_account_id, invite_id, cn_name, en_name, parent_phone, photo_key)
+       VALUES (?,?,?,?,?,?,?,?)`,
+    )
+    .run(id, p.classId, p.wechatAccountId, p.inviteId, p.cnName, p.enName, p.parentPhone, p.photoKey);
+  return id;
+}
+
+/**
+ * Link a pending join_request to an existing student (single transaction):
+ * ① create the student↔account binding (idempotent), ② mark the request
+ * linked, ③ backfill the student's EMPTY fields from the registration —
+ * photo/en_name/parent_phone never overwrite values the teacher already set.
+ */
+export function linkJoinRequest(sqlite: DB, p: { requestId: string; studentId: string; teacherId: string }): void {
+  const tx = sqlite.transaction(() => {
+    const req = sqlite.prepare(`SELECT * FROM join_requests WHERE id=?`).get(p.requestId) as any;
+    sqlite
+      .prepare(
+        `INSERT OR IGNORE INTO student_wechat_bindings (id, student_id, wechat_account_id, created_by)
+         VALUES (?,?,?,?)`,
+      )
+      .run(nanoid(), p.studentId, req.wechat_account_id, p.teacherId);
+    sqlite
+      .prepare(
+        `UPDATE join_requests SET status='linked', linked_student_id=?, handled_by=?, handled_at=datetime('now') WHERE id=?`,
+      )
+      .run(p.studentId, p.teacherId, p.requestId);
+    sqlite
+      .prepare(
+        `UPDATE students SET photo_url=COALESCE(photo_url, ?), en_name=COALESCE(en_name, ?), parent_phone=COALESCE(parent_phone, ?) WHERE id=?`,
+      )
+      .run(req.photo_key, req.en_name, req.parent_phone, p.studentId);
+  });
+  tx();
+}
+
+/** Dismiss a pending join_request (kept for history, just leaves the queue). */
+export function dismissJoinRequest(sqlite: DB, p: { requestId: string; teacherId: string }): void {
+  sqlite
+    .prepare(`UPDATE join_requests SET status='dismissed', handled_by=?, handled_at=datetime('now') WHERE id=?`)
+    .run(p.teacherId, p.requestId);
 }
 
 /** Hard-delete a student and all ledger rows referencing them (single transaction). */
 export function deleteStudent(sqlite: DB, studentId: string): void {
   const tx = sqlite.transaction((sid: string) => {
+    sqlite.prepare(`DELETE FROM student_wechat_bindings WHERE student_id=?`).run(sid);
     sqlite.prepare(`DELETE FROM class_group_memberships WHERE student_id=?`).run(sid);
     sqlite.prepare(`DELETE FROM session_memberships WHERE student_id=?`).run(sid);
     sqlite.prepare(`DELETE FROM score_events WHERE target_type='student' AND target_id=?`).run(sid);

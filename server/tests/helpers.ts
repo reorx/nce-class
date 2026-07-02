@@ -15,6 +15,7 @@ export async function setupTestApp(): Promise<{ app: Express; sqlite: DB; reseed
   process.env.NCE_DB_PATH = join(mkdtempSync(join(tmpdir(), 'nce-test-')), 'app.db');
   process.env.NCE_UPLOAD_DIR = mkdtempSync(join(tmpdir(), 'nce-uploads-'));
   process.env.AUTH_SECRET = 'test-secret';
+  process.env.WX_MOCK = '1'; // code2session stub: code `mock:<name>` → openid `mock-openid-<name>`
   const { sqlite } = await import('../src/db/client.js');
   sqlite.exec(DDL);
   seed(sqlite);
@@ -30,9 +31,13 @@ const TABLES = [
   'class_sessions',
   'class_group_memberships',
   'class_groups',
+  'join_requests',
+  'student_wechat_bindings',
+  'class_invites',
   'students',
   'classes',
   'credentials',
+  'wechat_accounts',
   'teachers',
   'organizations',
 ];
@@ -62,10 +67,10 @@ function seed(sqlite: DB) {
   teacher('t-out', 'org-2', '外老师', 'waiguo', 'teacher');
 
   run(
-    `INSERT INTO classes (id, org_id, name, level, teacher_id, invite_token, created_at) VALUES ('c1','org-1','三年级A班','新概念二册','t-wangli','inv-c1','2026-06-01 08:00:00')`,
+    `INSERT INTO classes (id, org_id, name, level, teacher_id, created_at) VALUES ('c1','org-1','三年级A班','新概念二册','t-wangli','2026-06-01 08:00:00')`,
   );
   run(
-    `INSERT INTO classes (id, org_id, name, level, teacher_id, invite_token, created_at) VALUES ('c-out','org-2','外班',NULL,'t-out','inv-out','2026-06-01 08:00:01')`,
+    `INSERT INTO classes (id, org_id, name, level, teacher_id, created_at) VALUES ('c-out','org-2','外班',NULL,'t-out','2026-06-01 08:00:01')`,
   );
 
   const student = (id: string, cls: string, name: string, source: string, i: number) =>
@@ -147,4 +152,32 @@ function seed(sqlite: DB) {
      ('ck2','sess1','s1','recitation','已背完'),
      ('ck3','sess1','s2','recitation','背完部分')`,
   );
+
+  // mock wechat accounts (mirror the dev seed): a bound teacher, a bound
+  // parent (→ s1), a cross-org bound teacher; dev-new is created by logging in.
+  run(
+    `INSERT INTO wechat_accounts (id, openid, nickname) VALUES
+     ('wa-teacher','mock-openid-dev-teacher','王老师(dev)'),
+     ('wa-parent','mock-openid-dev-parent','小明爸爸(dev)'),
+     ('wa-out','mock-openid-dev-out','外老师(dev)')`,
+  );
+  run(
+    `INSERT INTO credentials (id, teacher_id, provider, wechat_account_id) VALUES
+     ('cred-wx-wangli','t-wangli','wechat','wa-teacher'),
+     ('cred-wx-out','t-out','wechat','wa-out')`,
+  );
+  run(
+    `INSERT INTO student_wechat_bindings (id, student_id, wechat_account_id, created_by) VALUES
+     ('b1','s1','wa-parent','t-wangli')`,
+  );
+}
+
+/** POST /api/wx/login with a mock code and return the Bearer token. */
+export async function wxLogin(app: Express, name: string): Promise<string> {
+  const request = (await import('supertest')).default;
+  const res = await request(app)
+    .post('/api/wx/login')
+    .send({ code: `mock:${name}` });
+  if (res.status !== 200) throw new Error(`wx login failed: ${res.status} ${JSON.stringify(res.body)}`);
+  return res.body.token;
 }

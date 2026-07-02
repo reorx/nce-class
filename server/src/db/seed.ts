@@ -146,9 +146,13 @@ function run() {
     'class_sessions',
     'class_group_memberships',
     'class_groups',
+    'join_requests',
+    'student_wechat_bindings',
+    'class_invites',
     'students',
     'classes',
     'credentials',
+    'wechat_accounts',
     'teachers',
     'organizations',
   ])
@@ -181,7 +185,32 @@ function run() {
     seedOtherClass(item as (typeof OTHER_CLASSES)[number]);
   }
 
+  seedMockWechatAccounts();
+
   console.log('✅ seed complete →', sqlite.name);
+}
+
+// Three deterministic accounts for the WX_MOCK login stub (code `mock:<name>`
+// maps to openid `mock-openid-<name>`), covering the three miniapp roles:
+// a bound teacher, a bound parent, and a brand-new visitor.
+function seedMockWechatAccounts() {
+  const account = (name: string, nickname: string) => {
+    const id = `wa-${name}`;
+    db.insert(t.wechatAccounts)
+      .values({ id, openid: `mock-openid-${name}`, nickname })
+      .run();
+    return id;
+  };
+  const teacherWa = account('dev-teacher', '王老师(dev)');
+  const parentWa = account('dev-parent', '小明爸爸(dev)');
+  account('dev-new', '新家长(dev)');
+
+  db.insert(t.credentials)
+    .values({ id: nanoid(), teacherId: 't-wangli', provider: 'wechat', wechatAccountId: teacherWa })
+    .run();
+  db.insert(t.studentWechatBindings)
+    .values({ id: nanoid(), studentId: 's-c1-1', wechatAccountId: parentWa, createdBy: 't-wangli' })
+    .run();
 }
 
 function seedC1() {
@@ -193,7 +222,6 @@ function seedC1() {
       name: cls.name,
       level: cls.level,
       teacherId: cls.teacher,
-      inviteToken: 'c1x8kq2mlp', // 固定值保 demo 稳定（家长输码演示）
       createdAt: ts(),
     })
     .run();
@@ -301,7 +329,6 @@ function seedOtherClass(c: (typeof OTHER_CLASSES)[number]) {
       name: c.name,
       level: c.level,
       teacherId: c.teacher,
-      inviteToken: `${c.id}invite23`, // 固定值保 demo 稳定
       createdAt: ts(),
     })
     .run();

@@ -82,11 +82,21 @@ export interface ClassDetail {
   studentCount: number;
   groupCount: number;
   sessionCount: number;
-  inviteToken: string;
   students: Student[];
   groups: Group[];
   sessions: Session[];
   lastRecap: LastRecap | null;
+}
+
+/** A pending miniapp join request (read-only here; handled inside the miniapp). */
+export interface JoinRequestItem {
+  id: string;
+  cnName: string;
+  enName: string | null;
+  parentPhone: string | null;
+  photoUrl: string | null;
+  nickname: string | null;
+  createdAt: string;
 }
 
 /** A group as sent to the default-grouping save endpoint (replace semantics). */
@@ -178,6 +188,7 @@ export const api = {
   saveGrouping: (classId: string, groups: GroupSave[]) =>
     req<ClassDetail>('PUT', `/api/classes/${classId}/groups`, { groups }),
   getSessionRecap: (sessionId: string) => get<Recap>(`/api/sessions/${sessionId}/recap`),
+  getJoinRequests: (classId: string) => get<JoinRequestItem[]>(`/api/classes/${classId}/join-requests`),
   commitSession: (classId: string, payload: CommitPayload) =>
     req<CommitResult>('POST', `/api/classes/${classId}/sessions`, payload),
 };

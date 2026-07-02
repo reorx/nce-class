@@ -1,31 +1,40 @@
 import { Button, Image, Input, Text, View } from '@tarojs/components';
-import Taro from '@tarojs/taro';
-import { useState } from 'react';
-import { getJoinPreview, joinClass, uploadPhoto, type ClassPreview } from '../../lib/api';
-import { addChild } from '../../lib/children';
-import { loadChildren, saveChildren } from '../../lib/childrenStore';
+import Taro, { useRouter } from '@tarojs/taro';
+import { useEffect, useState } from 'react';
+import { getInvitePreview, joinByInvite, uploadPhoto, type ClassPreview } from '../../lib/api';
+import { validateJoinForm } from '../../lib/flow';
+import { ensureLogin } from '../../lib/wxAuth';
 import './index.scss';
 
 const toastErr = (e: any) => Taro.showToast({ title: e?.message ?? '出错了', icon: 'none' });
 
+// 分享卡片落地页 ?invite=<token>：班级预览 + 中文名/英文名/家长手机号/头像
+// → 提交 join_request（不建学生），回首页进入「等待老师确认」态。
 export default function Join() {
-  const [code, setCode] = useState('');
+  const router = useRouter();
+  const invite = router.params.invite ?? '';
   const [preview, setPreview] = useState<ClassPreview | null>(null);
-  const [name, setName] = useState('');
+  const [invalid, setInvalid] = useState<string | null>(null);
+  const [cnName, setCnName] = useState('');
+  const [enName, setEnName] = useState('');
+  const [phone, setPhone] = useState('');
   const [photo, setPhoto] = useState<{ key: string; url: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
-  async function lookup() {
-    const c = code.trim().toLowerCase();
-    if (!c) return Taro.showToast({ title: '请输入邀请码', icon: 'none' });
-    setBusy(true);
-    try {
-      setPreview(await getJoinPreview(c));
-    } catch (e) {
-      toastErr(e);
-    }
-    setBusy(false);
-  }
+  useEffect(() => {
+    (async () => {
+      if (!invite) {
+        setInvalid('请通过老师分享到班级群的邀请卡片进入');
+        return;
+      }
+      try {
+        await ensureLogin();
+        setPreview(await getInvitePreview(invite));
+      } catch (e: any) {
+        setInvalid(e?.message ?? '邀请无效');
+      }
+    })();
+  }, [invite]);
 
   async function pickPhoto() {
     const res = await Taro.chooseImage({ count: 1, sizeType: ['compressed'] });
@@ -33,30 +42,25 @@ export default function Join() {
     if (!filePath) return;
     setBusy(true);
     try {
-      setPhoto(await uploadPhoto(code.trim().toLowerCase(), filePath));
+      setPhoto(await uploadPhoto(filePath));
     } catch (e) {
       toastErr(e);
     }
     setBusy(false);
   }
 
-  async function join() {
-    if (!name.trim()) return Taro.showToast({ title: '请填写孩子的名字', icon: 'none' });
+  async function submit() {
+    const err = validateJoinForm({ cnName, parentPhone: phone });
+    if (err) return Taro.showToast({ title: err, icon: 'none' });
     setBusy(true);
     try {
-      const r = await joinClass(code.trim().toLowerCase(), {
-        name: name.trim(),
+      await joinByInvite(invite, {
+        cnName: cnName.trim(),
+        ...(enName.trim() ? { enName: enName.trim() } : {}),
+        ...(phone.trim() ? { parentPhone: phone.trim() } : {}),
         ...(photo ? { photoKey: photo.key } : {}),
       });
-      saveChildren(
-        addChild(loadChildren(), {
-          token: r.recapToken,
-          studentId: r.studentId,
-          name: r.name,
-          className: r.className,
-        }),
-      );
-      await Taro.showToast({ title: '加入成功', icon: 'success' });
+      await Taro.showToast({ title: '已提交，等待老师确认', icon: 'success' });
       Taro.reLaunch({ url: '/pages/index/index' });
     } catch (e) {
       toastErr(e);
@@ -64,22 +68,26 @@ export default function Join() {
     }
   }
 
+  if (invalid) {
+    return (
+      <View className="page code-step">
+        <View className="hero">
+          <View className="l1">😥 无法加入</View>
+          <View className="l3">{invalid}</View>
+        </View>
+        <Button className="cta" onClick={() => Taro.reLaunch({ url: '/pages/index/index' })}>
+          回首页
+        </Button>
+      </View>
+    );
+  }
+
   if (!preview) {
     return (
       <View className="page code-step">
         <View className="hero">
-          <View className="l1">🏫 加入班级</View>
-          <View className="l3">向老师索取班级邀请码，输入后加入</View>
+          <View className="l3">加载中…</View>
         </View>
-        <Input
-          className="field-input"
-          placeholder="请输入班级邀请码"
-          value={code}
-          onInput={(e) => setCode(e.detail.value)}
-        />
-        <Button className="cta" loading={busy} onClick={lookup}>
-          查看班级
-        </Button>
       </View>
     );
   }
@@ -106,18 +114,37 @@ export default function Join() {
       </View>
       <View className="uptip">课堂上展示，方便老师认人（可选）</View>
       <View className="field">
-        <View className="fl">学生名字</View>
+        <View className="fl">中文名</View>
         <Input
           className="field-input"
-          placeholder="请输入孩子的名字"
-          value={name}
-          onInput={(e) => setName(e.detail.value)}
+          placeholder="孩子的中文名（必填）"
+          value={cnName}
+          onInput={(e) => setCnName(e.detail.value)}
         />
       </View>
-      <Button className="cta" loading={busy} onClick={join}>
+      <View className="field">
+        <View className="fl">英文名</View>
+        <Input
+          className="field-input"
+          placeholder="孩子的英文名（可选）"
+          value={enName}
+          onInput={(e) => setEnName(e.detail.value)}
+        />
+      </View>
+      <View className="field">
+        <View className="fl">家长手机号</View>
+        <Input
+          className="field-input"
+          type="number"
+          placeholder="11 位手机号（可选）"
+          value={phone}
+          onInput={(e) => setPhone(e.detail.value)}
+        />
+      </View>
+      <Button className="cta" loading={busy} onClick={submit}>
         确认加入班级
       </Button>
-      <View className="ftip">加入后可随时查看每节课的课堂回顾</View>
+      <View className="ftip">提交后由老师确认关联，即可查看每节课的课堂回顾</View>
     </View>
   );
 }

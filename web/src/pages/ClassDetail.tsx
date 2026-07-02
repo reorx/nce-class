@@ -3,7 +3,15 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { Modal } from '../components/Modal';
 import { TopBar } from '../components/TopBar';
 import { useToast } from '../components/Toast';
-import { api, type ClassDetail as Detail, type Me, type Recap, type Session, type Student } from '../lib/api';
+import {
+  api,
+  type ClassDetail as Detail,
+  type JoinRequestItem,
+  type Me,
+  type Recap,
+  type Session,
+  type Student,
+} from '../lib/api';
 import {
   addGroup,
   moveStudent,
@@ -901,102 +909,81 @@ function GroupsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | voi
 }
 
 // ===== INVITE TAB ==========================================================
+// 邀请的生成与处理都在小程序端（老师登录小程序 → 生成邀请 → 分享 → 队列关联）；
+// web 端只留说明 + 只读队列。
 function InviteTab({ d }: { d: Detail }) {
+  const [requests, setRequests] = useState<JoinRequestItem[] | null>(null);
   const toast = useToast();
+
+  useEffect(() => {
+    api
+      .getJoinRequests(d.id)
+      .then(setRequests)
+      .catch(() => toast('邀请队列加载失败', 'error'));
+  }, [d.id]);
+
   return (
     <div style={{ maxWidth: 620 }}>
       <div style={{ background: '#fff', border: '1px solid #e7e9ee', borderRadius: 14, padding: 24 }}>
-        <div style={{ fontWeight: 700, fontSize: 16, color: '#1e2430' }}>家长邀请码</div>
-        <div style={{ fontSize: 13, color: '#7a828f', marginTop: 5, lineHeight: 1.6 }}>
-          家长在微信小程序「NCE 课堂」里输入邀请码，上传照片 +
-          填名字即可加入本班（source=parent）。邀请码通用、不做认领匹配，出现重复可在「学生」里删除多余记录。
+        <div style={{ fontWeight: 700, fontSize: 16, color: '#1e2430' }}>在小程序里邀请家长</div>
+        <div style={{ fontSize: 13, color: '#7a828f', marginTop: 5, lineHeight: 1.7 }}>
+          邀请在微信小程序「NCE 课堂」里发起：老师登录小程序（首次用本站账号绑定一次）→ 选择本班 → 「生成邀请」→
+          把卡片分享到班级群。家长点卡片填写孩子信息后会进入下方队列，由老师在小程序里 关联到「学生」页已建好的学生。
+          <br />
+          每个邀请 7 天有效，可随时重新生成；此页只读，处理请在小程序完成。
         </div>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            marginTop: 18,
-            padding: '0 5px 0 14px',
-            height: 44,
-            background: '#f6f7f9',
-            border: '1px solid #e7e9ee',
-            borderRadius: 10,
-          }}
-        >
-          <span
-            className="mono"
-            style={{
-              flex: 1,
-              minWidth: 0,
-              fontSize: 20,
-              fontWeight: 700,
-              letterSpacing: 2,
-              color: '#1e2430',
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-            }}
-          >
-            {d.inviteToken}
-          </span>
-          <button
-            onClick={() =>
-              navigator.clipboard
-                ?.writeText(d.inviteToken)
-                .then(() => toast('邀请码已复制'))
-                .catch(() => toast('复制失败', 'error'))
-            }
-            style={{
-              flexShrink: 0,
-              height: 34,
-              padding: '0 15px',
-              background: GREEN,
-              color: '#fff',
-              border: 'none',
-              borderRadius: 8,
-              fontWeight: 600,
-              fontSize: 13,
-              cursor: 'pointer',
-            }}
-          >
-            复制
-          </button>
+      </div>
+
+      <div style={{ background: '#fff', border: '1px solid #e7e9ee', borderRadius: 14, padding: 24, marginTop: 16 }}>
+        <div style={{ fontWeight: 700, fontSize: 16, color: '#1e2430' }}>
+          邀请队列{requests ? `（${requests.length}）` : ''}
         </div>
-        <div style={{ display: 'flex', gap: 20, marginTop: 22, alignItems: 'center' }}>
+        {requests && requests.length === 0 && (
+          <div style={{ fontSize: 13, color: '#98a1af', marginTop: 12 }}>暂无待确认的申请</div>
+        )}
+        {(requests ?? []).map((r) => (
           <div
+            key={r.id}
             style={{
-              width: 150,
-              height: 150,
-              flexShrink: 0,
-              borderRadius: 12,
-              border: '1px solid #e7e9ee',
-              backgroundImage: 'repeating-linear-gradient(45deg,#eef1f5,#eef1f5 6px,#f8f9fb 6px,#f8f9fb 12px)',
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'center',
+              gap: 12,
+              padding: '12px 0',
+              borderBottom: '1px solid #f0f2f5',
             }}
           >
+            {r.photoUrl ? (
+              <img
+                src={r.photoUrl}
+                alt=""
+                style={{ width: 36, height: 36, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
+              />
+            ) : (
+              <div style={avatarStyle(r.id, 36, false)}>{initial(r.cnName)}</div>
+            )}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 600, fontSize: 14, color: '#1e2430' }}>
+                {r.cnName}
+                {r.enName && <span style={{ color: '#98a1af', fontWeight: 400, marginLeft: 6 }}>{r.enName}</span>}
+              </div>
+              <div style={{ fontSize: 12, color: '#98a1af', marginTop: 2 }}>
+                {r.parentPhone ? `${r.parentPhone} · ` : ''}微信：{r.nickname ?? '—'}
+              </div>
+            </div>
             <span
-              className="mono"
               style={{
-                fontSize: 11,
-                color: '#98a1af',
-                background: 'rgba(255,255,255,.85)',
-                padding: '4px 8px',
-                borderRadius: 6,
+                fontSize: 12,
+                color: '#b06c22',
+                background: '#fdf3e5',
+                padding: '3px 10px',
+                borderRadius: 999,
+                flexShrink: 0,
               }}
             >
-              二维码
+              待关联
             </span>
           </div>
-          <div style={{ fontSize: 13, color: '#7a828f', lineHeight: 1.7 }}>
-            <div style={{ fontWeight: 600, color: '#3c4451', marginBottom: 5 }}>课堂上出示小程序码</div>
-            扫码直达加入页（待正式 appid 开通后生成）；当前家长在小程序里手动输入邀请码即可。
-            <br />
-            加入成功后，孩子的课堂回顾会保存在家长的小程序里，随时可看。
-          </div>
-        </div>
+        ))}
       </div>
     </div>
   );

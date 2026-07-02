@@ -2,60 +2,100 @@ import { Button, Text, View } from '@tarojs/components';
 import Taro, { useDidShow } from '@tarojs/taro';
 import { useState } from 'react';
 import RecapView from '../../components/RecapView';
-import { getMe, getRecap, type MePayload, type ParentRecap } from '../../lib/api';
-import { currentChild, setCurrent, type ChildrenState } from '../../lib/children';
-import { loadChildren, saveChildren } from '../../lib/childrenStore';
+import { getStudentHome, getStudentRecap, type ParentRecap, type StudentHome, type WxMe } from '../../lib/api';
+import { pickChild, routeForMe } from '../../lib/flow';
+import { ensureLogin, loadCurrentChildId, saveCurrentChildId } from '../../lib/wxAuth';
 import './index.scss';
 
+// 登录引导 + 分流：teacher → 老师端班级页；有孩子 → recap 首页（多孩 chips）；
+// 有 pending 申请 → 等待确认页；否则欢迎页（通过群邀请卡片进入）。
 export default function Index() {
-  const [st, setSt] = useState<ChildrenState>({ children: [], currentToken: null });
-  const [me, setMe] = useState<MePayload | null>(null);
+  const [me, setMe] = useState<WxMe | null>(null);
+  const [home, setHome] = useState<StudentHome | null>(null);
   const [recap, setRecap] = useState<ParentRecap | null>(null);
+  const [childId, setChildId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  async function refresh(state: ChildrenState) {
-    setSt(state);
-    const child = currentChild(state);
-    if (!child) {
-      setMe(null);
-      setRecap(null);
-      setLoading(false);
-      return;
-    }
+  async function loadChild(m: WxMe, id: string | null) {
+    const child = pickChild(m.children, id);
+    if (!child) return;
+    setChildId(child.studentId);
+    saveCurrentChildId(child.studentId);
+    const h = await getStudentHome(child.studentId);
+    setHome(h);
+    setRecap(h.latestSessionId ? await getStudentRecap(child.studentId, h.latestSessionId) : null);
+  }
+
+  async function refresh() {
     setLoading(true);
     try {
-      const m = await getMe(child.token);
+      const m = await ensureLogin();
       setMe(m);
-      setRecap(m.latestSessionId ? await getRecap(child.token, m.latestSessionId) : null);
+      if (routeForMe(m) === 'teacher') {
+        Taro.redirectTo({ url: '/pages/teacher/classes/index' });
+        return;
+      }
+      await loadChild(m, loadCurrentChildId());
     } catch (e: any) {
       Taro.showToast({ title: e?.message ?? '加载失败', icon: 'none' });
     }
     setLoading(false);
   }
 
-  // 从 join 页回来时会重新进入，读最新的孩子列表
+  // join / bind 页回来时重新进入，拉最新 me
   useDidShow(() => {
-    refresh(loadChildren());
+    refresh();
   });
 
-  function switchChild(token: string) {
-    const next = setCurrent(st, token);
-    saveChildren(next);
-    refresh(next);
+  async function switchChild(id: string) {
+    if (!me || id === childId) return;
+    setLoading(true);
+    try {
+      await loadChild(me, id);
+    } catch (e: any) {
+      Taro.showToast({ title: e?.message ?? '加载失败', icon: 'none' });
+    }
+    setLoading(false);
   }
 
-  const child = currentChild(st);
+  if (!me) {
+    return (
+      <View className="page">
+        <View className="hint">加载中…</View>
+      </View>
+    );
+  }
 
-  if (!loading && !child) {
+  const route = routeForMe(me);
+
+  if (route === 'welcome') {
     return (
       <View className="page empty">
         <View className="hero">
           <View className="big">👋</View>
           <View className="l2">欢迎来到 NCE 课堂</View>
-          <View className="l3">加入班级后，这里会展示孩子每节课的课堂回顾</View>
+          <View className="l3">请通过老师分享到班级群的邀请卡片加入班级，加入后这里会展示孩子每节课的课堂回顾</View>
         </View>
-        <Button className="cta" onClick={() => Taro.navigateTo({ url: '/pages/join/index' })}>
-          输入邀请码加入班级
+        <View className="teacher-entry" onClick={() => Taro.navigateTo({ url: '/pages/bind/index' })}>
+          我是老师，绑定账号 ›
+        </View>
+      </View>
+    );
+  }
+
+  if (route === 'pending') {
+    const p = me.pending[0];
+    return (
+      <View className="page empty">
+        <View className="hero">
+          <View className="big">⏳</View>
+          <View className="l2">已提交，等待老师确认</View>
+          <View className="l3">
+            {p.cnName} 加入「{p.className}」的申请已提交，老师确认后即可查看课堂回顾
+          </View>
+        </View>
+        <Button className="cta" loading={loading} onClick={refresh}>
+          刷新
         </Button>
       </View>
     );
@@ -64,34 +104,33 @@ export default function Index() {
   return (
     <View className="page">
       <View className="childbar">
-        {st.children.map((c) => (
+        {me.children.map((c) => (
           <Text
-            key={c.token}
-            className={`chip${c.token === st.currentToken ? ' on' : ''}`}
-            onClick={() => switchChild(c.token)}
+            key={c.studentId}
+            className={`chip${c.studentId === childId ? ' on' : ''}`}
+            onClick={() => switchChild(c.studentId)}
           >
             {c.name}
           </Text>
         ))}
-        <Text className="chip add" onClick={() => Taro.navigateTo({ url: '/pages/join/index' })}>
-          ＋
-        </Text>
       </View>
 
       {loading && <View className="hint">加载中…</View>}
 
-      {!loading && me && recap && child && <RecapView recap={recap} childName={child.name} className={me.class.name} />}
+      {!loading && home && recap && (
+        <RecapView recap={recap} childName={home.student.name} className={home.class.name} />
+      )}
 
-      {!loading && me && !recap && <View className="hint">还没有课堂回顾，上完第一节课再来看看吧</View>}
+      {!loading && home && !recap && <View className="hint">还没有课堂回顾，上完第一节课再来看看吧</View>}
 
-      {!loading && me && me.sessions.length > 1 && (
+      {!loading && home && home.sessions.length > 1 && (
         <View className="history">
           <View className="h">历史课堂</View>
-          {me.sessions.slice(1).map((s) => (
+          {home.sessions.slice(1).map((s) => (
             <View
               key={s.id}
               className="hrow"
-              onClick={() => Taro.navigateTo({ url: `/pages/recap/index?sid=${s.id}` })}
+              onClick={() => Taro.navigateTo({ url: `/pages/recap/index?sid=${s.id}&student=${childId}` })}
             >
               <Text className="date">
                 {s.date} {s.weekday}

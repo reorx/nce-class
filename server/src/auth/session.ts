@@ -19,17 +19,36 @@ export function signSession(teacherId: string, nowSec: number): string {
 
 /** Return the teacherId if the token is well-formed, unexpired and untampered. */
 export function verifySession(token: string | undefined, nowSec: number): string | null {
+  return verifyToken(token, nowSec, '');
+}
+
+// wx Bearer tokens reuse the HMAC scheme but sign a domain-prefixed payload,
+// so a teacher cookie can never pass as a wx token (nor the reverse).
+
+/** Issue a miniapp Bearer token (subject = wechatAccountId), 7-day expiry. */
+export function signWxToken(accountId: string, nowSec: number): string {
+  const exp = nowSec + MAX_AGE_SEC;
+  const payload = `${accountId}.${exp}`;
+  return `${payload}.${sign(`wx:${payload}`)}`;
+}
+
+/** Return the wechatAccountId if the Bearer token is valid and unexpired. */
+export function verifyWxToken(token: string | undefined, nowSec: number): string | null {
+  return verifyToken(token, nowSec, 'wx:');
+}
+
+function verifyToken(token: string | undefined, nowSec: number, domain: string): string | null {
   if (!token) return null;
   const parts = token.split('.');
   if (parts.length !== 3) return null;
-  const [teacherId, expStr, mac] = parts;
+  const [subject, expStr, mac] = parts;
   const exp = Number(expStr);
-  if (!teacherId || !Number.isFinite(exp) || exp <= nowSec) return null;
-  const expected = sign(`${teacherId}.${expStr}`);
+  if (!subject || !Number.isFinite(exp) || exp <= nowSec) return null;
+  const expected = sign(`${domain}${subject}.${expStr}`);
   const a = Buffer.from(mac);
   const b = Buffer.from(expected);
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
-  return teacherId;
+  return subject;
 }
 
 /** Parse a raw `Cookie:` header into a name→value map. */

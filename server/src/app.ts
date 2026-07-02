@@ -10,16 +10,24 @@ import {
   SESSION_COOKIE,
   sessionCookie,
   signSession,
+  signWxToken,
   verifySession,
+  verifyWxToken,
 } from './auth/session.js';
+import { code2session } from './auth/wx.js';
 import { sqlite, DB_PATH } from './db/client.js';
 import {
-  addParentStudent,
   addStudent,
+  bindTeacherWechat,
   commitSession,
   createClass,
+  createInvite,
   deleteStudent,
+  dismissJoinRequest,
+  linkJoinRequest,
   saveGrouping,
+  upsertJoinRequest,
+  upsertWechatAccount,
   type CommitInput,
   type GroupInput,
 } from './db/mutations.js';
@@ -96,9 +104,6 @@ const q = {
     `SELECT SUM(CASE WHEN attendance='present' THEN 1 ELSE 0 END) present, COUNT(*) total
      FROM session_memberships WHERE session_id=?`,
   ),
-  // parent-facing (§7.5): tokens are the credentials, so lookups start from them
-  classByInviteToken: sqlite.prepare(`SELECT * FROM classes WHERE invite_token=?`),
-  studentByRecapToken: sqlite.prepare(`SELECT * FROM students WHERE recap_token=?`),
   orgById: sqlite.prepare(`SELECT * FROM organizations WHERE id=?`),
   countStudentsOfClass: sqlite.prepare(`SELECT COUNT(*) c FROM students WHERE class_id=?`),
   endedSessionsOfClass: sqlite.prepare(
@@ -109,6 +114,41 @@ const q = {
     `SELECT COALESCE(SUM(delta),0) s FROM score_events WHERE session_id=? AND target_type='student' AND target_id=?`,
   ),
   checksOfStudent: sqlite.prepare(`SELECT type, status FROM check_records WHERE session_id=? AND student_id=?`),
+  // wx (miniapp) session + invite/queue flows
+  wxAccountById: sqlite.prepare(`SELECT * FROM wechat_accounts WHERE id=?`),
+  wxTeacherOfAccount: sqlite.prepare(
+    `SELECT t.* FROM credentials c JOIN teachers t ON t.id=c.teacher_id
+     WHERE c.wechat_account_id=? AND c.provider='wechat'`,
+  ),
+  wxCredOfTeacher: sqlite.prepare(`SELECT * FROM credentials WHERE teacher_id=? AND provider='wechat'`),
+  childrenOfAccount: sqlite.prepare(
+    `SELECT s.id sid, s.name, s.photo_url, c.id cid, c.name cname
+     FROM student_wechat_bindings b
+     JOIN students s ON s.id=b.student_id JOIN classes c ON c.id=s.class_id
+     WHERE b.wechat_account_id=? ORDER BY b.created_at, b.id`,
+  ),
+  pendingOfAccount: sqlite.prepare(
+    `SELECT jr.id, jr.class_id cid, c.name cname, jr.cn_name
+     FROM join_requests jr JOIN classes c ON c.id=jr.class_id
+     WHERE jr.wechat_account_id=? AND jr.status='pending' ORDER BY jr.created_at`,
+  ),
+  inviteByToken: sqlite.prepare(`SELECT * FROM class_invites WHERE token=? AND expires_at > datetime('now')`),
+  classesOfOrg: sqlite.prepare(`SELECT * FROM classes WHERE org_id=? ORDER BY created_at`),
+  pendingCountsByClass: sqlite.prepare(
+    `SELECT class_id, COUNT(*) c FROM join_requests WHERE status='pending' GROUP BY class_id`,
+  ),
+  pendingRequestsOfClass: sqlite.prepare(
+    `SELECT jr.*, wa.nickname FROM join_requests jr
+     JOIN wechat_accounts wa ON wa.id=jr.wechat_account_id
+     WHERE jr.class_id=? AND jr.status='pending' ORDER BY jr.created_at`,
+  ),
+  joinRequestById: sqlite.prepare(`SELECT * FROM join_requests WHERE id=?`),
+  bindingOf: sqlite.prepare(`SELECT * FROM student_wechat_bindings WHERE student_id=? AND wechat_account_id=?`),
+  studentsWithLinkFlag: sqlite.prepare(
+    `SELECT s.id, s.name, s.en_name, s.photo_url, COUNT(b.id) links
+     FROM students s LEFT JOIN student_wechat_bindings b ON b.student_id=s.id
+     WHERE s.class_id=? GROUP BY s.id ORDER BY s.created_at, s.id`,
+  ),
 };
 
 const md = (d: string) => d.slice(5); // 'YYYY-MM-DD' -> 'MM-DD'
@@ -194,7 +234,6 @@ function classDetailPayload(id: string) {
     studentCount: students.length,
     groupCount: groups.length,
     sessionCount: sessions.length,
-    inviteToken: c.invite_token,
     students,
     groups,
     sessions,
@@ -416,10 +455,12 @@ export function createApp() {
     res.json({ ok: true });
   });
 
-  // ---- parent-facing routes (§7.5) ----------------------------------------
-  // Registered BEFORE the auth gate: parents never log in — the invite / recap
-  // token in the path IS the credential, and each token resolves to exactly one
-  // class/student, so org isolation holds without a session.
+  // ---- wx (miniapp) API ----------------------------------------------------
+  // Bearer token instead of cookies. The gate is three-way: /api/wx/login is
+  // public, the rest of /api/wx/* needs a wx token (subject = wechatAccountId),
+  // everything else keeps the teacher cookie session below.
+
+  const nowSec = () => Math.floor(Date.now() / 1000);
 
   const classPreview = (c: any) => {
     const teacher = c.teacher_id ? (q.teacherById.get(c.teacher_id) as any) : null;
@@ -433,15 +474,173 @@ export function createApp() {
     };
   };
 
-  app.get('/api/parent/join/:inviteToken', (req, res) => {
-    const c = q.classByInviteToken.get(req.params.inviteToken) as any;
-    if (!c) return res.status(404).json({ error: '邀请码无效' });
-    res.json(classPreview(c));
+  // me = 身份 + 两侧关联：teacher 来自 provider='wechat' credential，children
+  // 来自 bindings，pending 是仍在队列里的注册（index 页按此分流）。
+  const wxMePayload = (accountId: string) => {
+    const account = q.wxAccountById.get(accountId) as any;
+    const teacher = (q.wxTeacherOfAccount.get(accountId) as any) ?? null;
+    return {
+      account: { id: account.id, nickname: account.nickname, avatarUrl: account.avatar_url },
+      teacher: teacher
+        ? {
+            id: teacher.id,
+            name: teacher.name,
+            username: teacher.username,
+            orgName: (q.orgById.get(teacher.org_id) as any)?.name ?? '',
+          }
+        : null,
+      children: (q.childrenOfAccount.all(accountId) as any[]).map((r) => ({
+        studentId: r.sid,
+        name: r.name,
+        photoUrl: r.photo_url ? storageClient.getUrl(r.photo_url) : null,
+        classId: r.cid,
+        className: r.cname,
+      })),
+      pending: (q.pendingOfAccount.all(accountId) as any[]).map((r) => ({
+        id: r.id,
+        classId: r.cid,
+        className: r.cname,
+        cnName: r.cn_name,
+      })),
+    };
+  };
+
+  app.post('/api/wx/login', async (req, res) => {
+    const code = str(req.body?.code);
+    const ident = code ? await code2session(code) : null;
+    if (!ident) return res.status(401).json({ error: '微信登录失败' });
+    const accountId = upsertWechatAccount(sqlite, ident);
+    res.json({ token: signWxToken(accountId, nowSec()), me: wxMePayload(accountId) });
   });
 
-  // Photo goes up first (scoped by the invite token), the returned key is then
-  // submitted with the join. Server-relay instead of presigned PUT because
-  // wx.uploadFile only speaks POST multipart.
+  app.use('/api/wx', (req, res, next) => {
+    const h = req.headers.authorization;
+    const accountId = verifyWxToken(h?.startsWith('Bearer ') ? h.slice(7) : undefined, nowSec());
+    const account = accountId ? (q.wxAccountById.get(accountId) as any) : null;
+    if (!account) return res.status(401).json({ error: '未登录' });
+    res.locals.wxAccount = account;
+    next();
+  });
+
+  app.get('/api/wx/me', (_req, res) => res.json(wxMePayload(res.locals.wxAccount.id)));
+
+  app.post('/api/wx/bind-teacher', (req, res) => {
+    const account = res.locals.wxAccount;
+    const username = str(req.body?.username);
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    const teacher = username ? (q.teacherByUsername.get(username) as any) : null;
+    const cred = teacher ? (q.credByTeacher.get(teacher.id) as any) : null;
+    if (!teacher || !cred?.secret || !verifyPassword(password, cred.secret)) {
+      return res.status(401).json({ error: '用户名或密码错误' });
+    }
+    if (q.wxTeacherOfAccount.get(account.id)) return res.status(409).json({ error: '该微信已绑定过老师' });
+    if (q.wxCredOfTeacher.get(teacher.id)) return res.status(409).json({ error: '该老师已被其他微信绑定' });
+    bindTeacherWechat(sqlite, { teacherId: teacher.id, wechatAccountId: account.id });
+    res.json(wxMePayload(account.id));
+  });
+
+  // ---- wx teacher side (wx session bound to a teacher; orgId from teacher) --
+  const wxTeacherOf = (res: express.Response): any | null =>
+    (q.wxTeacherOfAccount.get(res.locals.wxAccount.id) as any) ?? null;
+
+  app.get('/api/wx/teacher/classes', (_req, res) => {
+    const teacher = wxTeacherOf(res);
+    if (!teacher) return res.status(403).json({ error: '未绑定老师账号' });
+    const counts = new Map((q.studentCounts.all() as any[]).map((r) => [r.class_id, r.c]));
+    const pending = new Map((q.pendingCountsByClass.all() as any[]).map((r) => [r.class_id, r.c]));
+    res.json(
+      (q.classesOfOrg.all(teacher.org_id) as any[]).map((c) => ({
+        id: c.id,
+        name: c.name,
+        level: c.level,
+        studentCount: counts.get(c.id) ?? 0,
+        pendingCount: pending.get(c.id) ?? 0,
+      })),
+    );
+  });
+
+  app.post('/api/wx/teacher/classes/:id/invites', (req, res) => {
+    const teacher = wxTeacherOf(res);
+    if (!teacher) return res.status(403).json({ error: '未绑定老师账号' });
+    if (!classInOrg(req.params.id, teacher.org_id)) return res.status(404).json({ error: 'class not found' });
+    const inv = createInvite(sqlite, { classId: req.params.id, teacherId: teacher.id });
+    res.status(201).json({
+      token: inv.token,
+      expiresAt: inv.expiresAt,
+      sharePath: `pages/join/index?invite=${inv.token}`,
+    });
+  });
+
+  const joinRequestItem = (r: any) => ({
+    id: r.id,
+    cnName: r.cn_name,
+    enName: r.en_name,
+    parentPhone: r.parent_phone,
+    photoUrl: r.photo_key ? storageClient.getUrl(r.photo_key) : null,
+    nickname: r.nickname,
+    createdAt: r.created_at,
+  });
+
+  app.get('/api/wx/teacher/classes/:id/join-requests', (req, res) => {
+    const teacher = wxTeacherOf(res);
+    if (!teacher) return res.status(403).json({ error: '未绑定老师账号' });
+    if (!classInOrg(req.params.id, teacher.org_id)) return res.status(404).json({ error: 'class not found' });
+    res.json((q.pendingRequestsOfClass.all(req.params.id) as any[]).map(joinRequestItem));
+  });
+
+  app.get('/api/wx/teacher/classes/:id/students', (req, res) => {
+    const teacher = wxTeacherOf(res);
+    if (!teacher) return res.status(403).json({ error: '未绑定老师账号' });
+    if (!classInOrg(req.params.id, teacher.org_id)) return res.status(404).json({ error: 'class not found' });
+    res.json(
+      (q.studentsWithLinkFlag.all(req.params.id) as any[]).map((s) => ({
+        id: s.id,
+        name: s.name,
+        enName: s.en_name,
+        hasPhoto: s.photo_url != null,
+        linked: s.links > 0,
+      })),
+    );
+  });
+
+  /** The join_request row if it's pending and its class is in the teacher's org. */
+  const pendingRequestFor = (requestId: string, orgId: string): any | null => {
+    const jr = q.joinRequestById.get(requestId) as any;
+    return jr && jr.status === 'pending' && classInOrg(jr.class_id, orgId) ? jr : null;
+  };
+
+  app.post('/api/wx/join-requests/:id/link', (req, res) => {
+    const teacher = wxTeacherOf(res);
+    if (!teacher) return res.status(403).json({ error: '未绑定老师账号' });
+    const jr = pendingRequestFor(req.params.id, teacher.org_id);
+    if (!jr) return res.status(404).json({ error: 'request not found' });
+    const studentId = str(req.body?.studentId);
+    const student = studentId ? (q.studentById.get(studentId) as any) : null;
+    if (!student || student.class_id !== jr.class_id) return res.status(400).json({ error: '学生不在该班' });
+    linkJoinRequest(sqlite, { requestId: jr.id, studentId: student.id, teacherId: teacher.id });
+    res.json({ ok: true });
+  });
+
+  app.post('/api/wx/join-requests/:id/dismiss', (req, res) => {
+    const teacher = wxTeacherOf(res);
+    if (!teacher) return res.status(403).json({ error: '未绑定老师账号' });
+    const jr = pendingRequestFor(req.params.id, teacher.org_id);
+    if (!jr) return res.status(404).json({ error: 'request not found' });
+    dismissJoinRequest(sqlite, { requestId: jr.id, teacherId: teacher.id });
+    res.json({ ok: true });
+  });
+
+  // ---- wx parent side --------------------------------------------------------
+
+  app.get('/api/wx/invites/:token', (req, res) => {
+    const inv = q.inviteByToken.get(req.params.token) as any;
+    if (!inv) return res.status(404).json({ error: '邀请已过期或不存在，请向老师索取新邀请' });
+    res.json(classPreview(q.classById.get(inv.class_id)));
+  });
+
+  // Photo goes up first, the returned key is then submitted with the join.
+  // Server-relay instead of presigned PUT because wx.uploadFile only speaks
+  // POST multipart.
   const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 5 * 1024 * 1024 },
@@ -454,26 +653,41 @@ export function createApp() {
     'image/gif': 'gif',
   };
 
-  app.post('/api/parent/join/:inviteToken/photo', upload.single('photo'), async (req, res) => {
-    const c = q.classByInviteToken.get(req.params.inviteToken) as any;
-    if (!c) return res.status(404).json({ error: '邀请码无效' });
+  app.post('/api/wx/upload/photo', upload.single('photo'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: '仅支持图片文件' });
     const key = `students/${nanoid(16)}.${PHOTO_EXT[req.file.mimetype] ?? 'jpg'}`;
     const url = await storageClient.putObject({ key, body: req.file.buffer, contentType: req.file.mimetype });
     res.status(201).json({ key, url });
   });
 
-  app.post('/api/parent/join/:inviteToken', (req, res) => {
-    const c = q.classByInviteToken.get(req.params.inviteToken) as any;
-    if (!c) return res.status(404).json({ error: '邀请码无效' });
-    const name = str(req.body?.name);
-    if (!name) return res.status(400).json({ error: '学生名字必填' });
-    const created = addParentStudent(sqlite, { classId: c.id, name, photoKey: str(req.body?.photoKey) });
-    res.status(201).json({ studentId: created.id, recapToken: created.recapToken, name, className: c.name });
+  const PHONE_RE = /^1\d{10}$/;
+
+  app.post('/api/wx/invites/:token/join', (req, res) => {
+    const inv = q.inviteByToken.get(req.params.token) as any;
+    if (!inv) return res.status(404).json({ error: '邀请已过期或不存在，请向老师索取新邀请' });
+    const cnName = str(req.body?.cnName);
+    if (!cnName) return res.status(400).json({ error: '中文名必填' });
+    const parentPhone = str(req.body?.parentPhone);
+    if (parentPhone && !PHONE_RE.test(parentPhone)) return res.status(400).json({ error: '手机号需为 11 位数字' });
+    const id = upsertJoinRequest(sqlite, {
+      classId: inv.class_id,
+      wechatAccountId: res.locals.wxAccount.id,
+      inviteId: inv.id,
+      cnName,
+      enName: str(req.body?.enName),
+      parentPhone,
+      photoKey: str(req.body?.photoKey),
+    });
+    const c = q.classById.get(inv.class_id) as any;
+    res.status(201).json({ id, classId: inv.class_id, className: c.name, status: 'pending' });
   });
 
-  app.get('/api/parent/me/:recapToken', (req, res) => {
-    const st = q.studentByRecapToken.get(req.params.recapToken) as any;
+  /** The student row if the current wx account holds a binding for it. */
+  const boundStudent = (studentId: string, accountId: string): any | null =>
+    q.bindingOf.get(studentId, accountId) ? ((q.studentById.get(studentId) as any) ?? null) : null;
+
+  app.get('/api/wx/students/:id', (req, res) => {
+    const st = boundStudent(req.params.id, res.locals.wxAccount.id);
     if (!st) return res.status(404).json({ error: 'not found' });
     const c = q.classById.get(st.class_id) as any;
     const sessions = (q.endedSessionsOfClass.all(c.id) as any[]).map((s) => ({
@@ -485,15 +699,20 @@ export function createApp() {
       lessonTitle: s.lesson_title,
     }));
     res.json({
-      student: { id: st.id, name: st.name, photoUrl: st.photo_url ? storageClient.getUrl(st.photo_url) : null },
+      student: {
+        id: st.id,
+        name: st.name,
+        enName: st.en_name,
+        photoUrl: st.photo_url ? storageClient.getUrl(st.photo_url) : null,
+      },
       class: { id: c.id, name: c.name, ...classPreview(c) },
       sessions,
       latestSessionId: sessions[0]?.id ?? null,
     });
   });
 
-  app.get('/api/parent/me/:recapToken/sessions/:sessionId', (req, res) => {
-    const st = q.studentByRecapToken.get(req.params.recapToken) as any;
+  app.get('/api/wx/students/:id/sessions/:sessionId', (req, res) => {
+    const st = boundStudent(req.params.id, res.locals.wxAccount.id);
     if (!st) return res.status(404).json({ error: 'not found' });
     const s = q.sessionById.get(req.params.sessionId) as any;
     if (!s || s.class_id !== st.class_id || s.status !== 'ended') return res.status(404).json({ error: 'not found' });
@@ -523,7 +742,8 @@ export function createApp() {
     });
   });
 
-  // ---- auth gate: everything under /api except health + login + parent ----
+  // ---- auth gate: everything under /api except health + login (+ /api/wx/*,
+  // handled by the Bearer gate above; unmatched wx paths fall through to 401) --
   app.use('/api', (req, res, next) => {
     if (req.path === '/health' || req.path === '/auth/login') return next();
     const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
@@ -622,6 +842,13 @@ export function createApp() {
     const sessionId = commitSession(sqlite, built.input);
     const row = q.sessionById.get(sessionId) as any;
     res.status(201).json({ sessionId, recap: buildRecap(row), created: true });
+  });
+
+  // ---- join-request queue (read-only mirror; handling happens in the miniapp) ----
+  app.get('/api/classes/:id/join-requests', (req, res) => {
+    const teacher = res.locals.teacher;
+    if (!classInOrg(req.params.id, teacher.org_id)) return res.status(404).json({ error: 'class not found' });
+    res.json((q.pendingRequestsOfClass.all(req.params.id) as any[]).map(joinRequestItem));
   });
 
   // ---- recap (read) ----

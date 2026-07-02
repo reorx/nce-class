@@ -1,0 +1,59 @@
+.page {
+  padding: 36px 32px;
+}
+
+.hero {
+  text-align: center;
+  margin: 60px 0 48px;
+
+  .big {
+    font-size: 72px;
+  }
+
+  .l2 {
+    font-size: 38px;
+    font-weight: 800;
+    margin-top: 16px;
+  }
+
+  .l3 {
+    font-size: 24px;
+    color: #9aa0b0;
+    margin-top: 12px;
+    line-height: 1.6;
+  }
+}
+
+.field {
+  margin-bottom: 26px;
+
+  .fl {
+    font-size: 24px;
+    font-weight: 700;
+    color: #6b7280;
+    margin-bottom: 12px;
+  }
+}
+
+.field-input {
+  border: 2px solid #d8dbe4;
+  border-radius: 20px;
+  padding: 22px 24px;
+  font-size: 29px;
+  background: #fbfcfe;
+}
+
+.cta {
+  background: #07c160;
+  color: #fff;
+  text-align: center;
+  font-weight: 800;
+  padding: 10px 0;
+  border-radius: 22px;
+  font-size: 30px;
+  margin-top: 24px;
+
+  &::after {
+    border: none;
+  }
+}
