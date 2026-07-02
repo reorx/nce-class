@@ -91,6 +91,10 @@ export const classSessions = sqliteTable('class_sessions', {
   plannedDurationMin: integer('planned_duration_min').notNull().default(120),
   startedAt: text('started_at'),
   endedAt: text('ended_at'),
+  // Idempotency key for the offline-first end-class commit (decision 10): the
+  // client's local session id, so a retried submit returns the existing row
+  // instead of double-inserting. Null for legacy/seeded sessions.
+  clientSessionId: text('client_session_id').unique(),
 });
 
 // ---- SessionGroup — snapshot of the default grouping at start; adjustable mid-class ----

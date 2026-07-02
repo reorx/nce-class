@@ -1,14 +1,27 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { api } from '../lib/api';
-import { lessonLabel as fmtLessonLabel, sessionFromConfig, type SessionConfig } from '../lib/setup';
+import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useToast } from '../components/Toast';
+import { ApiError, api } from '../lib/api';
+import {
+  buildClassroomSession,
+  buildCommitPayload,
+  clearSession,
+  loadSession,
+  newClientSessionId,
+  nowSql,
+  reducer,
+  saveSession,
+  type CAction,
+  type ClassroomSession,
+  type ClassroomStudent,
+} from '../lib/classroomStore';
+import { configFromDetail, lessonLabel as fmtLessonLabel } from '../lib/setup';
 import {
   GRAY,
   GROUP_COLORS,
   HOMEWORK_MAP,
   RECITE_MAP,
   gScore,
-  initialSession,
   sScore,
   stars as recapStars,
   warned as recapWarned,
@@ -21,45 +34,89 @@ import {
 
 // Teacher-facing classroom console (§7.3). One interactive board with a dock
 // that swaps between five views; scoring is an event stream (see lib/session).
+// The whole lesson runs in local state (lib/classroomStore), persisted to
+// LocalStorage after every change, and is POSTed once at 结束课堂.
 type View = 'board' | 'recite' | 'homework' | 'attendance' | 'regroup';
 
 const FONT = "'Nunito','PingFang SC','Microsoft YaHei',system-ui,sans-serif";
 const NUM = "'Baloo 2','Nunito','PingFang SC',sans-serif";
 
+/** Parse a naive 'YYYY-MM-DD HH:mm:ss' as local wall-clock ms. */
+const parseLocal = (t: string) => Date.parse(t.replace(' ', 'T'));
+
 export function Classroom() {
   const { id = 'c1' } = useParams();
   const nav = useNavigate();
   const loc = useLocation();
-  // Booted from 课前配置 when a session config is handed over; otherwise the
-  // self-contained Lesson-3 demo (§ classroom mockups).
-  const config = (loc.state as { config?: SessionConfig } | null)?.config ?? null;
+  const toast = useToast();
 
-  const [session, setSession] = useState(() => (config ? sessionFromConfig(config) : initialSession()));
+  const [session, setSession] = useState<ClassroomSession | null>(null);
+  // 'loading' until we know whether to resume / boot / redirect (decision 13).
+  const [phase, setPhase] = useState<'loading' | 'ready' | 'redirect'>('loading');
   const [view, setView] = useState<View>('board');
-  const [openId, setOpenId] = useState<number | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
   const [openGid, setOpenGid] = useState<string | null>(null);
   const [showEnd, setShowEnd] = useState(false);
-  const [absent, setAbsent] = useState<Record<number, true>>({});
-  const [elapsed, setElapsed] = useState(() => (config ? Math.max(1, config.durationMin) * 60 : 120 * 60));
-  const [className, setClassName] = useState(config?.className ?? '三年级A班');
-  const lessonLabel = config ? fmtLessonLabel(config) : '第3课 · Lesson 3';
-  const dragId = useRef<number | null>(null);
+  const [showDiscard, setShowDiscard] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const dragId = useRef<string | null>(null);
 
-  // Countdown from the planned duration (§7.3); would go into overtime at 0.
+  // ---- boot: resume from store · else URL-param boot · else → 课前配置 -------
   useEffect(() => {
-    const t = setInterval(() => setElapsed((e) => Math.max(0, e - 1)), 1000);
+    const stored = loadSession(id);
+    if (stored) {
+      setSession(stored);
+      setPhase('ready');
+      return;
+    }
+    const sp = new URLSearchParams(loc.search);
+    const lesson = sp.get('lesson');
+    const title = sp.get('title');
+    const duration = sp.get('duration');
+    if (lesson || title || duration) {
+      api
+        .classDetail(id)
+        .then((d) => {
+          const cfg = configFromDetail(d, {
+            lessonNumber: (lesson ?? '').replace(/[^0-9]/g, ''),
+            lessonTitle: title ?? '',
+            durationMin: Math.max(1, Number(duration) || 120),
+            className: d.name,
+          });
+          const fresh = buildClassroomSession(cfg, {
+            classId: id,
+            clientSessionId: newClientSessionId(),
+            startedAt: nowSql(),
+          });
+          saveSession(fresh);
+          setSession(fresh);
+          setPhase('ready');
+        })
+        .catch(() => setPhase('redirect'));
+      return;
+    }
+    setPhase('redirect');
+  }, [id, loc.search]);
+
+  // Persist after every local change (offline-first).
+  useEffect(() => {
+    if (session) saveSession(session);
+  }, [session]);
+
+  // 1s tick drives the countdown off the persisted startedAt (survives refresh).
+  useEffect(() => {
+    const t = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
 
-  useEffect(() => {
-    api
-      .classDetail(id)
-      .then((d) => setClassName(d.name))
-      .catch(() => {});
-  }, [id]);
+  const dispatch = (a: CAction) => setSession((s) => (s ? reducer(s, a) : s));
+
+  if (phase === 'redirect') return <Navigate to={`/classes/${id}/setup`} replace />;
+  if (phase === 'loading' || !session) return <Splash />;
 
   const { students, groups, events } = session;
-  const groupById = useMemo(() => new Map(groups.map((g) => [g.id, g])), [groups]);
+  const groupById = new Map(groups.map((g) => [g.id, g]));
   const colorOf = (gid: string) =>
     GROUP_COLORS[
       Math.max(
@@ -68,34 +125,14 @@ export function Classroom() {
       ) % GROUP_COLORS.length
     ];
 
-  // ---- mutations ----------------------------------------------------------
-  const addEvent = (tt: 'student' | 'group', tid: number | string, g: string, d: 1 | -1) =>
-    setSession((s) => ({ ...s, events: [...s.events, { id: s.nid, tt, tid, g, d }], nid: s.nid + 1 }));
-  const addStudentScore = (sid: number, d: 1 | -1) => {
-    const st = students.find((x) => x.id === sid);
-    if (st) addEvent('student', sid, st.g, d);
-  };
-  const addGroupScore = (gid: string, d: 1 | -1) => addEvent('group', gid, gid, d);
-  const undo = () => setSession((s) => (s.events.length ? { ...s, events: s.events.slice(0, -1) } : s));
-  const setRecite = (sid: number, v: Recitation) =>
-    setSession((s) => ({
-      ...s,
-      students: s.students.map((x) => (x.id === sid ? { ...x, r: x.r === v ? null : v } : x)),
-    }));
-  const setHomework = (sid: number, v: Homework) =>
-    setSession((s) => ({
-      ...s,
-      students: s.students.map((x) => (x.id === sid ? { ...x, h: x.h === v ? null : v } : x)),
-    }));
-  const toggleAbsent = (sid: number) =>
-    setAbsent((a) => {
-      const next = { ...a };
-      if (next[sid]) delete next[sid];
-      else next[sid] = true;
-      return next;
-    });
-  const moveStudent = (sid: number, gid: string) =>
-    setSession((s) => ({ ...s, students: s.students.map((x) => (x.id === sid ? { ...x, g: gid } : x)) }));
+  // ---- mutations (pure reducer + persistence) -----------------------------
+  const addStudentScore = (sid: string, d: 1 | -1) => dispatch({ type: 'scoreStudent', sid, d, at: nowSql() });
+  const addGroupScore = (gid: string, d: 1 | -1) => dispatch({ type: 'scoreGroup', gid, d, at: nowSql() });
+  const undo = () => dispatch({ type: 'undo' });
+  const setRecite = (sid: string, v: Recitation) => dispatch({ type: 'setRecite', sid, v });
+  const setHomework = (sid: string, v: Homework) => dispatch({ type: 'setHomework', sid, v });
+  const toggleAbsent = (sid: string) => dispatch({ type: 'toggleAttendance', sid });
+  const moveStudent = (sid: string, gid: string) => dispatch({ type: 'moveStudent', sid, gid });
 
   const goView = (v: View) => {
     setView(v);
@@ -103,9 +140,41 @@ export function Classroom() {
     setOpenGid(null);
   };
 
-  const timerStr = fmtTimer(elapsed);
+  // ---- countdown / overtime (§7.3) ----------------------------------------
+  const elapsedSec = Math.max(0, Math.floor((nowMs - parseLocal(session.startedAt)) / 1000));
+  const remainingSec = session.plannedDurationMin * 60 - elapsedSec;
+  const overtime = remainingSec < 0;
+  const timerStr = fmtTimer(Math.abs(remainingSec));
+
+  const className = session.className ?? '班级';
+  const lessonLabel = fmtLessonLabel({
+    lessonNumber: session.lessonNumber ?? '',
+    lessonTitle: session.lessonTitle ?? '',
+  });
   const isBoard = view === 'board' || view === 'regroup';
-  const total = students.length;
+
+  // ---- end class: commit the whole session once, then to 上课记录 ----------
+  const confirmEnd = () => {
+    if (submitting) return;
+    setSubmitting(true);
+    api
+      .commitSession(id, buildCommitPayload(session, nowSql()))
+      .then(() => {
+        clearSession(id);
+        toast('本节课已保存 · 已生成课堂回顾', 'success');
+        nav(`/classes/${id}?tab=sessions`);
+      })
+      .catch((e) => {
+        setSubmitting(false);
+        toast(e instanceof ApiError ? e.message : '保存失败，请重试', 'error');
+      });
+  };
+
+  // 放弃本节课: the only self-rescue for a broken local session (decision 12).
+  const discard = () => {
+    clearSession(id);
+    nav(`/classes/${id}?tab=sessions`);
+  };
 
   return (
     <div
@@ -134,15 +203,18 @@ export function Classroom() {
             gap: 9,
             padding: '9px 20px',
             borderRadius: 16,
-            background: '#2fb457',
+            background: overtime ? '#ff5a5f' : '#2fb457',
             color: '#fff',
             fontWeight: 800,
             fontSize: 21,
-            boxShadow: '0 5px 14px rgba(47,180,87,.32)',
+            boxShadow: overtime ? '0 5px 14px rgba(255,90,95,.32)' : '0 5px 14px rgba(47,180,87,.32)',
           }}
         >
-          <span style={{ fontSize: 18 }}>⏱</span>
-          <span style={{ fontFamily: NUM, letterSpacing: '.5px', fontVariantNumeric: 'tabular-nums' }}>{timerStr}</span>
+          <span style={{ fontSize: 18 }}>{overtime ? '⏰' : '⏱'}</span>
+          <span style={{ fontFamily: NUM, letterSpacing: '.5px', fontVariantNumeric: 'tabular-nums' }}>
+            {overtime ? `+${timerStr}` : timerStr}
+          </span>
+          {overtime && <span style={{ fontSize: 13, fontWeight: 800, opacity: 0.9 }}>超时</span>}
         </div>
       </div>
 
@@ -171,8 +243,10 @@ export function Classroom() {
             <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 18, paddingBottom: 6 }}>
               {groups.map((g) => {
                 const c = colorOf(g.id);
-                const inGroup = students.filter((s) => s.g === g.id && !absent[s.id]);
-                const absentNames = students.filter((s) => s.g === g.id && absent[s.id]).map((s) => s.name);
+                const inGroup = students.filter((s) => s.g === g.id && s.attendance === 'present');
+                const absentNames = students
+                  .filter((s) => s.g === g.id && s.attendance === 'absent')
+                  .map((s) => s.name);
                 return (
                   <div
                     key={g.id}
@@ -295,7 +369,6 @@ export function Classroom() {
             view={view}
             students={students}
             groups={groups}
-            absent={absent}
             colorOf={colorOf}
             onBadge={(sid) => (view === 'attendance' ? toggleAbsent(sid) : setOpenId(sid))}
           />
@@ -322,6 +395,9 @@ export function Classroom() {
           ))}
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 12, alignItems: 'center' }}>
+          <button onClick={() => setShowDiscard(true)} style={discardStyle}>
+            退出不保存
+          </button>
           <button onClick={undo} style={undoStyle(events.length > 0)}>
             <span style={{ fontSize: 16 }}>↩</span>撤销
           </button>
@@ -354,14 +430,14 @@ export function Classroom() {
         (() => {
           const st = students.find((x) => x.id === openId);
           if (!st) return null;
-          const g = groupById.get(st.g)!;
+          const g = groupById.get(st.g);
           const c = colorOf(st.g);
           const sc = sScore(events, st.id);
           const hint = sc >= 0 ? `本节 个人 +${sc} · 小组同步 +${sc}` : `本节 个人 ${sc} · 小组同步 ${sc}`;
           return (
             <StudentPopup
               st={st}
-              group={g}
+              group={g ?? { id: st.g, name: '未分组', emoji: '🚪' }}
               ring={c.ring}
               score={sc}
               hint={hint}
@@ -392,7 +468,7 @@ export function Classroom() {
           );
         })()}
 
-      {/* end-class recap */}
+      {/* end-class recap (local preview → confirm commits) */}
       {showEnd && (
         <EndRecap
           className={className}
@@ -400,11 +476,85 @@ export function Classroom() {
           groups={groups}
           students={students}
           events={events}
+          submitting={submitting}
           colorOf={colorOf}
-          onClose={() => setShowEnd(false)}
-          onConfirm={() => nav(`/classes/${id}?tab=sessions`)}
+          onClose={() => !submitting && setShowEnd(false)}
+          onConfirm={confirmEnd}
         />
       )}
+
+      {/* discard confirmation */}
+      {showDiscard && (
+        <Overlay z={65} onClose={() => setShowDiscard(false)} strong>
+          <div style={popupCard(440)} onClick={stop}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+              <span style={{ fontSize: 28 }}>⚠️</span>
+              <span style={{ fontWeight: 900, fontSize: 22, color: '#2c3340' }}>放弃本节课？</span>
+            </div>
+            <div style={{ fontSize: 15, fontWeight: 600, color: '#66756c', lineHeight: 1.6, marginBottom: 22 }}>
+              本节课的加减分、背书 / 作业、出勤记录将全部丢弃且不会保存到后端。此操作不可撤销。
+            </div>
+            <div style={{ display: 'flex', gap: 12 }}>
+              <button
+                onClick={() => setShowDiscard(false)}
+                style={{
+                  flex: 1,
+                  padding: 14,
+                  borderRadius: 16,
+                  border: '2px solid #dfe6da',
+                  background: '#fff',
+                  color: '#5b6672',
+                  fontWeight: 800,
+                  fontSize: 16,
+                  fontFamily: 'inherit',
+                  cursor: 'pointer',
+                }}
+              >
+                返回课堂
+              </button>
+              <button
+                onClick={discard}
+                style={{
+                  flex: 1,
+                  padding: 14,
+                  borderRadius: 16,
+                  border: 'none',
+                  background: '#ff5a5f',
+                  color: '#fff',
+                  fontWeight: 800,
+                  fontSize: 16,
+                  fontFamily: 'inherit',
+                  cursor: 'pointer',
+                  boxShadow: '0 5px 14px rgba(255,90,95,.3)',
+                }}
+              >
+                放弃并退出
+              </button>
+            </div>
+          </div>
+        </Overlay>
+      )}
+    </div>
+  );
+}
+
+function Splash() {
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: '#e9f3e4',
+        color: '#8a94a0',
+        fontSize: 15,
+        fontWeight: 700,
+        fontFamily: FONT,
+      }}
+    >
+      加载课堂…
     </div>
   );
 }
@@ -511,7 +661,7 @@ interface Seg {
   title: string;
   dot: string;
   soft: string;
-  students: SStudent[];
+  students: ClassroomStudent[];
   empty?: boolean;
 }
 
@@ -519,20 +669,18 @@ function SegmentView({
   view,
   students,
   groups,
-  absent,
   colorOf,
   onBadge,
 }: {
   view: View;
-  students: SStudent[];
+  students: ClassroomStudent[];
   groups: SGroup[];
-  absent: Record<number, true>;
   colorOf: (gid: string) => (typeof GROUP_COLORS)[number];
-  onBadge: (sid: number) => void;
+  onBadge: (sid: string) => void;
 }) {
   const groupById = new Map(groups.map((g) => [g.id, g]));
   const total = students.length;
-  const bucket = (pred: (s: SStudent) => boolean) => students.filter(pred);
+  const bucket = (pred: (s: ClassroomStudent) => boolean) => students.filter(pred);
 
   let icon = '',
     title = '',
@@ -560,8 +708,8 @@ function SegmentView({
       { title: '没交', dot: '#c9cfd6', soft: '#eef1f4', students: bucket((s) => s.h === '没交') },
     ];
   } else {
-    const present = students.filter((s) => !absent[s.id]);
-    const away = students.filter((s) => absent[s.id]);
+    const present = students.filter((s) => s.attendance === 'present');
+    const away = students.filter((s) => s.attendance === 'absent');
     icon = '📋';
     title = '出勤点名';
     progress = `已到勤 ${present.length} / ${total}`;
@@ -646,7 +794,7 @@ function SegmentView({
                 </span>
               )}
               {seg.students.map((s) => {
-                const g = groupById.get(s.g)!;
+                const g = groupById.get(s.g);
                 const c = colorOf(s.g);
                 return (
                   <div
@@ -675,7 +823,7 @@ function SegmentView({
                     <div style={{ position: 'relative', width: 40, height: 40, flexShrink: 0 }}>
                       <div style={ringAvatar(40, c.ring, 16)}>{s.name[0]}</div>
                       <span style={{ position: 'absolute', bottom: -3, right: -5, fontSize: 15, lineHeight: 1 }}>
-                        {g.emoji}
+                        {g?.emoji ?? '🚪'}
                       </span>
                     </div>
                     <span style={{ fontWeight: 800, fontSize: 17, color: '#2c3340' }}>{s.name}</span>
@@ -899,6 +1047,7 @@ function EndRecap({
   groups,
   students,
   events,
+  submitting,
   colorOf,
   onClose,
   onConfirm,
@@ -906,8 +1055,9 @@ function EndRecap({
   className: string;
   lesson: string;
   groups: SGroup[];
-  students: SStudent[];
+  students: ClassroomStudent[];
   events: SEvent[];
+  submitting: boolean;
   colorOf: (gid: string) => (typeof GROUP_COLORS)[number];
   onClose: () => void;
   onConfirm: () => void;
@@ -1000,6 +1150,7 @@ function EndRecap({
         <div style={{ display: 'flex', gap: 12 }}>
           <button
             onClick={onClose}
+            disabled={submitting}
             style={{
               flex: 1,
               padding: 15,
@@ -1010,13 +1161,15 @@ function EndRecap({
               fontWeight: 800,
               fontSize: 17,
               fontFamily: 'inherit',
-              cursor: 'pointer',
+              cursor: submitting ? 'default' : 'pointer',
+              opacity: submitting ? 0.5 : 1,
             }}
           >
             返回课堂
           </button>
           <button
             onClick={onConfirm}
+            disabled={submitting}
             style={{
               flex: 2,
               padding: 15,
@@ -1027,11 +1180,12 @@ function EndRecap({
               fontWeight: 800,
               fontSize: 17,
               fontFamily: 'inherit',
-              cursor: 'pointer',
+              cursor: submitting ? 'default' : 'pointer',
+              opacity: submitting ? 0.7 : 1,
               boxShadow: '0 5px 14px rgba(47,180,87,.3)',
             }}
           >
-            确认结束 · 生成 recap 推送家长
+            {submitting ? '保存中…' : '确认结束 · 生成 recap 推送家长'}
           </button>
         </div>
       </div>
@@ -1236,6 +1390,21 @@ function undoStyle(enabled: boolean): CSSProperties {
     pointerEvents: enabled ? 'auto' : 'none',
   };
 }
+
+const discardStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  padding: '11px 16px',
+  borderRadius: 14,
+  border: 'none',
+  background: 'transparent',
+  color: '#a7b0bb',
+  fontWeight: 700,
+  fontSize: 14,
+  fontFamily: 'inherit',
+  cursor: 'pointer',
+};
 
 function attnStyle(active: boolean): CSSProperties {
   return {

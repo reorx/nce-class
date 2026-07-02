@@ -7,10 +7,10 @@ describe('classroom scoring (Lesson 3 scenario)', () => {
   const { students, events } = initialSession();
 
   it('derives a student personal score from their own ±1 events', () => {
-    expect(sScore(events, 1)).toBe(2); // 小明 +1 +1
-    expect(sScore(events, 2)).toBe(1); // 小红 +1
-    expect(sScore(events, 3)).toBe(0); // 小刚 (no events)
-    expect(sScore(events, 11)).toBe(-1); // 婷婷 −1
+    expect(sScore(events, '1')).toBe(2); // 小明 +1 +1
+    expect(sScore(events, '2')).toBe(1); // 小红 +1
+    expect(sScore(events, '3')).toBe(0); // 小刚 (no events)
+    expect(sScore(events, '11')).toBe(-1); // 婷婷 −1
   });
 
   it('derives a group score by nesting student events + group events', () => {
@@ -29,7 +29,7 @@ describe('classroom scoring (Lesson 3 scenario)', () => {
   it('re-grouping a student does not rewrite historical group scores', () => {
     // Move 小明 (currently g1) into g3, then add a fresh +1: only the new event
     // counts toward g3; g1 keeps the two historical points 小明 earned there.
-    const moved = events.concat({ id: 99, tt: 'student', tid: 1, g: 'g3', d: 1 });
+    const moved = events.concat({ id: 99, tt: 'student', tid: '1', g: 'g3', d: 1, createdAt: '2026-05-29 19:30:00' });
     expect(gScore(moved, 'g1')).toBe(4); // unchanged history
     expect(gScore(moved, 'g3')).toBe(4); // 3 + the new +1
   });

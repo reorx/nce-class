@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS class_sessions (
   date TEXT NOT NULL, lesson_number INTEGER, lesson_title TEXT,
   status TEXT NOT NULL DEFAULT 'ended',
   planned_duration_min INTEGER NOT NULL DEFAULT 120,
-  started_at TEXT, ended_at TEXT
+  started_at TEXT, ended_at TEXT,
+  client_session_id TEXT UNIQUE
 );
 CREATE TABLE IF NOT EXISTS session_groups (
   id TEXT PRIMARY KEY, session_id TEXT NOT NULL, name TEXT NOT NULL,

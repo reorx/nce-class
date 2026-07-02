@@ -11,7 +11,15 @@ import {
   verifySession,
 } from './auth/session.js';
 import { sqlite, DB_PATH } from './db/client.js';
-import { addStudent, createClass, deleteStudent, saveGrouping, type GroupInput } from './db/mutations.js';
+import {
+  addStudent,
+  commitSession,
+  createClass,
+  deleteStudent,
+  saveGrouping,
+  type CommitInput,
+  type GroupInput,
+} from './db/mutations.js';
 import { UPLOAD_DIR } from './storage/local.js';
 import { fmtDuration, relativeDayCN, weekdayCN } from './util/time.js';
 
@@ -53,6 +61,7 @@ const q = {
     `SELECT * FROM class_sessions WHERE class_id=? ORDER BY date DESC, lesson_number DESC`,
   ),
   sessionById: sqlite.prepare(`SELECT * FROM class_sessions WHERE id=?`),
+  sessionByClientId: sqlite.prepare(`SELECT * FROM class_sessions WHERE client_session_id=?`),
   sessionGroupCounts: sqlite.prepare(`SELECT session_id, COUNT(*) c FROM session_groups GROUP BY session_id`),
   lastEndedSession: sqlite.prepare(
     `SELECT * FROM class_sessions WHERE class_id=? AND status='ended'
@@ -219,11 +228,149 @@ function classInOrg(classId: string, orgId: string): any | null {
   return c && c.org_id === orgId ? c : null;
 }
 
+// Naive 'YYYY-MM-DD HH:mm:ss' (no T/Z) — actualMin parses it as UTC, so an ISO
+// string would compute NaN. The commit contract pins this shape (decision 9).
+// Ranges are bounded so a crafted body can't store '2026-13-99 99:99:99'.
+const TIME_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01]) ([01]\d|2[0-3]):[0-5]\d:[0-5]\d$/;
+
+/** Coerce to a non-negative integer, or a fallback when not a finite number. */
+const intOr = (v: unknown, fallback: number | null): number | null =>
+  Number.isFinite(v) ? Math.trunc(v as number) : fallback;
+
+/**
+ * Validate + normalise an end-class commit body into a CommitInput, or return an
+ * error message. Enforces: time-string format, delta ∈ {±1}, student/group ids
+ * belong to the class, attendance ∈ {present,absent}.
+ */
+function buildCommitInput(body: any, classId: string, teacherId: string): { input: CommitInput } | { error: string } {
+  const clientSessionId = str(body?.clientSessionId);
+  if (!clientSessionId) return { error: 'clientSessionId 必填' };
+  const startedAt = str(body?.startedAt);
+  const endedAt = str(body?.endedAt);
+  if (!startedAt || !TIME_RE.test(startedAt)) return { error: 'startedAt 必须是 YYYY-MM-DD HH:mm:ss' };
+  if (!endedAt || !TIME_RE.test(endedAt)) return { error: 'endedAt 必须是 YYYY-MM-DD HH:mm:ss' };
+
+  const roster = new Set((q.studentsOfClass.all(classId) as any[]).map((s) => s.id));
+  const classGroupIds = new Set((q.groupsOfClass.all(classId) as any[]).map((g) => g.id));
+  // A student ref not on the roster is either DELETED (row gone → drop the row,
+  // consistent with saveGrouping's filter, so a mid-class deletion can't brick
+  // the commit — M4) or FOREIGN (belongs to another class → reject, no leak).
+  const classifyStudent = (sid: string): 'own' | 'deleted' | 'foreign' =>
+    roster.has(sid) ? 'own' : q.studentById.get(sid) ? 'foreign' : 'deleted';
+
+  const sgRaw = Array.isArray(body?.sessionGroups) ? body.sessionGroups : [];
+  const sessionGroups = [];
+  const clientGroupIds = new Set<string>();
+  for (const g of sgRaw) {
+    const clientId = str(g?.clientId);
+    const name = str(g?.name);
+    if (!clientId || !name) return { error: '每个课堂小组需要 clientId 与 name' };
+    clientGroupIds.add(clientId);
+    sessionGroups.push({
+      clientId,
+      name,
+      emoji: str(g?.emoji),
+      orderIndex: intOr(g?.orderIndex, sessionGroups.length)!,
+    });
+  }
+  const knownGroup = (cid: string | null) => cid == null || clientGroupIds.has(cid);
+
+  // A missing/malformed defaultGrouping must NOT default to [] — commitSession
+  // replaces the class default, so [] would silently wipe it (M2).
+  if (!Array.isArray(body?.defaultGrouping?.groups)) return { error: 'defaultGrouping.groups 必须是数组' };
+  const defaultGrouping: GroupInput[] = [];
+  for (const g of body.defaultGrouping.groups) {
+    const name = str(g?.name);
+    if (!name) return { error: '默认分组的每个小组需要名称' };
+    // A non-`new-` id must reference this class's own group; otherwise it would
+    // collide (500) or mint an arbitrary class_groups id (M1).
+    const gid = str(g?.clientId);
+    if (gid && !gid.startsWith('new-') && !classGroupIds.has(gid)) return { error: `未知默认分组 ${gid}` };
+    const memberIds = Array.isArray(g?.memberIds) ? g.memberIds.filter((m: unknown) => typeof m === 'string') : [];
+    defaultGrouping.push({
+      id: gid,
+      name,
+      emoji: str(g?.emoji),
+      orderIndex: intOr(g?.orderIndex, defaultGrouping.length)!,
+      memberIds,
+    });
+  }
+
+  const memRaw = Array.isArray(body?.memberships) ? body.memberships : [];
+  const memberships = [];
+  for (const m of memRaw) {
+    const studentId = str(m?.studentId);
+    if (!studentId) return { error: 'membership 需要 studentId' };
+    const kind = classifyStudent(studentId);
+    if (kind === 'foreign') return { error: `学生 ${studentId} 不属于该班` };
+    if (kind === 'deleted') continue; // dropped mid-class → skip (M4)
+    const attendance = m?.attendance === 'absent' ? 'absent' : 'present';
+    const clientGroupId = str(m?.clientGroupId);
+    if (!knownGroup(clientGroupId)) return { error: `未知小组 ${clientGroupId}` };
+    memberships.push({ studentId, clientGroupId, attendance });
+  }
+
+  const evRaw = Array.isArray(body?.events) ? body.events : [];
+  const events = [];
+  for (const e of evRaw) {
+    const targetType = e?.targetType === 'group' ? 'group' : e?.targetType === 'student' ? 'student' : null;
+    if (!targetType) return { error: 'targetType 必须是 student 或 group' };
+    const targetId = str(e?.targetId);
+    if (!targetId) return { error: 'targetId 必填' };
+    if (e?.delta !== 1 && e?.delta !== -1) return { error: 'delta 只能是 +1 或 −1' };
+    if (targetType === 'group' && !clientGroupIds.has(targetId)) return { error: `未知小组 ${targetId}` };
+    if (targetType === 'student') {
+      const kind = classifyStudent(targetId);
+      if (kind === 'foreign') return { error: `学生 ${targetId} 不属于该班` };
+      if (kind === 'deleted') continue; // dropped mid-class → skip its events (M4)
+    }
+    const clientGroupId = str(e?.clientGroupId);
+    if (!knownGroup(clientGroupId)) return { error: `未知小组 ${clientGroupId}` };
+    const createdAt = str(e?.createdAt);
+    events.push({ targetType, targetId, clientGroupId, delta: e.delta, createdAt: createdAt ?? startedAt });
+  }
+
+  const ckRaw = Array.isArray(body?.checks) ? body.checks : [];
+  const checks = [];
+  for (const c of ckRaw) {
+    const studentId = str(c?.studentId);
+    if (!studentId) return { error: 'check 需要 studentId' };
+    const kind = classifyStudent(studentId);
+    if (kind === 'foreign') return { error: `学生 ${studentId} 不属于该班` };
+    if (kind === 'deleted') continue; // dropped mid-class → skip (M4)
+    const type = c?.type === 'homework' ? 'homework' : c?.type === 'recitation' ? 'recitation' : null;
+    const status = str(c?.status);
+    if (!type || !status) return { error: 'check 需要 type 与 status' };
+    checks.push({ studentId, type, status });
+  }
+
+  return {
+    input: {
+      classId,
+      teacherId,
+      clientSessionId,
+      date: startedAt.slice(0, 10), // decision 9
+      lessonNumber: intOr(body?.lessonNumber, null),
+      lessonTitle: str(body?.lessonTitle),
+      plannedDurationMin: Math.max(1, intOr(body?.plannedDurationMin, 120)!),
+      startedAt,
+      endedAt,
+      defaultGrouping,
+      sessionGroups,
+      memberships,
+      events,
+      checks,
+    },
+  };
+}
+
 // ---- app ------------------------------------------------------------------
 export function createApp() {
   const app = express();
   app.use(cors());
-  app.use(express.json());
+  // 1mb headroom: a very event-heavy lesson can exceed express's 100kb default,
+  // and a 413 would trap the retry forever (same shape as a dropped commit, L3).
+  app.use(express.json({ limit: '1mb' }));
   app.use('/uploads', express.static(UPLOAD_DIR));
 
   app.get('/api/health', (_req, res) => res.json({ ok: true }));
@@ -322,6 +469,29 @@ export function createApp() {
     }
     saveGrouping(sqlite, req.params.id, groups);
     res.json(classDetailPayload(req.params.id));
+  });
+
+  // ---- end-class commit (offline-first one-shot; the only session write) ----
+  app.post('/api/classes/:id/sessions', (req, res) => {
+    const teacher = res.locals.teacher;
+    if (!classInOrg(req.params.id, teacher.org_id)) return res.status(404).json({ error: 'class not found' });
+
+    const built = buildCommitInput(req.body, req.params.id, teacher.id);
+    if ('error' in built) return res.status(400).json({ error: built.error });
+
+    // Idempotent replay: a retried submit returns the already-stored session.
+    // The lookup is global (client_session_id is UNIQUE), so scope it to THIS
+    // class — otherwise a colliding id would leak another class/org's recap or
+    // report a wrong-class commit as "succeeded" (H1).
+    const existing = q.sessionByClientId.get(built.input.clientSessionId) as any;
+    if (existing) {
+      if (existing.class_id !== req.params.id) return res.status(409).json({ error: 'clientSessionId 已用于其他班级' });
+      return res.json({ sessionId: existing.id, recap: buildRecap(existing), created: false });
+    }
+
+    const sessionId = commitSession(sqlite, built.input);
+    const row = q.sessionById.get(sessionId) as any;
+    res.status(201).json({ sessionId, recap: buildRecap(row), created: true });
   });
 
   // ---- recap (read) ----

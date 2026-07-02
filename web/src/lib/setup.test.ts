@@ -94,14 +94,24 @@ describe('课前配置 grouping model', () => {
     expect(sums(st).groups).toBe(4);
   });
 
-  it('builds a classroom handoff config of only the playing students', () => {
+  it('builds a classroom handoff config of playing students + an absent list', () => {
     const st = buildSetup(fixture());
     const cfg = buildSessionConfig(st, { lessonNumber: '4', lessonTitle: 'A private conversation', durationMin: 120 });
-    expect(cfg.students).toHaveLength(12); // 浩浩(未分组) excluded
+    expect(cfg.students).toHaveLength(12); // 浩浩(未分组) not playing
     expect(cfg.students.every((s) => s.g)).toBe(true);
+    // the ungrouped student is registered as absent, keeping no default group
+    expect(cfg.absent).toEqual([{ id: 's13', name: '浩浩', originalGroupId: null }]);
     expect(cfg.groups.map((g) => g.id)).toEqual(['c1-g1', 'c1-g2', 'c1-g3']);
     expect(cfg.durationMin).toBe(120);
     expect(cfg.lessonTitle).toBe('A private conversation');
+  });
+
+  it('keeps a staged (absent) student’s default group so it survives writeback (decision 6)', () => {
+    // 小明 (default group c1-g1) is dragged to the staging zone before class.
+    const st = moveStudent(buildSetup(fixture()), 's1', 'absent');
+    const cfg = buildSessionConfig(st, { lessonNumber: '4', lessonTitle: '', durationMin: 120 });
+    expect(cfg.students.find((s) => s.id === 's1')).toBeUndefined(); // not playing
+    expect(cfg.absent).toContainEqual({ id: 's1', name: '小明', originalGroupId: 'c1-g1' });
   });
 });
 

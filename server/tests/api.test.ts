@@ -152,6 +152,242 @@ describe('session recap', () => {
   });
 });
 
+describe('end-class commit', () => {
+  // Base payload over the seeded c1 (s1,s2 in g1; s3 in g2; s4 ungrouped).
+  // Ledger: 小明 +2 (star), 小红 +1−1 (net 0, warned), 组 g1 +1 → g1 nested = 3.
+  function body(over: Record<string, any> = {}) {
+    return {
+      clientSessionId: 'cs-1',
+      lessonNumber: 8,
+      lessonTitle: 'New lesson',
+      plannedDurationMin: 120,
+      startedAt: '2026-07-02 19:00:00',
+      endedAt: '2026-07-02 20:00:00',
+      defaultGrouping: {
+        groups: [
+          { clientId: 'g1', name: '第1组', emoji: '🦁', orderIndex: 0, memberIds: ['s1', 's2'] },
+          { clientId: 'g2', name: '第2组', emoji: '🐯', orderIndex: 1, memberIds: ['s3'] },
+        ],
+      },
+      sessionGroups: [
+        { clientId: 'g1', name: '第1组', emoji: '🦁', orderIndex: 0 },
+        { clientId: 'g2', name: '第2组', emoji: '🐯', orderIndex: 1 },
+      ],
+      memberships: [
+        { studentId: 's1', clientGroupId: 'g1', attendance: 'present' },
+        { studentId: 's2', clientGroupId: 'g1', attendance: 'present' },
+        { studentId: 's3', clientGroupId: null, attendance: 'absent' },
+        { studentId: 's4', clientGroupId: null, attendance: 'absent' },
+      ],
+      events: [
+        { targetType: 'student', targetId: 's1', clientGroupId: 'g1', delta: 1, createdAt: '2026-07-02 19:05:00' },
+        { targetType: 'student', targetId: 's1', clientGroupId: 'g1', delta: 1, createdAt: '2026-07-02 19:06:00' },
+        { targetType: 'student', targetId: 's2', clientGroupId: 'g1', delta: 1, createdAt: '2026-07-02 19:07:00' },
+        { targetType: 'student', targetId: 's2', clientGroupId: 'g1', delta: -1, createdAt: '2026-07-02 19:08:00' },
+        { targetType: 'group', targetId: 'g1', clientGroupId: 'g1', delta: 1, createdAt: '2026-07-02 19:09:00' },
+      ],
+      checks: [
+        { studentId: 's1', type: 'recitation', status: '已背完' },
+        { studentId: 's1', type: 'homework', status: '完成' },
+      ],
+      ...over,
+    };
+  }
+
+  it('persists the session + snapshots and returns a derived recap', async () => {
+    const { agent } = await login();
+    const res = await agent.post('/api/classes/c1/sessions').send(body());
+    expect(res.status).toBe(201);
+    expect(res.body.created).toBe(true);
+    expect(typeof res.body.sessionId).toBe('string');
+
+    // recap derived from the just-written ledger
+    expect(res.body.recap.groups.map((g: any) => [g.name, g.score])).toEqual([
+      ['第1组', 3],
+      ['第2组', 0],
+    ]);
+    expect(res.body.recap.stars.map((s: any) => s.name)).toEqual(['小明']);
+    expect(res.body.recap.warned.map((s: any) => s.name)).toEqual(['小红']);
+    expect(res.body.recap.attendancePresent).toBe(2);
+    expect(res.body.recap.attendanceTotal).toBe(4);
+
+    const row = sqlite.prepare(`SELECT * FROM class_sessions WHERE client_session_id='cs-1'`).get() as any;
+    expect(row.status).toBe('ended');
+    expect(row.date).toBe('2026-07-02'); // decision 9: derived from startedAt
+    expect(row.lesson_number).toBe(8);
+    const sg = sqlite.prepare(`SELECT COUNT(*) c FROM session_groups WHERE session_id=?`).get(row.id) as any;
+    const sm = sqlite.prepare(`SELECT COUNT(*) c FROM session_memberships WHERE session_id=?`).get(row.id) as any;
+    const absent = sqlite
+      .prepare(`SELECT session_group_id FROM session_memberships WHERE session_id=? AND student_id='s3'`)
+      .get(row.id) as any;
+    expect(sg.c).toBe(2);
+    expect(sm.c).toBe(4);
+    expect(absent.session_group_id).toBe(null); // decision 8
+
+    // actual minutes = ended − started = 60
+    const detail = (await agent.get('/api/classes/c1')).body;
+    const s = detail.sessions.find((x: any) => x.id === row.id);
+    expect(s.actualDurationMin).toBe(60);
+  });
+
+  it('writes back the default grouping (open-time), keeping absent students + minting new-group ids', async () => {
+    const { agent } = await login();
+    // 小刚 (s3) is absent yet kept in a brand-new group; 小明/小红 stay in g1.
+    await agent.post('/api/classes/c1/sessions').send(
+      body({
+        clientSessionId: 'cs-dg',
+        defaultGrouping: {
+          groups: [
+            { clientId: 'g1', name: '第1组', emoji: '🦁', orderIndex: 0, memberIds: ['s1', 's2'] },
+            { clientId: 'new-z', name: '新小组', emoji: '🐼', orderIndex: 1, memberIds: ['s3'] },
+          ],
+        },
+      }),
+    );
+    const detail = (await agent.get('/api/classes/c1')).body;
+    expect(detail.groups.find((g: any) => g.id === 'g1').memberIds.sort()).toEqual(['s1', 's2']);
+    const fresh = detail.groups.find((g: any) => g.name === '新小组');
+    expect(fresh.id).not.toBe('new-z'); // minted a real id
+    expect(fresh.memberIds).toEqual(['s3']); // absent 小刚 kept in default (decision 6)
+    expect(detail.groups.map((g: any) => g.id)).not.toContain('g2'); // g2 replaced
+    // s4 stays ungrouped
+    expect(detail.students.find((s: any) => s.id === 's4').groupId).toBe(null);
+  });
+
+  it('attributes each score event to the group at event time, not the final membership', async () => {
+    const { agent } = await login();
+    // 小明 earns once in g1, then is re-grouped to g2 and earns once more there.
+    const res = await agent.post('/api/classes/c1/sessions').send(
+      body({
+        clientSessionId: 'cs-move',
+        memberships: [
+          { studentId: 's1', clientGroupId: 'g2', attendance: 'present' }, // final group g2
+          { studentId: 's2', clientGroupId: 'g1', attendance: 'present' },
+          { studentId: 's3', clientGroupId: 'g2', attendance: 'present' },
+          { studentId: 's4', clientGroupId: null, attendance: 'absent' },
+        ],
+        events: [
+          { targetType: 'student', targetId: 's1', clientGroupId: 'g1', delta: 1, createdAt: '2026-07-02 19:05:00' },
+          { targetType: 'student', targetId: 's1', clientGroupId: 'g2', delta: 1, createdAt: '2026-07-02 19:20:00' },
+        ],
+        checks: [],
+      }),
+    );
+    const byName = new Map(res.body.recap.groups.map((g: any) => [g.name, g.score]));
+    expect(byName.get('第1组')).toBe(1); // historical g1 point kept
+    expect(byName.get('第2组')).toBe(1); // post-move point
+  });
+
+  it('is idempotent for a repeated clientSessionId', async () => {
+    const { agent } = await login();
+    const first = await agent.post('/api/classes/c1/sessions').send(body({ clientSessionId: 'cs-dup' }));
+    const second = await agent.post('/api/classes/c1/sessions').send(body({ clientSessionId: 'cs-dup' }));
+    expect(first.body.created).toBe(true);
+    expect(second.status).toBe(200);
+    expect(second.body.created).toBe(false);
+    expect(second.body.sessionId).toBe(first.body.sessionId);
+    const count = sqlite.prepare(`SELECT COUNT(*) c FROM class_sessions WHERE client_session_id='cs-dup'`).get() as any;
+    expect(count.c).toBe(1);
+  });
+
+  it('rejects malformed payloads and foreign ids', async () => {
+    const { agent } = await login();
+    // ISO time string would make actualMin NaN
+    expect(
+      (await agent.post('/api/classes/c1/sessions').send(body({ startedAt: '2026-07-02T19:00:00Z' }))).status,
+    ).toBe(400);
+    // delta must be ±1
+    expect(
+      (
+        await agent.post('/api/classes/c1/sessions').send(
+          body({
+            events: [
+              {
+                targetType: 'student',
+                targetId: 's1',
+                clientGroupId: 'g1',
+                delta: 2,
+                createdAt: '2026-07-02 19:05:00',
+              },
+            ],
+          }),
+        )
+      ).status,
+    ).toBe(400);
+    // membership for a FOREIGN student (belongs to another class) is rejected
+    expect(
+      (
+        await agent
+          .post('/api/classes/c1/sessions')
+          .send(body({ memberships: [{ studentId: 'so1', clientGroupId: null, attendance: 'present' }] }))
+      ).status,
+    ).toBe(400);
+    // out-of-range time value (crafted) is rejected, not stored as NaN duration (L2)
+    expect((await agent.post('/api/classes/c1/sessions').send(body({ startedAt: '2026-13-99 99:99:99' }))).status).toBe(
+      400,
+    );
+  });
+
+  it('scopes idempotency to the class — no cross-org recap leak (H1)', async () => {
+    const { agent } = await login(); // 王莉, org-1
+    await agent.post('/api/classes/c1/sessions').send(body({ clientSessionId: 'shared-key' }));
+
+    const out = (await login('waiguo', 'demo1234')).agent; // 外老师, org-2, owns c-out
+    const res = await out.post('/api/classes/c-out/sessions').send({
+      clientSessionId: 'shared-key', // same key, different class/org
+      startedAt: '2026-07-02 19:00:00',
+      endedAt: '2026-07-02 20:00:00',
+      plannedDurationMin: 120,
+      defaultGrouping: { groups: [] },
+      sessionGroups: [],
+      memberships: [],
+      events: [],
+      checks: [],
+    });
+    expect(res.status).toBe(409);
+    expect(JSON.stringify(res.body)).not.toContain('小明'); // org-1 student names must not leak
+  });
+
+  it('rejects a defaultGrouping clientId that is not one of this class’s own groups (M1)', async () => {
+    const { agent } = await login();
+    const res = await agent.post('/api/classes/c1/sessions').send(
+      body({
+        clientSessionId: 'cs-m1',
+        defaultGrouping: {
+          groups: [{ clientId: 'foreign-gid', name: 'X', emoji: null, orderIndex: 0, memberIds: [] }],
+        },
+      }),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('refuses to wipe the class default grouping when defaultGrouping is missing (M2)', async () => {
+    const { agent } = await login();
+    const { defaultGrouping, ...noDg } = body({ clientSessionId: 'cs-m2' });
+    void defaultGrouping;
+    const res = await agent.post('/api/classes/c1/sessions').send(noDg);
+    expect(res.status).toBe(400);
+    const detail = (await agent.get('/api/classes/c1')).body;
+    expect(detail.groups.map((g: any) => g.id).sort()).toEqual(['g1', 'g2']); // grouping intact
+  });
+
+  it('drops rows for a student deleted mid-class instead of failing the whole commit (M4)', async () => {
+    const { agent } = await login();
+    await agent.delete('/api/students/s2'); // removed from roster while "class" is running
+    const res = await agent.post('/api/classes/c1/sessions').send(body({ clientSessionId: 'cs-m4' }));
+    expect(res.status).toBe(201);
+    const row = sqlite.prepare(`SELECT id FROM class_sessions WHERE client_session_id='cs-m4'`).get() as any;
+    const s2mem = sqlite
+      .prepare(`SELECT COUNT(*) c FROM session_memberships WHERE session_id=? AND student_id='s2'`)
+      .get(row.id) as any;
+    const s2ev = sqlite
+      .prepare(`SELECT COUNT(*) c FROM score_events WHERE session_id=? AND target_id='s2'`)
+      .get(row.id) as any;
+    expect(s2mem.c).toBe(0);
+    expect(s2ev.c).toBe(0);
+  });
+});
+
 describe('cross-org isolation', () => {
   it("hides another org's class and blocks writes to it", async () => {
     const { agent } = await login(); // 王莉 in org-1
@@ -159,5 +395,6 @@ describe('cross-org isolation', () => {
     expect((await agent.post('/api/classes/c-out/students').send({ name: 'x' })).status).toBe(404);
     expect((await agent.delete('/api/students/so1')).status).toBe(404);
     expect((await agent.put('/api/classes/c-out/groups').send({ groups: [] })).status).toBe(404);
+    expect((await agent.post('/api/classes/c-out/sessions').send({ clientSessionId: 'x' })).status).toBe(404);
   });
 });

@@ -98,6 +98,42 @@ export interface GroupSave {
   memberIds: string[];
 }
 
+// ---- classroom commit (end-class one-shot POST) ---------------------------
+
+export interface CommitGroup {
+  clientId: string;
+  name: string;
+  emoji: string | null;
+  orderIndex: number;
+}
+
+/** The whole session, assembled locally and POSTed once when class ends. */
+export interface CommitPayload {
+  clientSessionId: string; // idempotency key (stable across retries)
+  lessonNumber: number | null;
+  lessonTitle: string | null;
+  plannedDurationMin: number;
+  startedAt: string; // 'YYYY-MM-DD HH:mm:ss'
+  endedAt: string; // 'YYYY-MM-DD HH:mm:ss'
+  defaultGrouping: { groups: (CommitGroup & { memberIds: string[] })[] }; // §7.2 writeback
+  sessionGroups: CommitGroup[];
+  memberships: { studentId: string; clientGroupId: string | null; attendance: 'present' | 'absent' }[];
+  events: {
+    targetType: 'student' | 'group';
+    targetId: string;
+    clientGroupId: string | null;
+    delta: 1 | -1;
+    createdAt: string;
+  }[];
+  checks: { studentId: string; type: 'recitation' | 'homework'; status: string }[];
+}
+
+export interface CommitResult {
+  sessionId: string;
+  recap: Recap;
+  created: boolean; // false when an existing session was returned (idempotent replay)
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -142,4 +178,6 @@ export const api = {
   saveGrouping: (classId: string, groups: GroupSave[]) =>
     req<ClassDetail>('PUT', `/api/classes/${classId}/groups`, { groups }),
   getSessionRecap: (sessionId: string) => get<Recap>(`/api/sessions/${sessionId}/recap`),
+  commitSession: (classId: string, payload: CommitPayload) =>
+    req<CommitResult>('POST', `/api/classes/${classId}/sessions`, payload),
 };

@@ -12,7 +12,7 @@
 // ---------------------------------------------------------------------------
 
 import type { ClassDetail } from './api';
-import { GROUP_COLORS, type SessionState } from './session';
+import { GROUP_COLORS } from './session';
 
 /** Fallback per-group emoji cycle when a group has none (matches the mockups). */
 export const EMOJIS = ['🦁', '🐯', '🐻', '🐬', '🦊', '🐨', '🐧', '🐰'];
@@ -29,6 +29,7 @@ export interface SetupStudent {
   id: string;
   name: string;
   hasPhoto: boolean;
+  origin: string | null; // the student's group in the class's *default* grouping (§7.2 writeback)
 }
 
 export interface SetupState {
@@ -56,7 +57,12 @@ export function buildSetup(detail: Detail): SetupState {
     if (s.groupId && valid.has(s.groupId)) assign[s.id] = s.groupId;
     else absent[s.id] = true; // ungrouped → staging zone
   }
-  const students: SetupStudent[] = detail.students.map((s) => ({ id: s.id, name: s.name, hasPhoto: s.hasPhoto }));
+  const students: SetupStudent[] = detail.students.map((s) => ({
+    id: s.id,
+    name: s.name,
+    hasPhoto: s.hasPhoto,
+    origin: s.groupId && valid.has(s.groupId) ? s.groupId : null,
+  }));
   return { groups, students, assign, absent, gidSeq: 1 };
 }
 
@@ -122,33 +128,42 @@ export interface SessionInfo {
   className?: string;
 }
 
-export interface SessionConfig extends SessionInfo {
-  groups: { id: string; name: string; emoji: string; ci: number }[];
-  students: { id: string; name: string; g: string }[]; // only the playing ones
+/** A pre-class-absent student, carried so the classroom can register them
+ *  (membership + attendance) and keep their default group for §7.2 writeback. */
+export interface AbsentStudent {
+  id: string;
+  name: string;
+  originalGroupId: string | null; // default group at open time (null → stays ungrouped)
 }
 
-/** Freeze the confirmed grouping into a snapshot the classroom boots from. */
-export function buildSessionConfig(state: SetupState, info: SessionInfo): SessionConfig {
-  const students = state.students
-    .filter((s) => state.assign[s.id])
-    .map((s) => ({ id: s.id, name: s.name, g: state.assign[s.id] }));
-  const groups = state.groups.map((g) => ({ id: g.id, name: g.name, emoji: g.emoji, ci: g.ci }));
-  return { ...info, groups, students };
+export interface SessionConfig extends SessionInfo {
+  groups: { id: string; name: string; emoji: string; ci: number }[];
+  students: { id: string; name: string; g: string }[]; // playing (present + grouped)
+  absent: AbsentStudent[]; // staging-zone students: registered but not scored this session
 }
 
 /**
- * Boot a fresh classroom SessionState from the setup snapshot: empty ledger,
- * everyone present. Group colour order is preserved (the classroom colours by
- * array index), so it matches the setup page. Student ids are re-keyed to the
- * classroom's numeric model.
+ * Freeze the confirmed grouping into a snapshot the classroom boots from.
+ * Playing students carry their (possibly re-dragged) group; staged students are
+ * emitted as `absent` keeping their *default* group (decision 6), so the class
+ * default grouping isn't silently wiped when someone is absent.
  */
-export function sessionFromConfig(cfg: SessionConfig): SessionState {
-  return {
-    groups: cfg.groups.map((g) => ({ id: g.id, name: g.name, emoji: g.emoji })),
-    students: cfg.students.map((st, i) => ({ id: i + 1, g: st.g, name: st.name, r: null, h: null })),
-    events: [],
-    nid: 1,
-  };
+export function buildSessionConfig(state: SetupState, info: SessionInfo): SessionConfig {
+  const valid = new Set(state.groups.map((g) => g.id));
+  const students = state.students
+    .filter((s) => state.assign[s.id])
+    .map((s) => ({ id: s.id, name: s.name, g: state.assign[s.id] }));
+  const absent: AbsentStudent[] = state.students
+    .filter((s) => state.absent[s.id])
+    .map((s) => ({ id: s.id, name: s.name, originalGroupId: s.origin && valid.has(s.origin) ? s.origin : null }));
+  const groups = state.groups.map((g) => ({ id: g.id, name: g.name, emoji: g.emoji, ci: g.ci }));
+  return { ...info, groups, students, absent };
+}
+
+/** Build a session config straight from a class's real default grouping — the
+ *  URL-parameter boot shortcut (decision 13). Ungrouped students → absent. */
+export function configFromDetail(detail: Detail, info: SessionInfo): SessionConfig {
+  return buildSessionConfig(buildSetup(detail), info);
 }
 
 /** Header label for a session: "第4课 · A private conversation" (parts optional). */

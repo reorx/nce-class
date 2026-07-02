@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api, type ClassDetail, type LastRecap } from '../lib/api';
+import { buildClassroomSession, loadSession, newClientSessionId, nowSql, saveSession } from '../lib/classroomStore';
 import { GROUP_COLORS } from '../lib/session';
 import {
   addGroup,
@@ -43,6 +44,13 @@ export function Setup() {
   const dragId = useRef<string | null>(null);
 
   useEffect(() => {
+    // If a lesson is already in progress for this class, resume it rather than
+    // silently overwriting it with a fresh session (M3 — e.g. teacher hits Back
+    // to setup mid-class). 放弃本节课 in the classroom is the explicit reset.
+    if (loadSession(id)) {
+      nav(`/classes/${id}/classroom`, { replace: true });
+      return;
+    }
     api
       .classDetail(id)
       .then((d) => {
@@ -51,7 +59,7 @@ export function Setup() {
         setLessonNo(String((d.lastRecap?.lessonNumber ?? 0) + 1));
       })
       .catch(() => {});
-  }, [id]);
+  }, [id, nav]);
 
   const s = sums(state ?? { groups: [], students: [], assign: {}, absent: {}, gidSeq: 1 });
 
@@ -64,6 +72,8 @@ export function Setup() {
   };
   const allowDrop = (e: React.DragEvent) => e.preventDefault();
 
+  // 开始课堂: freeze the micro-adjusted grouping into a fresh local session and
+  // persist it (offline-first, decision 3) — no backend request until 结束课堂.
   const start = () => {
     if (!state) return;
     const config = buildSessionConfig(state, {
@@ -72,7 +82,13 @@ export function Setup() {
       durationMin: Math.max(1, Number(durationMin) || 120),
       className: detail?.name,
     });
-    nav(`/classes/${id}/classroom`, { state: { config } });
+    const session = buildClassroomSession(config, {
+      classId: id,
+      clientSessionId: newClientSessionId(),
+      startedAt: nowSql(),
+    });
+    saveSession(session);
+    nav(`/classes/${id}/classroom`);
   };
 
   return (

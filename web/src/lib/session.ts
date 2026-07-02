@@ -16,7 +16,7 @@ export type Recitation = '已背完' | '背完部分' | '没背' | null;
 export type Homework = '完成' | '没交' | null;
 
 export interface SStudent {
-  id: number;
+  id: string; // real student id (needed to POST the session to the backend)
   g: string; // current group id (mutable via 调组)
   name: string;
   r: Recitation;
@@ -30,11 +30,12 @@ export interface SGroup {
 }
 
 export interface SEvent {
-  id: number;
+  id: number; // local monotonic sequence (keys / undo only)
   tt: 'student' | 'group';
-  tid: number | string;
+  tid: string; // student id or group id, matching tt
   g: string; // the group the target belonged to when the event fired
   d: 1 | -1;
+  createdAt: string; // 'YYYY-MM-DD HH:mm:ss' — carried into the commit payload
 }
 
 export interface SessionState {
@@ -71,7 +72,7 @@ export const HOMEWORK_MAP: Record<string, { dot: string; soft: string; fg: strin
 // ---- pure derivations -----------------------------------------------------
 
 /** A student's per-session personal score = Σ delta of their own events. */
-export function sScore(events: SEvent[], id: number): number {
+export function sScore(events: SEvent[], id: string): number {
   return events.filter((e) => e.tt === 'student' && e.tid === id).reduce((a, e) => a + e.d, 0);
 }
 
@@ -97,22 +98,35 @@ export function warned(students: SStudent[], events: SEvent[]): SStudent[] {
 }
 
 // ---- demo scenario (Lesson 3) --------------------------------------------
+// Fixture only: pins the §5/§6 scoring rules in session.test.ts. Since decision
+// 13 removed the classroom's Lesson-3 page entry, this is no longer a runtime
+// boot path — the classroom always boots from a local ClassroomSession.
+
+const AT = '2026-05-29 19:00:00'; // fixed timestamp; scoring derivations ignore it
 
 export function initialSession(): SessionState {
+  const ev = (id: number, tt: 'student' | 'group', tid: string, g: string, d: 1 | -1): SEvent => ({
+    id,
+    tt,
+    tid,
+    g,
+    d,
+    createdAt: AT,
+  });
   return {
     students: [
-      { id: 1, g: 'g1', name: '小明', r: '已背完', h: '完成' },
-      { id: 2, g: 'g1', name: '小红', r: '背完部分', h: '完成' },
-      { id: 3, g: 'g1', name: '小刚', r: null, h: null },
-      { id: 4, g: 'g1', name: '乐乐', r: '没背', h: '没交' },
-      { id: 5, g: 'g2', name: '丽丽', r: '已背完', h: '完成' },
-      { id: 6, g: 'g2', name: '大壮', r: null, h: '完成' },
-      { id: 7, g: 'g2', name: '欣欣', r: '已背完', h: '完成' },
-      { id: 8, g: 'g2', name: '明明', r: '背完部分', h: null },
-      { id: 9, g: 'g3', name: '军军', r: '已背完', h: '完成' },
-      { id: 10, g: 'g3', name: '悦悦', r: null, h: null },
-      { id: 11, g: 'g3', name: '婷婷', r: '没背', h: '没交' },
-      { id: 12, g: 'g3', name: '浩浩', r: '已背完', h: '完成' },
+      { id: '1', g: 'g1', name: '小明', r: '已背完', h: '完成' },
+      { id: '2', g: 'g1', name: '小红', r: '背完部分', h: '完成' },
+      { id: '3', g: 'g1', name: '小刚', r: null, h: null },
+      { id: '4', g: 'g1', name: '乐乐', r: '没背', h: '没交' },
+      { id: '5', g: 'g2', name: '丽丽', r: '已背完', h: '完成' },
+      { id: '6', g: 'g2', name: '大壮', r: null, h: '完成' },
+      { id: '7', g: 'g2', name: '欣欣', r: '已背完', h: '完成' },
+      { id: '8', g: 'g2', name: '明明', r: '背完部分', h: null },
+      { id: '9', g: 'g3', name: '军军', r: '已背完', h: '完成' },
+      { id: '10', g: 'g3', name: '悦悦', r: null, h: null },
+      { id: '11', g: 'g3', name: '婷婷', r: '没背', h: '没交' },
+      { id: '12', g: 'g3', name: '浩浩', r: '已背完', h: '完成' },
     ],
     groups: [
       { id: 'g1', name: '第1组', emoji: '🦁' },
@@ -120,19 +134,19 @@ export function initialSession(): SessionState {
       { id: 'g3', name: '第3组', emoji: '🐻' },
     ],
     events: [
-      { id: 1, tt: 'student', tid: 1, g: 'g1', d: 1 },
-      { id: 2, tt: 'student', tid: 1, g: 'g1', d: 1 },
-      { id: 3, tt: 'student', tid: 2, g: 'g1', d: 1 },
-      { id: 4, tt: 'group', tid: 'g1', g: 'g1', d: 1 },
-      { id: 5, tt: 'student', tid: 5, g: 'g2', d: 1 },
-      { id: 6, tt: 'student', tid: 7, g: 'g2', d: 1 },
-      { id: 7, tt: 'student', tid: 7, g: 'g2', d: 1 },
-      { id: 8, tt: 'group', tid: 'g2', g: 'g2', d: 1 },
-      { id: 9, tt: 'student', tid: 9, g: 'g3', d: 1 },
-      { id: 10, tt: 'student', tid: 9, g: 'g3', d: 1 },
-      { id: 11, tt: 'student', tid: 9, g: 'g3', d: 1 },
-      { id: 12, tt: 'student', tid: 11, g: 'g3', d: -1 },
-      { id: 13, tt: 'group', tid: 'g3', g: 'g3', d: 1 },
+      ev(1, 'student', '1', 'g1', 1),
+      ev(2, 'student', '1', 'g1', 1),
+      ev(3, 'student', '2', 'g1', 1),
+      ev(4, 'group', 'g1', 'g1', 1),
+      ev(5, 'student', '5', 'g2', 1),
+      ev(6, 'student', '7', 'g2', 1),
+      ev(7, 'student', '7', 'g2', 1),
+      ev(8, 'group', 'g2', 'g2', 1),
+      ev(9, 'student', '9', 'g3', 1),
+      ev(10, 'student', '9', 'g3', 1),
+      ev(11, 'student', '9', 'g3', 1),
+      ev(12, 'student', '11', 'g3', -1),
+      ev(13, 'group', 'g3', 'g3', 1),
     ],
     nid: 100,
   };

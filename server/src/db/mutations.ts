@@ -11,6 +11,46 @@ export interface GroupInput {
   memberIds: string[];
 }
 
+export interface CommitSessionGroup {
+  clientId: string;
+  name: string;
+  emoji: string | null;
+  orderIndex: number;
+}
+export interface CommitMembership {
+  studentId: string;
+  clientGroupId: string | null;
+  attendance: string;
+}
+export interface CommitEvent {
+  targetType: string;
+  targetId: string;
+  clientGroupId: string | null;
+  delta: number;
+  createdAt: string;
+}
+export interface CommitCheck {
+  studentId: string;
+  type: string;
+  status: string;
+}
+export interface CommitInput {
+  classId: string;
+  teacherId: string;
+  clientSessionId: string;
+  date: string; // startedAt's date (decision 9)
+  lessonNumber: number | null;
+  lessonTitle: string | null;
+  plannedDurationMin: number;
+  startedAt: string;
+  endedAt: string;
+  defaultGrouping: GroupInput[]; // §7.2 writeback (open-time grouping)
+  sessionGroups: CommitSessionGroup[];
+  memberships: CommitMembership[];
+  events: CommitEvent[];
+  checks: CommitCheck[];
+}
+
 /** Create a class in the given org owned by the given teacher. Returns its id. */
 export function createClass(
   sqlite: DB,
@@ -78,4 +118,93 @@ export function saveGrouping(sqlite: DB, classId: string, groups: GroupInput[]):
     });
   });
   tx();
+}
+
+/**
+ * Commit a finished classroom session in one transaction (§7.2/§7.3, decision 3):
+ * ① write back the default grouping (reuses saveGrouping — the nested
+ *    transaction auto-degrades to a savepoint), ② create the ended class_session,
+ * ③ snapshot session_groups (building a clientId→sessionGroupId map),
+ * ④ session_memberships (absent ⇒ null group, decision 8), ⑤ score_events
+ * (group events' target_id + every event's session_group_id resolved via the
+ * map so buildRecap's nested query matches), ⑥ check_records. Returns the new
+ * session id.
+ */
+export function commitSession(sqlite: DB, input: CommitInput): string {
+  const tx = sqlite.transaction((): string => {
+    // ① default-grouping writeback (open-time grouping, NOT final memberships)
+    saveGrouping(sqlite, input.classId, input.defaultGrouping);
+
+    // ② class_sessions
+    const sessionId = `sess-${nanoid(10)}`;
+    sqlite
+      .prepare(
+        `INSERT INTO class_sessions
+           (id, class_id, teacher_id, date, lesson_number, lesson_title, status,
+            planned_duration_min, started_at, ended_at, client_session_id)
+         VALUES (?,?,?,?,?,?, 'ended', ?,?,?,?)`,
+      )
+      .run(
+        sessionId,
+        input.classId,
+        input.teacherId,
+        input.date,
+        input.lessonNumber,
+        input.lessonTitle,
+        input.plannedDurationMin,
+        input.startedAt,
+        input.endedAt,
+        input.clientSessionId,
+      );
+
+    // ③ session_groups + clientId → sessionGroupId map
+    const groupIdByClient = new Map<string, string>();
+    const insSg = sqlite.prepare(
+      `INSERT INTO session_groups (id, session_id, name, emoji, order_index) VALUES (?,?,?,?,?)`,
+    );
+    input.sessionGroups.forEach((g, i) => {
+      const sgid = `sg-${nanoid(10)}`;
+      insSg.run(sgid, sessionId, g.name, g.emoji, g.orderIndex ?? i);
+      groupIdByClient.set(g.clientId, sgid);
+    });
+    const mapGid = (clientId: string | null): string | null =>
+      clientId ? (groupIdByClient.get(clientId) ?? null) : null;
+
+    // ④ session_memberships (absent ⇒ null group)
+    const insMem = sqlite.prepare(
+      `INSERT INTO session_memberships (id, session_id, student_id, session_group_id, attendance) VALUES (?,?,?,?,?)`,
+    );
+    for (const m of input.memberships) {
+      const sgid = m.attendance === 'absent' ? null : mapGid(m.clientGroupId);
+      insMem.run(nanoid(), sessionId, m.studentId, sgid, m.attendance);
+    }
+
+    // ⑤ score_events (group events' target_id resolves to the session group id)
+    const insEv = sqlite.prepare(
+      `INSERT INTO score_events (id, session_id, target_type, target_id, session_group_id, delta, created_at, created_by)
+       VALUES (?,?,?,?,?,?,?,?)`,
+    );
+    for (const e of input.events) {
+      const targetId = e.targetType === 'group' ? (mapGid(e.targetId) ?? e.targetId) : e.targetId;
+      insEv.run(
+        nanoid(),
+        sessionId,
+        e.targetType,
+        targetId,
+        mapGid(e.clientGroupId),
+        e.delta,
+        e.createdAt,
+        input.teacherId,
+      );
+    }
+
+    // ⑥ check_records
+    const insCk = sqlite.prepare(
+      `INSERT INTO check_records (id, session_id, student_id, type, status) VALUES (?,?,?,?,?)`,
+    );
+    for (const c of input.checks) insCk.run(nanoid(), sessionId, c.studentId, c.type, c.status);
+
+    return sessionId;
+  });
+  return tx();
 }
