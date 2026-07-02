@@ -45,6 +45,95 @@ API（除 `/api/health`、`/api/auth/login` 外全部经认证中间件，写入
 - 读：`GET /api/classes`、`GET /api/classes/:id`（含 `lastRecap`）、`GET /api/sessions/:id/recap`（组分排名 + 🌟亮眼(净≥2)/⚠️被提醒(任一−1) + 出勤）。
 - 写：`POST /api/classes`、`POST /api/classes/:id/students`、`DELETE /api/students/:id`（硬删连带清账本）、`PUT /api/classes/:id/groups`（整套 replace 默认分组，前端拖拽/改名/增删即时保存）。
 
+## 测试与验证
+
+这一节记录本项目实际用过的测试/验证套路，照抄即可，不用重新摸索。
+
+### 单元/集成测试 + 类型检查
+
+```bash
+pnpm --filter server test              # vitest + supertest 集成测试（自带临时 DB，无需起服务/db:reset）
+pnpm --filter web test                 # vitest 单测（计分派生 / 分组模型 / 课前配置）
+pnpm --filter server exec tsc --noEmit # 类型检查（web 同理）
+```
+
+服务端测试 harness 在 `server/tests/helpers.ts`：`setupTestApp()` 用 `NCE_DB_PATH` 指向临时库 + 跑 DDL + 最小两组织 seed，返回 `{ app, sqlite, reseed }`，用 `request.agent(app)`（supertest）保持 cookie 跑登录态。新增写接口时**先加用例再实现**。
+
+### 起服务手动验证
+
+```bash
+pnpm dev                               # server :5177 + web :5173
+# ⚠️ 5173 常被邻近项目 tenderbuddy 占用；vite 无 strictPort 会自增（如 :5174），也可 pnpm --filter web exec vite --port 5180
+# 清理端口前先确认进程归属：lsof -nP -iTCP:5177 -sTCP:LISTEN，再看 cwd：lsof -a -p <pid> -d cwd -Fn
+pnpm db:reset                          # 重建 app.db。⚠️ 若 dev server 在跑要重启它——better-sqlite3 句柄仍指向被 rm 的旧 inode，不重启看不到新 seed
+```
+
+### 后端冒烟（curl）
+
+```bash
+# 登录拿 cookie（成功返回老师信息 + Set-Cookie: nce_session=...）
+curl -s -i -X POST http://localhost:5177/api/auth/login \
+  -H 'Content-Type: application/json' -d '{"username":"wangli","password":"demo1234"}'
+# 未登录访问受保护接口应 401
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:5177/api/me
+# 带 cookie 复用（-c 存 / -b 读 cookie jar）
+CJ=/tmp/nce_cookies.txt
+curl -s -c $CJ -X POST http://localhost:5177/api/auth/login -H 'Content-Type: application/json' -d '{"username":"wangli","password":"demo1234"}' >/dev/null
+curl -s -b $CJ http://localhost:5177/api/sessions/sess-c1-7/recap | python3 -m json.tool
+```
+
+### DB 断言（sqlite3）
+
+```bash
+sqlite3 -header -column server/data/app.db "SELECT id,org_id,name,teacher_id FROM classes WHERE id='c1';"
+# 某班分组归属 / 组内人数
+sqlite3 -header -column server/data/app.db \
+  "SELECT cg.name grp, s.name FROM class_group_memberships m JOIN class_groups cg ON cg.id=m.class_group_id JOIN students s ON s.id=m.student_id WHERE cg.class_id='c1' ORDER BY cg.order_index;"
+```
+
+### 浏览器端到端（agent-browser）
+
+用 `agent-browser`（Skill 同名）驱动真实浏览器。**管理页都在登录墙后**，先登录：
+
+```bash
+agent-browser --session nce set viewport 1440 900
+agent-browser --session nce open http://localhost:5180/            # 未登录会跳 /login
+agent-browser --session nce snapshot -i                            # 拿 @e 引用（登录后 DOM 变了要重新 snapshot）
+agent-browser --session nce fill @e2 "wangli"; agent-browser --session nce fill @e3 "demo1234"
+agent-browser --session nce click @e4                              # 登录
+agent-browser --session nce screenshot /path/shot.png
+agent-browser --session nce close                                  # 用完关闭；若 daemon 卡住也用 close 复位
+```
+
+**坑：分组页 HTML5 拖拽调组，`agent-browser drag` 无效**（它发鼠标手势，HTML5 DnD 收不到）。改用 `eval` 手动派发拖拽事件，**分两次**中间 `wait` 让 React 提交 `dragId` 状态：
+
+```bash
+# ① 给源/目标元素打 id（draggable 的学生卡是普通 div，snapshot 不给引用），并 dispatch dragstart
+agent-browser --session nce eval --stdin <<'EOF'
+(() => {
+  const rows = [...document.querySelectorAll('[draggable="true"]')];
+  const src = rows.find(r => r.textContent.includes('小明'));
+  const dst = rows.find(r => r.textContent.includes('军军'));  // 落到目标组里任一学生卡即可（drop 冒泡到组容器）
+  window.__dt = new DataTransfer(); window.__dst = dst;
+  src.dispatchEvent(new DragEvent('dragstart', { bubbles:true, cancelable:true, dataTransfer: window.__dt }));
+  return 'dragstart sent';
+})()
+EOF
+agent-browser --session nce wait 500
+# ② dispatch dragover + drop
+agent-browser --session nce eval --stdin <<'EOF'
+(() => {
+  const d = window.__dst, dt = window.__dt;
+  d.dispatchEvent(new DragEvent('dragover', { bubbles:true, cancelable:true, dataTransfer: dt }));
+  d.dispatchEvent(new DragEvent('drop',     { bubbles:true, cancelable:true, dataTransfer: dt }));
+  return 'drop sent';
+})()
+EOF
+# ③ 等保存后用上面的 sqlite3 断言 membership 变化
+```
+
+组名改名走 input：`fill @<input> "新名字"` 再 `press Enter`（onKeyDown Enter 触发 blur → 保存）。
+
 ## 须知 / 约定
 
 - **计分是事件流**：学生累计个人分、组分都由 `score_events`(±1) 派生，不落地存储。
