@@ -26,8 +26,10 @@ mv webdist.new webdist
 rm -rf webdist.old
 
 # Migrate with the new image BEFORE switching containers; a failure here
-# leaves the old container running untouched.
-docker compose run --rm app pnpm --filter server db:migrate
+# leaves the old container running untouched. </dev/null is load-bearing:
+# without it `compose run` attaches stdin and swallows the rest of this
+# heredoc script (up -d would silently never run).
+docker compose run --rm -T app pnpm --filter server db:migrate </dev/null
 
 docker compose up -d
 docker image prune -f >/dev/null
