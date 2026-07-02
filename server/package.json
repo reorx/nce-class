@@ -12,16 +12,21 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "ali-oss": "^6.23.0",
     "better-sqlite3": "^11.8.1",
     "cors": "^2.8.5",
     "drizzle-orm": "^0.38.4",
     "express": "^4.21.2",
+    "minio": "^8.0.7",
+    "multer": "^2.2.0",
     "nanoid": "^5.0.9"
   },
   "devDependencies": {
+    "@types/ali-oss": "^6.23.3",
     "@types/better-sqlite3": "^7.6.12",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
+    "@types/multer": "^2.2.0",
     "@types/node": "^22.10.7",
     "@types/supertest": "^7.2.0",
     "drizzle-kit": "^0.30.2",

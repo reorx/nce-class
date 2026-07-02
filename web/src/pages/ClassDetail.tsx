@@ -906,10 +906,10 @@ function InviteTab({ d }: { d: Detail }) {
   return (
     <div style={{ maxWidth: 620 }}>
       <div style={{ background: '#fff', border: '1px solid #e7e9ee', borderRadius: 14, padding: 24 }}>
-        <div style={{ fontWeight: 700, fontSize: 16, color: '#1e2430' }}>家长邀请链接</div>
+        <div style={{ fontWeight: 700, fontSize: 16, color: '#1e2430' }}>家长邀请码</div>
         <div style={{ fontSize: 13, color: '#7a828f', marginTop: 5, lineHeight: 1.6 }}>
-          家长用微信打开链接，上传照片 +
-          填名字即可加入本班（source=parent）。链接通用、不做认领匹配，出现重复可在「学生」里删除多余记录。
+          家长在微信小程序「NCE 课堂」里输入邀请码，上传照片 +
+          填名字即可加入本班（source=parent）。邀请码通用、不做认领匹配，出现重复可在「学生」里删除多余记录。
         </div>
         <div
           style={{
@@ -929,20 +929,22 @@ function InviteTab({ d }: { d: Detail }) {
             style={{
               flex: 1,
               minWidth: 0,
-              fontSize: 13,
-              color: '#5b6472',
+              fontSize: 20,
+              fontWeight: 700,
+              letterSpacing: 2,
+              color: '#1e2430',
               whiteSpace: 'nowrap',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
             }}
           >
-            {d.inviteLink}
+            {d.inviteToken}
           </span>
           <button
             onClick={() =>
               navigator.clipboard
-                ?.writeText(d.inviteLink)
-                .then(() => toast('链接已复制'))
+                ?.writeText(d.inviteToken)
+                .then(() => toast('邀请码已复制'))
                 .catch(() => toast('复制失败', 'error'))
             }
             style={{
@@ -989,10 +991,10 @@ function InviteTab({ d }: { d: Detail }) {
             </span>
           </div>
           <div style={{ fontSize: 13, color: '#7a828f', lineHeight: 1.7 }}>
-            <div style={{ fontWeight: 600, color: '#3c4451', marginBottom: 5 }}>课堂上出示二维码</div>
-            让家长扫码进入加入页；也可复制链接转发到班级群。
+            <div style={{ fontWeight: 600, color: '#3c4451', marginBottom: 5 }}>课堂上出示小程序码</div>
+            扫码直达加入页（待正式 appid 开通后生成）；当前家长在小程序里手动输入邀请码即可。
             <br />
-            加入成功后，家长会自动跳到孩子的专属回顾链接，提示收藏。
+            加入成功后，孩子的课堂回顾会保存在家长的小程序里，随时可看。
           </div>
         </div>
       </div>

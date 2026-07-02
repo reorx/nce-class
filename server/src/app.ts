@@ -1,5 +1,7 @@
 import cors from 'cors';
 import express from 'express';
+import multer from 'multer';
+import { nanoid } from 'nanoid';
 import { existsSync } from 'node:fs';
 import { verifyPassword } from './auth/password.js';
 import {
@@ -12,6 +14,7 @@ import {
 } from './auth/session.js';
 import { sqlite, DB_PATH } from './db/client.js';
 import {
+  addParentStudent,
   addStudent,
   commitSession,
   createClass,
@@ -20,6 +23,7 @@ import {
   type CommitInput,
   type GroupInput,
 } from './db/mutations.js';
+import { storageClient } from './storage/index.js';
 import { UPLOAD_DIR } from './storage/local.js';
 import { fmtDuration, relativeDayCN, weekdayCN } from './util/time.js';
 
@@ -92,6 +96,19 @@ const q = {
     `SELECT SUM(CASE WHEN attendance='present' THEN 1 ELSE 0 END) present, COUNT(*) total
      FROM session_memberships WHERE session_id=?`,
   ),
+  // parent-facing (§7.5): tokens are the credentials, so lookups start from them
+  classByInviteToken: sqlite.prepare(`SELECT * FROM classes WHERE invite_token=?`),
+  studentByRecapToken: sqlite.prepare(`SELECT * FROM students WHERE recap_token=?`),
+  orgById: sqlite.prepare(`SELECT * FROM organizations WHERE id=?`),
+  countStudentsOfClass: sqlite.prepare(`SELECT COUNT(*) c FROM students WHERE class_id=?`),
+  endedSessionsOfClass: sqlite.prepare(
+    `SELECT * FROM class_sessions WHERE class_id=? AND status='ended' ORDER BY date DESC, lesson_number DESC`,
+  ),
+  membershipOfStudent: sqlite.prepare(`SELECT * FROM session_memberships WHERE session_id=? AND student_id=?`),
+  personalScoreOfStudent: sqlite.prepare(
+    `SELECT COALESCE(SUM(delta),0) s FROM score_events WHERE session_id=? AND target_type='student' AND target_id=?`,
+  ),
+  checksOfStudent: sqlite.prepare(`SELECT type, status FROM check_records WHERE session_id=? AND student_id=?`),
 };
 
 const md = (d: string) => d.slice(5); // 'YYYY-MM-DD' -> 'MM-DD'
@@ -177,7 +194,7 @@ function classDetailPayload(id: string) {
     studentCount: students.length,
     groupCount: groups.length,
     sessionCount: sessions.length,
-    inviteLink: id === 'c1' ? 'https://nce.class/join/c1-x8Kq2mLp' : `https://nce.class/join/${id}-${id}Kq2mLp`,
+    inviteToken: c.invite_token,
     students,
     groups,
     sessions,
@@ -189,7 +206,13 @@ function classDetailPayload(id: string) {
 function buildRecap(s: any) {
   const scoreByGid = new Map((q.sessionGroupScores.all(s.id) as any[]).map((r) => [r.gid, r.score]));
   const groups = (q.sessionGroups.all(s.id) as any[])
-    .map((g) => ({ name: g.name, emoji: g.emoji, orderIndex: g.order_index, score: scoreByGid.get(g.id) ?? 0 }))
+    .map((g) => ({
+      id: g.id,
+      name: g.name,
+      emoji: g.emoji,
+      orderIndex: g.order_index,
+      score: scoreByGid.get(g.id) ?? 0,
+    }))
     .sort((a, b) => b.score - a.score);
   const deltas = q.sessionStudentDeltas.all(s.id) as any[];
   const stars = deltas
@@ -393,7 +416,114 @@ export function createApp() {
     res.json({ ok: true });
   });
 
-  // ---- auth gate: everything under /api except health + login ----
+  // ---- parent-facing routes (§7.5) ----------------------------------------
+  // Registered BEFORE the auth gate: parents never log in — the invite / recap
+  // token in the path IS the credential, and each token resolves to exactly one
+  // class/student, so org isolation holds without a session.
+
+  const classPreview = (c: any) => {
+    const teacher = c.teacher_id ? (q.teacherById.get(c.teacher_id) as any) : null;
+    const org = q.orgById.get(c.org_id) as any;
+    return {
+      className: c.name,
+      level: c.level,
+      teacherName: teacher?.name ?? '—',
+      orgName: org?.name ?? '',
+      studentCount: (q.countStudentsOfClass.get(c.id) as any)?.c ?? 0,
+    };
+  };
+
+  app.get('/api/parent/join/:inviteToken', (req, res) => {
+    const c = q.classByInviteToken.get(req.params.inviteToken) as any;
+    if (!c) return res.status(404).json({ error: '邀请码无效' });
+    res.json(classPreview(c));
+  });
+
+  // Photo goes up first (scoped by the invite token), the returned key is then
+  // submitted with the join. Server-relay instead of presigned PUT because
+  // wx.uploadFile only speaks POST multipart.
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 5 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => cb(null, file.mimetype.startsWith('image/')),
+  });
+  const PHOTO_EXT: Record<string, string> = {
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/webp': 'webp',
+    'image/gif': 'gif',
+  };
+
+  app.post('/api/parent/join/:inviteToken/photo', upload.single('photo'), async (req, res) => {
+    const c = q.classByInviteToken.get(req.params.inviteToken) as any;
+    if (!c) return res.status(404).json({ error: '邀请码无效' });
+    if (!req.file) return res.status(400).json({ error: '仅支持图片文件' });
+    const key = `students/${nanoid(16)}.${PHOTO_EXT[req.file.mimetype] ?? 'jpg'}`;
+    const url = await storageClient.putObject({ key, body: req.file.buffer, contentType: req.file.mimetype });
+    res.status(201).json({ key, url });
+  });
+
+  app.post('/api/parent/join/:inviteToken', (req, res) => {
+    const c = q.classByInviteToken.get(req.params.inviteToken) as any;
+    if (!c) return res.status(404).json({ error: '邀请码无效' });
+    const name = str(req.body?.name);
+    if (!name) return res.status(400).json({ error: '学生名字必填' });
+    const created = addParentStudent(sqlite, { classId: c.id, name, photoKey: str(req.body?.photoKey) });
+    res.status(201).json({ studentId: created.id, recapToken: created.recapToken, name, className: c.name });
+  });
+
+  app.get('/api/parent/me/:recapToken', (req, res) => {
+    const st = q.studentByRecapToken.get(req.params.recapToken) as any;
+    if (!st) return res.status(404).json({ error: 'not found' });
+    const c = q.classById.get(st.class_id) as any;
+    const sessions = (q.endedSessionsOfClass.all(c.id) as any[]).map((s) => ({
+      id: s.id,
+      date: md(s.date),
+      year: s.date.slice(0, 4),
+      weekday: weekdayCN(s.date),
+      lessonNumber: s.lesson_number,
+      lessonTitle: s.lesson_title,
+    }));
+    res.json({
+      student: { id: st.id, name: st.name, photoUrl: st.photo_url ? storageClient.getUrl(st.photo_url) : null },
+      class: { id: c.id, name: c.name, ...classPreview(c) },
+      sessions,
+      latestSessionId: sessions[0]?.id ?? null,
+    });
+  });
+
+  app.get('/api/parent/me/:recapToken/sessions/:sessionId', (req, res) => {
+    const st = q.studentByRecapToken.get(req.params.recapToken) as any;
+    if (!st) return res.status(404).json({ error: 'not found' });
+    const s = q.sessionById.get(req.params.sessionId) as any;
+    if (!s || s.class_id !== st.class_id || s.status !== 'ended') return res.status(404).json({ error: 'not found' });
+
+    const recap = buildRecap(s);
+    const mem = q.membershipOfStudent.get(s.id, st.id) as any;
+    // No membership = the student joined after this lesson → no personal card.
+    let mine = null;
+    if (mem) {
+      const checks = new Map((q.checksOfStudent.all(s.id, st.id) as any[]).map((r) => [r.type, r.status]));
+      const grp = recap.groups.find((g) => g.id === mem.session_group_id);
+      mine = {
+        attended: mem.attendance === 'present',
+        groupName: grp?.name ?? null,
+        groupEmoji: grp?.emoji ?? null,
+        // Personal score counts student-target events only (§7.4/§7.5 口径);
+        // missing homework record = 没交, missing recitation record = 未检查 (§8).
+        personalScore: (q.personalScoreOfStudent.get(s.id, st.id) as any)?.s ?? 0,
+        homework: checks.get('homework') ?? '没交',
+        recitation: checks.get('recitation') ?? '未检查',
+      };
+    }
+    res.json({
+      ...recap,
+      groups: recap.groups.map((g) => ({ ...g, mine: g.id === (mem?.session_group_id ?? null) && mem != null })),
+      mine,
+    });
+  });
+
+  // ---- auth gate: everything under /api except health + login + parent ----
   app.use('/api', (req, res, next) => {
     if (req.path === '/health' || req.path === '/auth/login') return next();
     const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
@@ -500,6 +630,13 @@ export function createApp() {
     const s = q.sessionById.get(req.params.id) as any;
     if (!s || !classInOrg(s.class_id, teacher.org_id)) return res.status(404).json({ error: 'session not found' });
     res.json(buildRecap(s));
+  });
+
+  // Multer surfaces its limit violations (e.g. fileSize) via next(err); map
+  // them to 400 instead of express's default 500.
+  app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (err instanceof multer.MulterError) return res.status(400).json({ error: `上传失败：${err.code}` });
+    next(err);
   });
 
   return app;

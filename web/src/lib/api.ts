@@ -82,7 +82,7 @@ export interface ClassDetail {
   studentCount: number;
   groupCount: number;
   sessionCount: number;
-  inviteLink: string;
+  inviteToken: string;
   students: Student[];
   groups: Group[];
   sessions: Session[];

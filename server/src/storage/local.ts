@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url';
 import type { PutObjectInput, StorageClient } from './base.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const UPLOAD_DIR = resolve(__dirname, '../../data/uploads');
+// NCE_UPLOAD_DIR overrides for tests (same pattern as NCE_DB_PATH in db/client).
+const UPLOAD_DIR = process.env.NCE_UPLOAD_DIR || resolve(__dirname, '../../data/uploads');
 const PUBLIC_BASE = process.env.STORAGE_PUBLIC_BASE || '/uploads';
 
 // Local filesystem implementation — the default for development. Files are

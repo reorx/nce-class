@@ -1,6 +1,17 @@
 // Storage abstraction layer — a single StorageClient interface; each vendor
 // implements it with its own official SDK (see ../tenderbuddy approach).
 
+export interface StorageConfig {
+  vendor: string;
+  endpoint: string;
+  region?: string;
+  bucket: string;
+  accessKey: string;
+  secretKey: string;
+  /** Public base URL that fronts the bucket (CDN / bound domain); overrides URL building. */
+  customDomain?: string;
+}
+
 export interface PutObjectInput {
   key: string;
   body: Buffer | Uint8Array | string;

@@ -1,0 +1,120 @@
+/* 750 设计稿基准（mockup 值 ×2） */
+.recap {
+  .rhead {
+    text-align: center;
+    margin-bottom: 28px;
+
+    .t {
+      font-size: 34px;
+      font-weight: 800;
+    }
+
+    .s {
+      font-size: 24px;
+      color: #9aa0b0;
+      margin-top: 6px;
+    }
+  }
+
+  .mine {
+    background: linear-gradient(135deg, #fff7e6, #ffeccc);
+    border: 2px solid #ffe0b0;
+    border-radius: 28px;
+    padding: 28px;
+    margin-bottom: 32px;
+    text-align: center;
+
+    .nm {
+      font-weight: 800;
+      font-size: 30px;
+      margin-bottom: 16px;
+    }
+
+    .row {
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+  }
+
+  .tag {
+    font-size: 24px;
+    font-weight: 800;
+    padding: 6px 20px;
+    border-radius: 999px;
+    background: #fff;
+
+    &.t-grp { color: #2f5fe0; }
+    &.t-star { color: #d97706; }
+    &.tone-good { color: #15803d; }
+    &.tone-part { color: #b45309; }
+    &.tone-bad { color: #b91c1c; }
+    &.tone-muted { color: #6b7280; }
+  }
+
+  .sec {
+    margin-bottom: 32px;
+
+    .h {
+      font-size: 26px;
+      font-weight: 800;
+      margin-bottom: 18px;
+    }
+  }
+
+  .rank {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 14px 20px;
+    border-radius: 18px;
+    margin-bottom: 10px;
+    background: #f6f7fb;
+    font-size: 27px;
+
+    &.me {
+      background: #eef3ff;
+      border: 2px solid #c2d3fb;
+      font-weight: 800;
+    }
+
+    .medal {
+      width: 44px;
+      text-align: center;
+    }
+
+    .gname {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .sc {
+      font-weight: 800;
+      color: #f59e0b;
+    }
+  }
+
+  .names {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+
+  .b {
+    border-radius: 999px;
+    padding: 10px 24px;
+    font-size: 26px;
+    font-weight: 700;
+
+    &.good {
+      background: #e9f8ef;
+      color: #15803d;
+    }
+
+    &.warn {
+      background: #fdebeb;
+      color: #b91c1c;
+    }
+  }
+}

@@ -187,7 +187,15 @@ function run() {
 function seedC1() {
   const cls = { id: 'c1', name: '三年级A班', level: '新概念二册', teacher: 't-wangli' };
   db.insert(t.classes)
-    .values({ id: cls.id, orgId: ORG_ID, name: cls.name, level: cls.level, teacherId: cls.teacher, createdAt: ts() })
+    .values({
+      id: cls.id,
+      orgId: ORG_ID,
+      name: cls.name,
+      level: cls.level,
+      teacherId: cls.teacher,
+      inviteToken: 'c1x8kq2mlp', // 固定值保 demo 稳定（家长输码演示）
+      createdAt: ts(),
+    })
     .run();
 
   // groups
@@ -287,7 +295,15 @@ function seedC1() {
 
 function seedOtherClass(c: (typeof OTHER_CLASSES)[number]) {
   db.insert(t.classes)
-    .values({ id: c.id, orgId: ORG_ID, name: c.name, level: c.level, teacherId: c.teacher, createdAt: ts() })
+    .values({
+      id: c.id,
+      orgId: ORG_ID,
+      name: c.name,
+      level: c.level,
+      teacherId: c.teacher,
+      inviteToken: `${c.id}invite23`, // 固定值保 demo 稳定
+      createdAt: ts(),
+    })
     .run();
 
   const names = [...c.roster];

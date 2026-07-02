@@ -1,0 +1,105 @@
+.page {
+  padding: 36px 32px;
+}
+
+.hero {
+  text-align: center;
+  margin-bottom: 36px;
+
+  .l1 {
+    font-size: 27px;
+    color: #6b7280;
+  }
+
+  .l2 {
+    font-size: 40px;
+    font-weight: 800;
+    margin-top: 6px;
+  }
+
+  .l3 {
+    font-size: 24px;
+    color: #9aa0b0;
+    margin-top: 6px;
+  }
+}
+
+.upload {
+  width: 208px;
+  height: 208px;
+  border-radius: 50%;
+  border: 4px dashed #c9cedb;
+  background: #fafbff;
+  margin: 12px auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #9aa0b0;
+  font-size: 24px;
+  gap: 8px;
+  overflow: hidden;
+
+  .ic {
+    font-size: 52px;
+  }
+
+  .upimg {
+    width: 100%;
+    height: 100%;
+  }
+}
+
+.uptip {
+  text-align: center;
+  font-size: 22px;
+  color: #aab;
+  margin-bottom: 32px;
+}
+
+.field {
+  margin-bottom: 26px;
+
+  .fl {
+    font-size: 24px;
+    font-weight: 700;
+    color: #6b7280;
+    margin-bottom: 12px;
+  }
+}
+
+.field-input {
+  border: 2px solid #d8dbe4;
+  border-radius: 20px;
+  padding: 22px 24px;
+  font-size: 29px;
+  background: #fbfcfe;
+}
+
+.code-step .field-input {
+  margin: 40px 0 12px;
+  text-align: center;
+  letter-spacing: 4px;
+}
+
+.cta {
+  background: #07c160;
+  color: #fff;
+  text-align: center;
+  font-weight: 800;
+  padding: 10px 0;
+  border-radius: 22px;
+  font-size: 30px;
+  margin-top: 24px;
+
+  &::after {
+    border: none;
+  }
+}
+
+.ftip {
+  text-align: center;
+  font-size: 22px;
+  color: #aab;
+  margin-top: 20px;
+}

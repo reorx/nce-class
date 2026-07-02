@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS credentials (
 CREATE TABLE IF NOT EXISTS classes (
   id TEXT PRIMARY KEY, org_id TEXT NOT NULL, name TEXT NOT NULL,
   level TEXT, teacher_id TEXT,
+  invite_token TEXT NOT NULL UNIQUE,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS students (

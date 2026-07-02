@@ -40,6 +40,8 @@ export const classes = sqliteTable('classes', {
   name: text('name').notNull(),
   level: text('level'), // 新概念二册 etc. (optional grade / book)
   teacherId: text('teacher_id').references(() => teachers.id), // 负责老师
+  // 班级通用邀请码：家长在小程序里输码加入（§7.5）。短小写便于手输。
+  inviteToken: text('invite_token').notNull().unique(),
   createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
 });
 

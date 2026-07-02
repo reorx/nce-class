@@ -13,6 +13,7 @@ type DB = DatabaseType.Database;
 // this from beforeAll and never statically import app/client themselves.
 export async function setupTestApp(): Promise<{ app: Express; sqlite: DB; reseed: () => void }> {
   process.env.NCE_DB_PATH = join(mkdtempSync(join(tmpdir(), 'nce-test-')), 'app.db');
+  process.env.NCE_UPLOAD_DIR = mkdtempSync(join(tmpdir(), 'nce-uploads-'));
   process.env.AUTH_SECRET = 'test-secret';
   const { sqlite } = await import('../src/db/client.js');
   sqlite.exec(DDL);
@@ -61,10 +62,10 @@ function seed(sqlite: DB) {
   teacher('t-out', 'org-2', '外老师', 'waiguo', 'teacher');
 
   run(
-    `INSERT INTO classes (id, org_id, name, level, teacher_id, created_at) VALUES ('c1','org-1','三年级A班','新概念二册','t-wangli','2026-06-01 08:00:00')`,
+    `INSERT INTO classes (id, org_id, name, level, teacher_id, invite_token, created_at) VALUES ('c1','org-1','三年级A班','新概念二册','t-wangli','inv-c1','2026-06-01 08:00:00')`,
   );
   run(
-    `INSERT INTO classes (id, org_id, name, level, teacher_id, created_at) VALUES ('c-out','org-2','外班',NULL,'t-out','2026-06-01 08:00:01')`,
+    `INSERT INTO classes (id, org_id, name, level, teacher_id, invite_token, created_at) VALUES ('c-out','org-2','外班',NULL,'t-out','inv-out','2026-06-01 08:00:01')`,
   );
 
   const student = (id: string, cls: string, name: string, source: string, i: number) =>
@@ -137,4 +138,13 @@ function seed(sqlite: DB) {
   event('student', 's3', 'sg2', -1); // 小刚 net 0, has a −1 → warned
   event('group', 'sg1', 'sg1', 1); // 第1组 +1 (group-level)
   // group sg1 nested score = s1(2)+s2(1)+group(1) = 4 ; sg2 = s3(0) = 0
+
+  // check records: s1 both done; s2 recitation partial (homework missing → 没交);
+  // s3 none (homework 没交, recitation 未检查 per PRD §8)
+  run(
+    `INSERT INTO check_records (id, session_id, student_id, type, status) VALUES
+     ('ck1','sess1','s1','homework','完成'),
+     ('ck2','sess1','s1','recitation','已背完'),
+     ('ck3','sess1','s2','recitation','背完部分')`,
+  );
 }

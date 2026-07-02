@@ -1,5 +1,8 @@
 import type DatabaseType from 'better-sqlite3';
-import { nanoid } from 'nanoid';
+import { customAlphabet, nanoid } from 'nanoid';
+
+// Parents type this by hand in the miniapp, so lowercase alphanumerics only.
+const inviteToken = customAlphabet('abcdefghijkmnpqrstuvwxyz23456789', 10);
 
 type DB = DatabaseType.Database;
 
@@ -58,8 +61,8 @@ export function createClass(
 ): string {
   const id = `c-${nanoid(10)}`;
   sqlite
-    .prepare(`INSERT INTO classes (id, org_id, name, level, teacher_id) VALUES (?,?,?,?,?)`)
-    .run(id, p.orgId, p.name, p.level, p.teacherId);
+    .prepare(`INSERT INTO classes (id, org_id, name, level, teacher_id, invite_token) VALUES (?,?,?,?,?,?)`)
+    .run(id, p.orgId, p.name, p.level, p.teacherId, inviteToken());
   return id;
 }
 
@@ -70,6 +73,19 @@ export function addStudent(sqlite: DB, p: { classId: string; name: string }): st
     .prepare(`INSERT INTO students (id, class_id, name, photo_url, source, recap_token) VALUES (?,?,?,?,?,?)`)
     .run(id, p.classId, p.name, null, 'teacher', nanoid(24));
   return id;
+}
+
+/** Parent self-join (§7.5): create a parent-sourced student with a fresh recap token. */
+export function addParentStudent(
+  sqlite: DB,
+  p: { classId: string; name: string; photoKey: string | null },
+): { id: string; recapToken: string } {
+  const id = `s-${nanoid(10)}`;
+  const recapToken = nanoid(24);
+  sqlite
+    .prepare(`INSERT INTO students (id, class_id, name, photo_url, source, recap_token) VALUES (?,?,?,?,?,?)`)
+    .run(id, p.classId, p.name, p.photoKey, 'parent', recapToken);
+  return { id, recapToken };
 }
 
 /** Hard-delete a student and all ledger rows referencing them (single transaction). */
