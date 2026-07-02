@@ -59,7 +59,7 @@ export function ClassDetail({ me }: { me: Me | null }) {
             </div>
           </div>
           <Link
-            to={`/classes/${id}/classroom`}
+            to={`/classes/${id}/setup`}
             style={{
               marginLeft: 'auto',
               height: 40,

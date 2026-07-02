@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../lib/api';
+import { lessonLabel as fmtLessonLabel, sessionFromConfig, type SessionConfig } from '../lib/setup';
 import {
   GRAY,
   GROUP_COLORS,
@@ -28,15 +29,20 @@ const NUM = "'Baloo 2','Nunito','PingFang SC',sans-serif";
 export function Classroom() {
   const { id = 'c1' } = useParams();
   const nav = useNavigate();
+  const loc = useLocation();
+  // Booted from 课前配置 when a session config is handed over; otherwise the
+  // self-contained Lesson-3 demo (§ classroom mockups).
+  const config = (loc.state as { config?: SessionConfig } | null)?.config ?? null;
 
-  const [session, setSession] = useState(initialSession);
+  const [session, setSession] = useState(() => (config ? sessionFromConfig(config) : initialSession()));
   const [view, setView] = useState<View>('board');
   const [openId, setOpenId] = useState<number | null>(null);
   const [openGid, setOpenGid] = useState<string | null>(null);
   const [showEnd, setShowEnd] = useState(false);
   const [absent, setAbsent] = useState<Record<number, true>>({});
-  const [elapsed, setElapsed] = useState(120 * 60);
-  const [className, setClassName] = useState('三年级A班');
+  const [elapsed, setElapsed] = useState(() => (config ? Math.max(1, config.durationMin) * 60 : 120 * 60));
+  const [className, setClassName] = useState(config?.className ?? '三年级A班');
+  const lessonLabel = config ? fmtLessonLabel(config) : '第3课 · Lesson 3';
   const dragId = useRef<number | null>(null);
 
   // Countdown from the planned duration (§7.3); would go into overtime at 0.
@@ -119,7 +125,7 @@ export function Classroom() {
         <span style={{ fontSize: 28 }}>🏫</span>
         <span style={{ fontWeight: 900, fontSize: 25, color: '#2c3340' }}>{className}</span>
         <span style={{ color: '#b7c5ad', fontSize: 22, fontWeight: 800 }}>·</span>
-        <span style={{ fontWeight: 700, fontSize: 20, color: '#66756c' }}>第3课 · Lesson 3</span>
+        <span style={{ fontWeight: 700, fontSize: 20, color: '#66756c' }}>{lessonLabel}</span>
         <div
           style={{
             marginLeft: 'auto',
@@ -390,6 +396,7 @@ export function Classroom() {
       {showEnd && (
         <EndRecap
           className={className}
+          lesson={lessonLabel}
           groups={groups}
           students={students}
           events={events}
@@ -888,6 +895,7 @@ function GroupPopup({
 // ===== end-class recap =====================================================
 function EndRecap({
   className,
+  lesson,
   groups,
   students,
   events,
@@ -896,6 +904,7 @@ function EndRecap({
   onConfirm,
 }: {
   className: string;
+  lesson: string;
   groups: SGroup[];
   students: SStudent[];
   events: SEvent[];
@@ -928,7 +937,9 @@ function EndRecap({
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 22 }}>
           <span style={{ fontSize: 30 }}>🎉</span>
           <span style={{ fontWeight: 900, fontSize: 25, color: '#2c3340' }}>本堂课回顾</span>
-          <span style={{ fontWeight: 700, fontSize: 16, color: '#8a94a0', marginTop: 6 }}>{className} · 第3课</span>
+          <span style={{ fontWeight: 700, fontSize: 16, color: '#8a94a0', marginTop: 6 }}>
+            {className} · {lesson}
+          </span>
           <button onClick={onClose} style={{ ...closeBtn, marginLeft: 'auto' }}>
             ✕
           </button>

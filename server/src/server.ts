@@ -43,9 +43,38 @@ const q = {
     `SELECT * FROM class_sessions WHERE class_id=? ORDER BY date DESC, lesson_number DESC`,
   ),
   sessionGroupCounts: sqlite.prepare(`SELECT session_id, COUNT(*) c FROM session_groups GROUP BY session_id`),
+  lastEndedSession: sqlite.prepare(
+    `SELECT * FROM class_sessions WHERE class_id=? AND status='ended'
+     ORDER BY date DESC, lesson_number DESC LIMIT 1`,
+  ),
+  sessionGroups: sqlite.prepare(`SELECT * FROM session_groups WHERE session_id=? ORDER BY order_index`),
+  // Per-session-group score (nested, §5): group events on the group + student
+  // events tagged with that group at the time they fired.
+  sessionGroupScores: sqlite.prepare(
+    `SELECT sg.id gid, COALESCE(SUM(e.delta),0) score
+     FROM session_groups sg
+     LEFT JOIN score_events e
+       ON e.session_id = sg.session_id
+      AND ((e.target_type='group' AND e.target_id = sg.id)
+        OR (e.target_type='student' AND e.session_group_id = sg.id))
+     WHERE sg.session_id=? GROUP BY sg.id`,
+  ),
+  sessionAttendance: sqlite.prepare(
+    `SELECT SUM(CASE WHEN attendance='present' THEN 1 ELSE 0 END) present, COUNT(*) total
+     FROM session_memberships WHERE session_id=?`,
+  ),
 };
 
 const md = (d: string) => d.slice(5); // 'YYYY-MM-DD' -> 'MM-DD'
+
+/** Actual minutes taught = endedAt − startedAt, falling back to the plan. */
+function actualMin(s: any): number {
+  return s.started_at && s.ended_at
+    ? Math.round(
+        (Date.parse(s.ended_at.replace(' ', 'T') + 'Z') - Date.parse(s.started_at.replace(' ', 'T') + 'Z')) / 60000,
+      )
+    : s.planned_duration_min;
+}
 
 function classListPayload() {
   const classes = q.classes.all() as any[];
@@ -97,12 +126,7 @@ function classDetailPayload(id: string) {
   }));
   const sgCounts = new Map((q.sessionGroupCounts.all() as any[]).map((r) => [r.session_id, r.c]));
   const sessions = (q.sessionsOfClass.all(id) as any[]).map((s) => {
-    const actual =
-      s.started_at && s.ended_at
-        ? Math.round(
-            (Date.parse(s.ended_at.replace(' ', 'T') + 'Z') - Date.parse(s.started_at.replace(' ', 'T') + 'Z')) / 60000,
-          )
-        : s.planned_duration_min;
+    const actual = actualMin(s);
     return {
       id: s.id,
       date: md(s.date),
@@ -128,6 +152,28 @@ function classDetailPayload(id: string) {
     students,
     groups,
     sessions,
+    lastRecap: lastRecapPayload(id),
+  };
+}
+
+/** Derived recap of the most recent ended session, for the 课前配置 side rail. */
+function lastRecapPayload(classId: string) {
+  const s = q.lastEndedSession.get(classId) as any;
+  if (!s) return null;
+  const scoreByGid = new Map((q.sessionGroupScores.all(s.id) as any[]).map((r) => [r.gid, r.score]));
+  const groups = (q.sessionGroups.all(s.id) as any[])
+    .map((g) => ({ name: g.name, emoji: g.emoji, orderIndex: g.order_index, score: scoreByGid.get(g.id) ?? 0 }))
+    .sort((a, b) => b.score - a.score);
+  const att = q.sessionAttendance.get(s.id) as any;
+  return {
+    date: md(s.date),
+    weekday: weekdayCN(s.date),
+    lessonNumber: s.lesson_number,
+    lessonTitle: s.lesson_title,
+    actualDurationMin: actualMin(s),
+    attendancePresent: att?.present ?? 0,
+    attendanceTotal: att?.total ?? 0,
+    groups,
   };
 }
 

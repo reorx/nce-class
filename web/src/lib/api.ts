@@ -46,6 +46,24 @@ export interface Session {
   groupCount: number;
 }
 
+export interface RecapGroup {
+  name: string;
+  emoji: string | null;
+  orderIndex: number;
+  score: number;
+}
+
+export interface LastRecap {
+  date: string;
+  weekday: string;
+  lessonNumber: number | null;
+  lessonTitle: string | null;
+  actualDurationMin: number;
+  attendancePresent: number;
+  attendanceTotal: number;
+  groups: RecapGroup[];
+}
+
 export interface ClassDetail {
   id: string;
   name: string;
@@ -58,6 +76,7 @@ export interface ClassDetail {
   students: Student[];
   groups: Group[];
   sessions: Session[];
+  lastRecap: LastRecap | null;
 }
 
 async function get<T>(url: string): Promise<T> {
