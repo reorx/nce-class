@@ -1,0 +1,16 @@
+services:
+  app:
+    build: .
+    image: nce-class:latest
+    container_name: nce-class-app
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:3458:5177"
+    volumes:
+      - ./data:/app/server/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:5177/api/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

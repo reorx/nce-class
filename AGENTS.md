@@ -1,7 +1,7 @@
 # AGENTS.md
 
 新概念英语课堂教学辅助系统。当前进度：**M1 · 基础框架 + 老师端班级管理页面（读+写闭环，含登录鉴权）+ 课前配置页 + 课堂主界面（本地优先 + 结束课堂一次性提交入库，含默认分组回写/session 快照/事件流/背书作业/出勤）+ 学生端微信小程序（Taro 双端）+ 存储层 Minio/OSS 落地 + 邀请与账户体系重构（wechat_account 分离 · 小程序内生成邀请/关联队列 · Bearer 会话）**。
-需求/设计以 `kb/plans/2026-06-30-nce-class-m1-prd.md` 为准；班级管理写操作+登录见 `kb/plans/2026-07-01-nce-class-m1-management-wiring.md`；课堂运行时持久化见 `kb/plans/2026-07-02-nce-class-classroom-backend.md`；学生端小程序+存储见 `kb/plans/2026-07-02-nce-class-student-miniapp.md`（**学生端由 PRD 的 H5 改为小程序**，用户 2026-07-02 决定）；邀请/账户体系见 `kb/plans/2026-07-02-nce-class-wechat-account-invite.md`（**取代固定邀请码+recapToken 方案**：student 与 wechat_account 二元结构，注册只建 join_request，老师负责关联）。设计还原参考 `nce-class-v1-design/*.dc.html`（gitignored）。
+需求/设计以 `kb/plans/2026-06-30-nce-class-m1-prd.md` 为准；班级管理写操作+登录见 `kb/plans/2026-07-01-nce-class-m1-management-wiring.md`；课堂运行时持久化见 `kb/plans/2026-07-02-nce-class-classroom-backend.md`；学生端小程序+存储见 `kb/plans/2026-07-02-nce-class-student-miniapp.md`（**学生端由 PRD 的 H5 改为小程序**，用户 2026-07-02 决定）；邀请/账户体系见 `kb/plans/2026-07-02-nce-class-wechat-account-invite.md`（**取代固定邀请码+recapToken 方案**：student 与 wechat_account 二元结构，注册只建 join_request，老师负责关联）。生产部署（server.name · service.domain · 服务器现场 build + Compose）见 `kb/plans/2026-07-02-nce-class-deploy.md`。设计还原参考 `nce-class-v1-design/*.dc.html`（gitignored）。
 
 ## 结构
 
@@ -44,6 +44,8 @@ pnpm dev         # server :5177 + web :5173（vite 代理 /api、/uploads）
 ```
 
 单独启动 `pnpm dev:server` / `pnpm dev:web` / `pnpm dev:miniapp`（= miniapp h5 watch，:10086，需 server 在跑）。**server dev 脚本默认带 `WX_MOCK=1`**（mock 登录 code `mock:<name>`；接真微信时设 `WX_APPID`/`WX_SECRET` 并去掉 WX_MOCK）。小程序在微信开发者工具里调试见下方「微信开发者工具（weapp 本地调试）」一节。类型检查 `pnpm --filter <pkg> exec tsc --noEmit`；单测 `pnpm --filter web test` / `pnpm --filter server test` / `pnpm --filter miniapp test`（均 vitest）。
+
+**部署**：仓库根 `Dockerfile` + `docker-compose.yml`（服务器现场 build，容器只跑 API，web 静态由宿主机 Caddy serve），发布脚本 `deploy/release.sh`（SSH 到 server.name：reset 代码 → build → 拷 webdist → db:migrate → up -d）。server 新增 `pnpm --filter server db:migrate`（幂等 DDL，server 启动时也会自动跑）与 `pnpm --filter server create-teacher -- --org ... --name ... --username ... --password ...`（干净库开真实账号）。细节见 `kb/plans/2026-07-02-nce-class-deploy.md`。
 
 **登录墙**：管理页均需登录，先访问 `/login` 用 seed 老师登录（如 `wangli` / `demo1234`，全体老师同密码）。会话是 httpOnly 签名 cookie `nce_session`（7 天）。
 

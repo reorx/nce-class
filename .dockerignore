@@ -1,0 +1,15 @@
+.git
+node_modules
+**/node_modules
+server/data
+data
+web/dist
+miniapp/dist
+webdist*
+kb
+tmp
+nce-class-v1-design
+.brainstorming
+.env
+*.local
+.DS_Store

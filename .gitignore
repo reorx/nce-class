@@ -5,6 +5,8 @@ tmp/
 nce-class-v1-design/
 dist/
 server/data/
+data/
+webdist*/
 *.local
 .env
 .swc/
