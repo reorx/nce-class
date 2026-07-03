@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { EmojiPickerButton } from '../components/EmojiPicker';
+import { GroupEditPopover } from '../components/GroupEditMenu';
 import { useToast } from '../components/Toast';
 import { ApiError, api } from '../lib/api';
 import {
@@ -57,7 +57,10 @@ export function Classroom() {
   const [view, setView] = useState<View>('board');
   const [openId, setOpenId] = useState<string | null>(null);
   const [openGid, setOpenGid] = useState<string | null>(null);
+  // 调组视图的组编辑菜单：点表头开/关（gid + 定位锚点）
+  const [edit, setEdit] = useState<{ gid: string; el: HTMLElement } | null>(null);
   const [showEnd, setShowEnd] = useState(false);
+  const [showInfo, setShowInfo] = useState(false);
   const [showDiscard, setShowDiscard] = useState(false);
   const [discardPw, setDiscardPw] = useState('');
   const [discardErr, setDiscardErr] = useState('');
@@ -138,11 +141,14 @@ export function Classroom() {
   const toggleAbsent = (sid: string) => dispatch({ type: 'toggleAttendance', sid });
   const moveStudent = (sid: string, gid: string) => dispatch({ type: 'moveStudent', sid, gid });
   const changeGroupEmoji = (gid: string, emoji: string) => dispatch({ type: 'setGroupEmoji', gid, emoji });
+  const renameGroup = (gid: string, name: string) => dispatch({ type: 'renameGroup', gid, name });
+  const removeGroup = (gid: string) => dispatch({ type: 'removeGroup', gid });
 
   const goView = (v: View) => {
     setView(v);
     setOpenId(null);
     setOpenGid(null);
+    setEdit(null);
   };
 
   // ---- countdown / overtime (§7.3) ----------------------------------------
@@ -217,7 +223,28 @@ export function Classroom() {
         <span style={{ fontSize: 28 }}>🏫</span>
         <span style={{ fontWeight: 900, fontSize: 25, color: '#2c3340' }}>{className}</span>
         <span style={{ color: '#b7c5ad', fontSize: 22, fontWeight: 800 }}>·</span>
-        <span style={{ fontWeight: 700, fontSize: 20, color: '#66756c' }}>{lessonLabel}</span>
+        <span
+          onClick={() => setShowInfo(true)}
+          title="编辑课堂信息"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 7,
+            padding: '4px 12px',
+            margin: '-4px -12px',
+            borderRadius: 12,
+            fontWeight: 700,
+            fontSize: 20,
+            color: '#66756c',
+            cursor: 'pointer',
+            transition: 'background .12s',
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,.65)')}
+          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+        >
+          {lessonLabel}
+          <span style={{ fontSize: 14, color: '#a3b39a' }}>✎</span>
+        </span>
         <div
           style={{
             marginLeft: 'auto',
@@ -261,7 +288,8 @@ export function Classroom() {
                 }}
               >
                 <span style={{ fontSize: 18 }}>✋</span>
-                拖拽学生卡可在组间移动 · 点击组 emoji 可更换 · 调组只影响后续加分归属，不改写历史组分
+                拖拽学生卡可在组间移动 · 点击表头可编辑小组（emoji / 组名 / 删除）·
+                调组只影响后续加分归属，不改写历史组分
               </div>
             )}
             <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 18, paddingBottom: 6 }}>
@@ -296,7 +324,15 @@ export function Classroom() {
                     }}
                   >
                     <div
-                      onClick={() => setOpenGid(g.id)}
+                      onClick={
+                        view === 'regroup'
+                          ? (e) => {
+                              const el = e.currentTarget;
+                              setEdit((cur) => (cur?.gid === g.id ? null : { gid: g.id, el }));
+                            }
+                          : () => setOpenGid(g.id)
+                      }
+                      title={view === 'regroup' ? '编辑小组' : undefined}
                       style={{
                         display: 'flex',
                         alignItems: 'center',
@@ -306,15 +342,7 @@ export function Classroom() {
                         cursor: 'pointer',
                       }}
                     >
-                      {view === 'regroup' ? (
-                        <EmojiPickerButton
-                          emoji={g.emoji}
-                          fontSize={25}
-                          onSelect={(em) => changeGroupEmoji(g.id, em)}
-                        />
-                      ) : (
-                        <span style={{ fontSize: 25, lineHeight: 1, flexShrink: 0 }}>{g.emoji}</span>
-                      )}
+                      <span style={{ fontSize: 25, lineHeight: 1, flexShrink: 0 }}>{g.emoji}</span>
                       <span
                         style={{
                           fontWeight: 900,
@@ -393,8 +421,138 @@ export function Classroom() {
                 );
               })}
             </div>
+
+            {/* 未分组暂存区：删除组后成员落这里；调组视图可拖回小组 */}
+            {(() => {
+              const ungrouped = students.filter((s) => !s.g);
+              if (view !== 'regroup' && !ungrouped.some((s) => s.attendance === 'present')) return null;
+              return (
+                <div
+                  onDragOver={view === 'regroup' ? (e) => e.preventDefault() : undefined}
+                  onDrop={
+                    view === 'regroup'
+                      ? (e) => {
+                          e.preventDefault();
+                          if (dragId.current != null) moveStudent(dragId.current, '');
+                          dragId.current = null;
+                        }
+                      : undefined
+                  }
+                  style={{
+                    margin: '10px 0 6px',
+                    borderRadius: 18,
+                    border: '2.5px dashed #d5ddce',
+                    background: '#fafbf8',
+                    padding: '12px 16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <span
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 7,
+                      fontWeight: 800,
+                      fontSize: 15,
+                      color: '#5b6672',
+                    }}
+                  >
+                    <span style={{ fontSize: 17 }}>🚪</span>未分组
+                    <span
+                      style={{
+                        padding: '2px 10px',
+                        borderRadius: 10,
+                        background: '#fff',
+                        color: '#8a94a0',
+                        fontSize: 13,
+                      }}
+                    >
+                      {ungrouped.length}
+                    </span>
+                  </span>
+                  {ungrouped.length === 0 && (
+                    <span style={{ color: '#b7c0c9', fontSize: 13, fontWeight: 700 }}>
+                      删除小组或把学生拖到这里后，成员显示在此处
+                    </span>
+                  )}
+                  {ungrouped.map((s) => (
+                    <div
+                      key={s.id}
+                      draggable={view === 'regroup'}
+                      onDragStart={() => (dragId.current = s.id)}
+                      onClick={view === 'board' && s.attendance === 'present' ? () => setOpenId(s.id) : undefined}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        padding: '6px 12px 6px 6px',
+                        borderRadius: 13,
+                        background: '#fff',
+                        border: '2px solid #e6eae4',
+                        cursor: view === 'regroup' ? 'grab' : s.attendance === 'present' ? 'pointer' : 'default',
+                        opacity: s.attendance === 'absent' ? 0.55 : 1,
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: 30,
+                          height: 30,
+                          borderRadius: '50%',
+                          background: '#e3e7ec',
+                          color: '#7c8794',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontWeight: 800,
+                          fontSize: 13,
+                          flexShrink: 0,
+                        }}
+                      >
+                        {s.name[0]}
+                      </div>
+                      <span style={{ fontWeight: 800, fontSize: 14, color: '#3a4350', whiteSpace: 'nowrap' }}>
+                        {s.name}
+                      </span>
+                      {s.attendance === 'absent' ? (
+                        <span style={{ fontSize: 12, fontWeight: 700, color: '#a7b0bb' }}>未到</span>
+                      ) : (
+                        <span style={{ fontFamily: NUM, fontWeight: 800, fontSize: 14, color: '#8a94a0' }}>
+                          ⭐{sScore(events, s.id)}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
         )}
+
+        {/* 调组视图的组编辑菜单 (emoji / 组名 / 删除) */}
+        {edit &&
+          (() => {
+            const g = groups.find((x) => x.id === edit.gid);
+            if (!g) return null;
+            return (
+              <GroupEditPopover
+                anchor={edit.el}
+                name={g.name}
+                emoji={g.emoji}
+                memberCount={students.filter((s) => s.g === g.id).length}
+                canDelete={groups.length > 1}
+                onEmoji={(em) => changeGroupEmoji(g.id, em)}
+                onRename={(v) => renameGroup(g.id, v)}
+                onDelete={() => {
+                  removeGroup(g.id);
+                  setEdit(null);
+                }}
+                onClose={() => setEdit(null)}
+              />
+            );
+          })()}
 
         {!isBoard && (
           <SegmentView
@@ -510,6 +668,20 @@ export function Classroom() {
             />
           );
         })()}
+
+      {/* mid-class lesson info edit (mirrors 课前配置's 本节课 card) */}
+      {showInfo && (
+        <LessonInfoDialog
+          lessonNumber={session.lessonNumber ?? ''}
+          lessonTitle={session.lessonTitle ?? ''}
+          durationMin={session.plannedDurationMin}
+          onSave={(v) => {
+            dispatch({ type: 'setLessonInfo', ...v });
+            setShowInfo(false);
+          }}
+          onClose={() => setShowInfo(false)}
+        />
+      )}
 
       {/* end-class recap (local preview → confirm commits) */}
       {showEnd && (
@@ -1150,6 +1322,158 @@ function StatusOptions<V extends Recitation | Homework>({
     </div>
   );
 }
+
+// ===== lesson info dialog ==================================================
+// Mid-class edit of 本节课 info — same three fields as 课前配置's SessionInfoCard
+// (课次号 / 课题 / 课堂时长). Saving only touches the local session; duration
+// re-drives the header countdown off the unchanged startedAt.
+
+function LessonInfoDialog({
+  lessonNumber,
+  lessonTitle,
+  durationMin,
+  onSave,
+  onClose,
+}: {
+  lessonNumber: string;
+  lessonTitle: string;
+  durationMin: number;
+  onSave: (v: { lessonNumber: string; lessonTitle: string; durationMin: number }) => void;
+  onClose: () => void;
+}) {
+  const [no, setNo] = useState(lessonNumber);
+  const [title, setTitle] = useState(lessonTitle);
+  const [duration, setDuration] = useState(String(durationMin));
+  const save = () =>
+    onSave({
+      lessonNumber: no.trim(),
+      lessonTitle: title.trim(),
+      durationMin: Math.max(1, Number(duration) || 120),
+    });
+  const onKey = (e: React.KeyboardEvent) => e.key === 'Enter' && save();
+  return (
+    <Overlay z={55} onClose={onClose}>
+      <div style={popupCard(460)} onClick={stop}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+          <span style={{ fontSize: 26 }}>📘</span>
+          <span style={{ fontWeight: 900, fontSize: 22, color: '#2c3340' }}>本节课</span>
+          <span
+            style={{
+              fontWeight: 700,
+              fontSize: 13,
+              color: '#a7b0bb',
+              background: '#f0f3ed',
+              padding: '4px 11px',
+              borderRadius: 10,
+            }}
+          >
+            可选
+          </span>
+          <button onClick={onClose} style={closeBtn}>
+            ✕
+          </button>
+        </div>
+        <div style={{ fontSize: 14, fontWeight: 600, color: '#98a2b0', marginBottom: 18 }}>
+          填了会进入 recap 与成长档案；留空则以日期标识
+        </div>
+
+        <label style={fieldLabel}>课次号</label>
+        <InfoField>
+          <span style={{ fontWeight: 800, fontSize: 16, color: '#a7b0bb' }}>第</span>
+          <input
+            value={no}
+            autoFocus
+            onChange={(e) => setNo(e.target.value.replace(/[^0-9]/g, '').slice(0, 3))}
+            onKeyDown={onKey}
+            placeholder="4"
+            style={{ flex: 1, minWidth: 0, ...inputBase }}
+          />
+          <span style={{ fontWeight: 800, fontSize: 16, color: '#a7b0bb' }}>课</span>
+        </InfoField>
+
+        <label style={fieldLabel}>课题</label>
+        <InfoField>
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            onKeyDown={onKey}
+            placeholder="A private conversation"
+            style={{ flex: 1, minWidth: 0, ...inputBase, fontSize: 16, fontWeight: 700 }}
+          />
+        </InfoField>
+
+        <label style={fieldLabel}>课堂时长</label>
+        <InfoField last>
+          <span style={{ fontSize: 20 }}>⏱</span>
+          <input
+            value={duration}
+            onChange={(e) => setDuration(e.target.value)}
+            onKeyDown={onKey}
+            inputMode="numeric"
+            placeholder="120"
+            style={{ flex: 1, minWidth: 0, width: '100%', ...inputBase, fontVariantNumeric: 'tabular-nums' }}
+          />
+          <span style={{ fontWeight: 800, fontSize: 16, color: '#a7b0bb' }}>分钟</span>
+        </InfoField>
+        <div style={{ fontSize: 13, fontWeight: 700, color: '#a7b0bb', marginTop: 8 }}>
+          改时长会按开课时间重新计算右上角倒计时
+        </div>
+
+        <button onClick={save} style={{ ...doneBtn, marginTop: 20 }}>
+          保存
+        </button>
+      </div>
+    </Overlay>
+  );
+}
+
+/** Rounded input wrapper — same focus-within highlight as 课前配置. */
+function InfoField({ children, last }: { children: React.ReactNode; last?: boolean }) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        padding: '0 16px',
+        borderRadius: 15,
+        border: '2px solid #eaefe6',
+        background: '#f8faf5',
+        marginBottom: last ? 0 : 16,
+        transition: 'border-color .12s,background .12s',
+      }}
+      onFocus={(e) => {
+        e.currentTarget.style.borderColor = '#7fce97';
+        e.currentTarget.style.background = '#fff';
+      }}
+      onBlur={(e) => {
+        e.currentTarget.style.borderColor = '#eaefe6';
+        e.currentTarget.style.background = '#f8faf5';
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+const fieldLabel: CSSProperties = {
+  display: 'block',
+  fontWeight: 800,
+  fontSize: 14,
+  color: '#5b6672',
+  marginBottom: 8,
+};
+
+const inputBase: CSSProperties = {
+  border: 'none',
+  background: 'transparent',
+  padding: '13px 0',
+  fontSize: 17,
+  fontWeight: 800,
+  color: '#2c3340',
+  fontFamily: 'inherit',
+  outline: 'none',
+};
 
 // ===== group popup =========================================================
 function GroupPopup({

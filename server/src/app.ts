@@ -22,6 +22,7 @@ import {
   commitSession,
   createClass,
   createInvite,
+  createTeacher,
   deleteSession,
   deleteStudent,
   dismissJoinRequest,
@@ -52,6 +53,7 @@ const q = {
   classes: sqlite.prepare(`SELECT * FROM classes ORDER BY created_at`),
   classById: sqlite.prepare(`SELECT * FROM classes WHERE id=?`),
   teacherById: sqlite.prepare(`SELECT * FROM teachers WHERE id=?`),
+  teachersOfOrg: sqlite.prepare(`SELECT * FROM teachers WHERE org_id=? ORDER BY created_at, rowid`),
   // Head counts everywhere = 在读+停课; archived students don't count (decision 2).
   studentCounts: sqlite.prepare(
     `SELECT class_id, COUNT(*) c FROM students WHERE status != 'archived' GROUP BY class_id`,
@@ -792,6 +794,24 @@ export function createApp() {
       return res.status(403).json({ error: '密码错误' });
     }
     res.json({ ok: true });
+  });
+
+  // ---- teachers (同校老师列表 + 管理页添加; 权限暂不细分, 任何登录老师可加) ----
+  app.get('/api/teachers', (_req, res) => {
+    const rows = q.teachersOfOrg.all(res.locals.teacher.org_id) as any[];
+    res.json(rows.map((t) => ({ id: t.id, name: t.name, username: t.username, role: t.role })));
+  });
+
+  app.post('/api/teachers', (req, res) => {
+    const name = str(req.body?.name);
+    const username = str(req.body?.username);
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    if (!name || !username) return res.status(400).json({ error: '姓名和用户名必填' });
+    if (password.length < 6) return res.status(400).json({ error: '密码至少 6 位' });
+    if (q.teacherByUsername.get(username)) return res.status(409).json({ error: '用户名已被使用' });
+    const id = createTeacher(sqlite, { orgId: res.locals.teacher.org_id, name, username, password });
+    const t = q.teacherById.get(id) as any;
+    res.status(201).json({ id: t.id, name: t.name, username: t.username, role: t.role });
   });
 
   // ---- classes (read) ----

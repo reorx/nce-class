@@ -240,19 +240,21 @@ export function Setup() {
                   }}
                 >
                   <div
+                    onClick={(e) => {
+                      const el = e.currentTarget;
+                      setEdit((cur) => (cur?.gid === g.id ? null : { gid: g.id, el }));
+                    }}
+                    title="编辑小组"
                     style={{
                       display: 'flex',
                       alignItems: 'center',
                       gap: 8,
                       padding: '13px 14px',
                       background: c.headBg,
+                      cursor: 'pointer',
                     }}
                   >
-                    <EmojiPickerButton
-                      emoji={g.emoji}
-                      fontSize={23}
-                      onSelect={(em) => setState((st) => (st ? setGroupEmoji(st, g.id, em) : st))}
-                    />
+                    <span style={{ fontSize: 23, lineHeight: 1 }}>{g.emoji}</span>
                     <span
                       style={{
                         fontWeight: 900,
@@ -369,6 +371,30 @@ export function Setup() {
               }}
             />
           )}
+
+          {/* 组编辑菜单 (emoji / 组名 / 删除) — portaled, anchored to表头 */}
+          {state &&
+            edit &&
+            (() => {
+              const g = state.groups.find((x) => x.id === edit.gid);
+              if (!g) return null;
+              return (
+                <GroupEditPopover
+                  anchor={edit.el}
+                  name={g.name}
+                  emoji={g.emoji}
+                  memberCount={membersOf(state, g.id).length}
+                  canDelete={state.groups.length > 1}
+                  onEmoji={(em) => setState((st) => (st ? setGroupEmoji(st, g.id, em) : st))}
+                  onRename={(v) => setState((st) => (st ? renameGroup(st, g.id, v) : st))}
+                  onDelete={() => {
+                    setState((st) => (st ? removeGroup(st, g.id) : st));
+                    setEdit(null);
+                  }}
+                  onClose={() => setEdit(null)}
+                />
+              );
+            })()}
         </div>
       </div>
 

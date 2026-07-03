@@ -6,6 +6,13 @@ export interface Me {
   orgName: string;
 }
 
+export interface TeacherItem {
+  id: string;
+  name: string;
+  username: string;
+  role: string;
+}
+
 export interface ClassListItem {
   id: string;
   name: string;
@@ -221,6 +228,9 @@ export const api = {
   login: (username: string, password: string) => req<Me>('POST', '/api/auth/login', { username, password }),
   logout: () => req<{ ok: true }>('POST', '/api/auth/logout'),
   verifyPassword: (password: string) => req<{ ok: true }>('POST', '/api/auth/verify-password', { password }),
+  teachers: () => get<TeacherItem[]>('/api/teachers'),
+  createTeacher: (name: string, username: string, password: string) =>
+    req<TeacherItem>('POST', '/api/teachers', { name, username, password }),
   classes: () => get<ClassListItem[]>('/api/classes'),
   classDetail: (id: string) => get<ClassDetail>(`/api/classes/${id}`),
   createClass: (name: string, level: string | null) => req<ClassDetail>('POST', '/api/classes', { name, level }),

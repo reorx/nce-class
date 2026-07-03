@@ -163,6 +163,28 @@ describe('classroom reducer', () => {
     expect(p.memberships.find((m) => m.studentId === 's1')!.clientGroupId).toBe(null);
   });
 
+  it('updates lesson info mid-class (课次/课题/时长) and it flows into the commit payload', () => {
+    let s = boot();
+    s = reducer(s, { type: 'setLessonInfo', lessonNumber: '5', lessonTitle: 'No wrong numbers', durationMin: 90 });
+    expect(s.lessonNumber).toBe('5');
+    expect(s.lessonTitle).toBe('No wrong numbers');
+    expect(s.plannedDurationMin).toBe(90);
+    const p = buildCommitPayload(s, '2026-07-02 21:00:00');
+    expect(p.lessonNumber).toBe(5);
+    expect(p.lessonTitle).toBe('No wrong numbers');
+    expect(p.plannedDurationMin).toBe(90);
+  });
+
+  it('clearing lesson fields mid-class reverts them to unset (null in the payload)', () => {
+    let s = boot();
+    s = reducer(s, { type: 'setLessonInfo', lessonNumber: '', lessonTitle: '', durationMin: 120 });
+    expect(s.lessonNumber).toBeUndefined();
+    expect(s.lessonTitle).toBeUndefined();
+    const p = buildCommitPayload(s, '2026-07-02 21:00:00');
+    expect(p.lessonNumber).toBeNull();
+    expect(p.lessonTitle).toBeNull();
+  });
+
   it('re-grouping only affects future scoring, not historical group scores', () => {
     let s = boot();
     s = reducer(s, { type: 'scoreStudent', sid: 's1', d: 1, at }); // earns for g1

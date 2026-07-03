@@ -1,5 +1,6 @@
 import type DatabaseType from 'better-sqlite3';
 import { nanoid } from 'nanoid';
+import { hashPassword } from '../auth/password.js';
 
 type DB = DatabaseType.Database;
 
@@ -49,6 +50,27 @@ export interface CommitInput {
   memberships: CommitMembership[];
   events: CommitEvent[];
   checks: CommitCheck[];
+}
+
+/**
+ * Create a same-org teacher account with a password credential (in-app 添加老师,
+ * unlike provision.createTeacher which bootstraps an org by name). Returns the id.
+ */
+export function createTeacher(
+  sqlite: DB,
+  p: { orgId: string; name: string; username: string; password: string },
+): string {
+  const id = `t-${nanoid(10)}`;
+  const tx = sqlite.transaction(() => {
+    sqlite
+      .prepare(`INSERT INTO teachers (id, org_id, name, username, role) VALUES (?,?,?,?,'teacher')`)
+      .run(id, p.orgId, p.name, p.username);
+    sqlite
+      .prepare(`INSERT INTO credentials (id, teacher_id, provider, secret) VALUES (?,?,'password',?)`)
+      .run(`cred-${nanoid(10)}`, id, hashPassword(p.password));
+  });
+  tx();
+  return id;
 }
 
 /** Create a class in the given org owned by the given teacher. Returns its id. */

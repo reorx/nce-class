@@ -72,6 +72,70 @@ describe('auth', () => {
   });
 });
 
+describe('teachers', () => {
+  it('lists only same-org teachers', async () => {
+    const { agent } = await login();
+    const res = await agent.get('/api/teachers');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([{ id: 't-wangli', name: '王莉', username: 'wangli', role: 'owner' }]);
+  });
+
+  it('creates a teacher who can log in immediately', async () => {
+    const { agent } = await login();
+    const created = await agent.post('/api/teachers').send({ name: '李芳', username: 'lifang', password: 'secret66' });
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({ name: '李芳', username: 'lifang', role: 'teacher' });
+
+    // shows up in the list, pinned to the creator's org
+    const list = (await agent.get('/api/teachers')).body;
+    expect(list.map((t: any) => t.username)).toEqual(['wangli', 'lifang']);
+    const row = sqlite.prepare(`SELECT org_id FROM teachers WHERE username='lifang'`).get() as any;
+    expect(row.org_id).toBe('org-1');
+
+    // the new account works right away
+    const { res } = await login('lifang', 'secret66');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ name: '李芳', role: 'teacher' });
+  });
+
+  it('rejects a duplicate username with 409, even across orgs', async () => {
+    const { agent } = await login();
+    const sameOrg = await agent
+      .post('/api/teachers')
+      .send({ name: '假王莉', username: 'wangli', password: 'secret66' });
+    expect(sameOrg.status).toBe(409);
+    // 'waiguo' lives in org-2; usernames are globally unique
+    const crossOrg = await agent
+      .post('/api/teachers')
+      .send({ name: '假外老师', username: 'waiguo', password: 'secret66' });
+    expect(crossOrg.status).toBe(409);
+  });
+
+  it('rejects blank fields and short passwords with 400', async () => {
+    const { agent } = await login();
+    expect((await agent.post('/api/teachers').send({ name: ' ', username: 'x1', password: 'secret66' })).status).toBe(
+      400,
+    );
+    expect((await agent.post('/api/teachers').send({ name: '李芳', username: ' ', password: 'secret66' })).status).toBe(
+      400,
+    );
+    expect(
+      (await agent.post('/api/teachers').send({ name: '李芳', username: 'lifang', password: '12345' })).status,
+    ).toBe(400);
+    // nothing was created
+    const c = sqlite.prepare(`SELECT COUNT(*) c FROM teachers`).get() as any;
+    expect(c.c).toBe(2);
+  });
+
+  it('blocks unauthenticated access with 401', async () => {
+    expect((await request(app).get('/api/teachers')).status).toBe(401);
+    expect(
+      (await request(app).post('/api/teachers').send({ name: '李芳', username: 'lifang', password: 'secret66' }))
+        .status,
+    ).toBe(401);
+  });
+});
+
 describe('students', () => {
   it('adds a teacher-created student and reflects it in the class detail', async () => {
     const { agent } = await login();

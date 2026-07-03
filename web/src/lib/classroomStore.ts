@@ -107,6 +107,7 @@ export type CAction =
   | { type: 'setHomework'; sid: string; v: Homework }
   | { type: 'toggleAttendance'; sid: string }
   | { type: 'moveStudent'; sid: string; gid: string }
+  | { type: 'setLessonInfo'; lessonNumber: string; lessonTitle: string; durationMin: number }
   | { type: 'setGroupEmoji'; gid: string; emoji: string }
   | { type: 'renameGroup'; gid: string; name: string }
   | { type: 'removeGroup'; gid: string };
@@ -129,6 +130,15 @@ export function reducer(s: ClassroomSession, a: CAction): ClassroomSession {
       return mapStudent(s, a.sid, (x) => ({ ...x, attendance: x.attendance === 'absent' ? 'present' : 'absent' }));
     case 'moveStudent':
       return mapStudent(s, a.sid, (x) => ({ ...x, g: a.gid }));
+    case 'setLessonInfo':
+      // Mid-class edit of 本节课 info; blank fields revert to unset, matching
+      // buildClassroomSession so the commit payload emits null for them.
+      return {
+        ...s,
+        lessonNumber: a.lessonNumber || undefined,
+        lessonTitle: a.lessonTitle || undefined,
+        plannedDurationMin: a.durationMin,
+      };
     case 'setGroupEmoji':
       // Cosmetic, not membership — unlike re-grouping it also updates the
       // frozen default grouping so the new emoji writes back to the class.
