@@ -27,6 +27,7 @@ import {
   dismissJoinRequest,
   linkJoinRequest,
   saveGrouping,
+  setStudentStatus,
   upsertJoinRequest,
   upsertWechatAccount,
   type CommitInput,
@@ -51,12 +52,20 @@ const q = {
   classes: sqlite.prepare(`SELECT * FROM classes ORDER BY created_at`),
   classById: sqlite.prepare(`SELECT * FROM classes WHERE id=?`),
   teacherById: sqlite.prepare(`SELECT * FROM teachers WHERE id=?`),
-  studentCounts: sqlite.prepare(`SELECT class_id, COUNT(*) c FROM students GROUP BY class_id`),
-  allStudentsOrdered: sqlite.prepare(`SELECT id, class_id, name FROM students ORDER BY created_at, id`),
+  // Head counts everywhere = 在读+停课; archived students don't count (decision 2).
+  studentCounts: sqlite.prepare(
+    `SELECT class_id, COUNT(*) c FROM students WHERE status != 'archived' GROUP BY class_id`,
+  ),
+  allStudentsOrdered: sqlite.prepare(
+    `SELECT id, class_id, name FROM students WHERE status != 'archived' ORDER BY created_at, id`,
+  ),
   studentById: sqlite.prepare(`SELECT * FROM students WHERE id=?`),
   lastSessions: sqlite.prepare(`SELECT class_id, MAX(date) d FROM class_sessions GROUP BY class_id`),
+  // Deliberately NOT status-filtered: the detail page shows archived rows, and
+  // the commit's classifyStudent must keep suspended/archived students 'own' so
+  // a stale local classroom still submits with its snapshot intact.
   studentsOfClass: sqlite.prepare(
-    `SELECT id, name, source, photo_url FROM students WHERE class_id=? ORDER BY created_at, id`,
+    `SELECT id, name, source, status, photo_url FROM students WHERE class_id=? ORDER BY created_at, id`,
   ),
   scoresOfClass: sqlite.prepare(
     `SELECT s.id sid, COALESCE(SUM(e.delta),0) score
@@ -106,11 +115,23 @@ const q = {
      FROM session_memberships WHERE session_id=?`,
   ),
   orgById: sqlite.prepare(`SELECT * FROM organizations WHERE id=?`),
-  countStudentsOfClass: sqlite.prepare(`SELECT COUNT(*) c FROM students WHERE class_id=?`),
+  countStudentsOfClass: sqlite.prepare(`SELECT COUNT(*) c FROM students WHERE class_id=? AND status != 'archived'`),
   endedSessionsOfClass: sqlite.prepare(
     `SELECT * FROM class_sessions WHERE class_id=? AND status='ended' ORDER BY date DESC, lesson_number DESC`,
   ),
   membershipOfStudent: sqlite.prepare(`SELECT * FROM session_memberships WHERE session_id=? AND student_id=?`),
+  defaultGroupOfStudent: sqlite.prepare(
+    `SELECT g.name, g.emoji FROM class_group_memberships m JOIN class_groups g ON g.id=m.class_group_id
+     WHERE m.student_id=?`,
+  ),
+  // 累计口径 (§7.4): student-target events only so group scores never double-count;
+  // 加星/扣分 are event COUNTS, not score sums.
+  personalTallyOfStudent: sqlite.prepare(
+    `SELECT COALESCE(SUM(delta),0) total,
+            COALESCE(SUM(CASE WHEN delta=1 THEN 1 ELSE 0 END),0) plus,
+            COALESCE(SUM(CASE WHEN delta=-1 THEN 1 ELSE 0 END),0) minus
+     FROM score_events WHERE target_type='student' AND target_id=?`,
+  ),
   personalScoreOfStudent: sqlite.prepare(
     `SELECT COALESCE(SUM(delta),0) s FROM score_events WHERE session_id=? AND target_type='student' AND target_id=?`,
   ),
@@ -148,7 +169,7 @@ const q = {
   studentsWithLinkFlag: sqlite.prepare(
     `SELECT s.id, s.name, s.en_name, s.photo_url, COUNT(b.id) links
      FROM students s LEFT JOIN student_wechat_bindings b ON b.student_id=s.id
-     WHERE s.class_id=? GROUP BY s.id ORDER BY s.created_at, s.id`,
+     WHERE s.class_id=? AND s.status != 'archived' GROUP BY s.id ORDER BY s.created_at, s.id`,
   ),
 };
 
@@ -200,6 +221,7 @@ function classDetailPayload(id: string) {
     id: s.id,
     name: s.name,
     source: s.source,
+    status: s.status,
     hasPhoto: s.photo_url != null,
     score: scores.get(s.id) ?? 0,
     groupId: groupByStudent.get(s.id) ?? null,
@@ -209,7 +231,8 @@ function classDetailPayload(id: string) {
     name: g.name,
     emoji: g.emoji,
     orderIndex: g.order_index,
-    memberIds: students.filter((s) => s.groupId === g.id).map((s) => s.id),
+    // defensive: setStudentStatus already clears memberships for non-active
+    memberIds: students.filter((s) => s.groupId === g.id && s.status === 'active').map((s) => s.id),
   }));
   const sgCounts = new Map((q.sessionGroupCounts.all() as any[]).map((r) => [r.session_id, r.c]));
   const sessions = (q.sessionsOfClass.all(id) as any[]).map((s) => {
@@ -232,7 +255,7 @@ function classDetailPayload(id: string) {
     name: c.name,
     level: c.level,
     teacherName: teacher?.name ?? '—',
-    studentCount: students.length,
+    studentCount: students.filter((s) => s.status !== 'archived').length,
     groupCount: groups.length,
     sessionCount: sessions.length,
     students,
@@ -618,6 +641,9 @@ export function createApp() {
     const studentId = str(req.body?.studentId);
     const student = studentId ? (q.studentById.get(studentId) as any) : null;
     if (!student || student.class_id !== jr.class_id) return res.status(400).json({ error: '学生不在该班' });
+    // Candidate list already hides archived students; belt-and-braces here.
+    // Suspended students CAN be linked (they're expected back).
+    if (student.status === 'archived') return res.status(400).json({ error: '学生已归档' });
     linkJoinRequest(sqlite, { requestId: jr.id, studentId: student.id, teacherId: teacher.id });
     res.json({ ok: true });
   });
@@ -784,7 +810,29 @@ export function createApp() {
     if (!name) return res.status(400).json({ error: '学生姓名必填' });
     const id = addStudent(sqlite, { classId: req.params.id, name });
     const s = q.studentById.get(id) as any;
-    res.status(201).json({ id: s.id, name: s.name, source: s.source, hasPhoto: s.photo_url != null, score: 0 });
+    res
+      .status(201)
+      .json({ id: s.id, name: s.name, source: s.source, status: s.status, hasPhoto: s.photo_url != null, score: 0 });
+  });
+
+  // ---- student status (在读/停课/归档; non-active leaves the default grouping) ----
+  app.put('/api/students/:id/status', (req, res) => {
+    const teacher = res.locals.teacher;
+    const s = q.studentById.get(req.params.id) as any;
+    if (!s || !classInOrg(s.class_id, teacher.org_id)) return res.status(404).json({ error: 'student not found' });
+    const status = str(req.body?.status);
+    if (status !== 'active' && status !== 'suspended' && status !== 'archived') {
+      return res.status(400).json({ error: 'status 必须是 active / suspended / archived' });
+    }
+    setStudentStatus(sqlite, s.id, status);
+    const updated = q.studentById.get(s.id) as any;
+    res.json({
+      id: updated.id,
+      name: updated.name,
+      source: updated.source,
+      status: updated.status,
+      hasPhoto: updated.photo_url != null,
+    });
   });
 
   app.delete('/api/students/:id', (req, res) => {
@@ -793,6 +841,72 @@ export function createApp() {
     if (!s || !classInOrg(s.class_id, teacher.org_id)) return res.status(404).json({ error: 'student not found' });
     deleteStudent(sqlite, req.params.id);
     res.json({ ok: true });
+  });
+
+  // ---- student growth profile (§7.4, pure read derivation) ----
+  // Not status-filtered: suspended/archived students keep their history viewable.
+  app.get('/api/students/:id/profile', (req, res) => {
+    const teacher = res.locals.teacher;
+    const st = q.studentById.get(req.params.id) as any;
+    const c = st ? classInOrg(st.class_id, teacher.org_id) : null;
+    if (!st || !c) return res.status(404).json({ error: 'student not found' });
+
+    const sessions = (q.endedSessionsOfClass.all(c.id) as any[]).reverse().map((s) => {
+      const mem = q.membershipOfStudent.get(s.id, st.id) as any;
+      // No membership = the student joined after this lesson (未入班), which is
+      // NOT the same as an explicit absence (that row exists, attendance=absent).
+      let mine = null;
+      if (mem) {
+        const checks = new Map((q.checksOfStudent.all(s.id, st.id) as any[]).map((r) => [r.type, r.status]));
+        const grp = mem.session_group_id
+          ? ((q.sessionGroups.all(s.id) as any[]).find((g) => g.id === mem.session_group_id) ?? null)
+          : null;
+        const groupScore = grp
+          ? ((q.sessionGroupScores.all(s.id) as any[]).find((r) => r.gid === grp.id)?.score ?? 0)
+          : null;
+        mine = {
+          attended: mem.attendance === 'present',
+          groupName: grp?.name ?? null,
+          groupEmoji: grp?.emoji ?? null,
+          groupScore,
+          // Personal score counts student-target events only (§7.4 口径);
+          // missing homework record = 没交, missing recitation record = 未检查 (§8).
+          personalScore: (q.personalScoreOfStudent.get(s.id, st.id) as any)?.s ?? 0,
+          homework: checks.get('homework') ?? '没交',
+          recitation: checks.get('recitation') ?? '未检查',
+        };
+      }
+      return {
+        id: s.id,
+        date: md(s.date),
+        year: s.date.slice(0, 4),
+        weekday: weekdayCN(s.date),
+        lessonNumber: s.lesson_number,
+        lessonTitle: s.lesson_title,
+        mine,
+      };
+    });
+
+    const grp = q.defaultGroupOfStudent.get(st.id) as any;
+    const tally = q.personalTallyOfStudent.get(st.id) as any;
+    res.json({
+      student: {
+        id: st.id,
+        name: st.name,
+        source: st.source,
+        status: st.status,
+        photoUrl: st.photo_url ? storageClient.getUrl(st.photo_url) : null,
+      },
+      class: { id: c.id, name: c.name },
+      currentGroup: grp ? { name: grp.name, emoji: grp.emoji } : null,
+      totals: {
+        attended: sessions.filter((s) => s.mine?.attended).length,
+        personalTotal: tally.total,
+        plus: tally.plus,
+        minus: tally.minus,
+      },
+      sessions,
+    });
   });
 
   // ---- default grouping (replace) ----

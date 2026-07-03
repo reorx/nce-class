@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react';
+import type { StudentStatus } from './api';
 
 export const GREEN = '#2fb457';
 export const GREEN_DARK = '#279a49';
@@ -57,6 +58,21 @@ export function avatarStyle(key: string, size: number, hasPhoto = true): CSSProp
     fontSize: fs,
     flexShrink: 0,
   };
+}
+
+// ---- student badges (shared by 班级详情 roster cards + 成长档案 header) -------
+
+export function sourceTag(source: 'parent' | 'teacher') {
+  return source === 'parent'
+    ? { label: '家长自助', color: '#586099', bg: '#eef0f8' }
+    : { label: '老师添加', color: '#6b7280', bg: '#f0f2f5' };
+}
+
+/** Status badge; null for active (no badge shown). */
+export function statusTag(status: StudentStatus) {
+  if (status === 'suspended') return { label: '停课', color: '#b06c22', bg: '#fdf3e5' };
+  if (status === 'archived') return { label: '已归档', color: '#7a828f', bg: '#f0f2f5' };
+  return null;
 }
 
 /** Rounded-square avatar used for teacher rows. */

@@ -181,6 +181,21 @@ export function dismissJoinRequest(sqlite: DB, p: { requestId: string; teacherId
     .run(p.teacherId, p.requestId);
 }
 
+/**
+ * Set a student's status (active 在读 / suspended 停课 / archived 已归档).
+ * Leaving active also removes them from the default grouping (decision 3);
+ * coming back does NOT restore it — they reappear ungrouped.
+ */
+export function setStudentStatus(sqlite: DB, studentId: string, status: string): void {
+  const tx = sqlite.transaction(() => {
+    sqlite.prepare(`UPDATE students SET status=? WHERE id=?`).run(status, studentId);
+    if (status !== 'active') {
+      sqlite.prepare(`DELETE FROM class_group_memberships WHERE student_id=?`).run(studentId);
+    }
+  });
+  tx();
+}
+
 /** Hard-delete a student and all ledger rows referencing them (single transaction). */
 export function deleteStudent(sqlite: DB, studentId: string): void {
   const tx = sqlite.transaction((sid: string) => {
@@ -213,12 +228,16 @@ export function deleteSession(sqlite: DB, sessionId: string): void {
 /**
  * Replace a class's entire default grouping (PRD "save = update default group").
  * Idempotent: rebuilds class_groups + memberships from `groups`; any student not
- * listed in a group becomes ungrouped. Members are filtered to the class roster.
+ * listed in a group becomes ungrouped. Members are filtered to the class's
+ * ACTIVE roster — suspended/archived students never hold a default-group seat
+ * (covers both PUT groups and commitSession's §7.2 writeback).
  */
 export function saveGrouping(sqlite: DB, classId: string, groups: GroupInput[]): void {
   const tx = sqlite.transaction(() => {
     const roster = new Set(
-      (sqlite.prepare(`SELECT id FROM students WHERE class_id=?`).all(classId) as any[]).map((r) => r.id),
+      (sqlite.prepare(`SELECT id FROM students WHERE class_id=? AND status='active'`).all(classId) as any[]).map(
+        (r) => r.id,
+      ),
     );
     // wipe existing grouping for this class
     sqlite

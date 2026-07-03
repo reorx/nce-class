@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Modal } from '../components/Modal';
 import { TopBar } from '../components/TopBar';
 import { useToast } from '../components/Toast';
@@ -21,7 +21,7 @@ import {
   toPayload,
   type GroupingModel,
 } from '../lib/grouping';
-import { avatarStyle, GREEN, initial } from '../lib/theme';
+import { avatarStyle, GREEN, initial, sourceTag, statusTag } from '../lib/theme';
 
 type Tab = 'students' | 'groups' | 'invite' | 'sessions';
 const TABS: Tab[] = ['students', 'groups', 'invite', 'sessions'];
@@ -178,16 +178,10 @@ const ghostBtn: CSSProperties = {
   cursor: 'pointer',
 };
 
-// ---- source tag -----------------------------------------------------------
-function sourceTag(source: 'parent' | 'teacher') {
-  return source === 'parent'
-    ? { label: '家长自助', color: '#586099', bg: '#eef0f8' }
-    : { label: '老师添加', color: '#6b7280', bg: '#f0f2f5' };
-}
-
 // ===== STUDENTS TAB ========================================================
 function StudentsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | void }) {
   const toast = useToast();
+  const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | 'parent' | 'teacher'>('all');
   const [menuId, setMenuId] = useState<string | null>(null);
@@ -195,20 +189,26 @@ function StudentsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | v
   const [newName, setNewName] = useState('');
   const [busy, setBusy] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Student | null>(null);
+  const [pendingArchive, setPendingArchive] = useState<Student | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
+
+  const archivedCount = useMemo(() => d.students.filter((s) => s.status === 'archived').length, [d.students]);
+  const archiveMode = showArchived && archivedCount > 0;
 
   const dupNames = useMemo(() => {
     const byName = new Map<string, number>();
-    d.students.forEach((s) => byName.set(s.name, (byName.get(s.name) ?? 0) + 1));
+    // archived students are out of the duplicate check (suspended still count)
+    d.students.filter((s) => s.status !== 'archived').forEach((s) => byName.set(s.name, (byName.get(s.name) ?? 0) + 1));
     return new Set([...byName].filter(([, n]) => n > 1).map(([n]) => n));
   }, [d.students]);
 
   const roster = useMemo(() => {
-    let list = d.students.slice();
+    let list = d.students.filter((s) => (archiveMode ? s.status === 'archived' : s.status !== 'archived'));
     if (filter !== 'all') list = list.filter((s) => s.source === filter);
     if (search.trim()) list = list.filter((s) => s.name.includes(search.trim()));
     list.sort((a, b) => b.score - a.score);
     return list;
-  }, [d.students, filter, search]);
+  }, [d.students, filter, search, archiveMode]);
 
   async function submitAdd() {
     const name = newName.trim();
@@ -238,6 +238,23 @@ function StudentsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | v
       setPendingDelete(null);
     } catch {
       toast('删除失败，请重试', 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function changeStatus(s: Student, status: Student['status']) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await api.setStudentStatus(s.id, status);
+      await reload();
+      if (status === 'suspended') toast(`「${s.name}」已停课，并移出默认分组`);
+      else if (status === 'archived') toast(`已归档「${s.name}」`);
+      else toast(`「${s.name}」已恢复在读，请到分组方案里拖回小组`);
+      setPendingArchive(null);
+    } catch {
+      toast('操作失败，请重试', 'error');
     } finally {
       setBusy(false);
     }
@@ -307,6 +324,24 @@ function StudentsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | v
             );
           })}
         </div>
+        {archivedCount > 0 && (
+          <button
+            onClick={() => setShowArchived((v) => !v)}
+            style={{
+              height: 30,
+              padding: '0 13px',
+              border: `1px solid ${archiveMode ? '#c8cdd6' : '#e7e9ee'}`,
+              borderRadius: 999,
+              fontWeight: 600,
+              fontSize: 12.5,
+              cursor: 'pointer',
+              background: archiveMode ? '#eef1f5' : '#fff',
+              color: archiveMode ? '#1e2430' : '#7a828f',
+            }}
+          >
+            已归档 {archivedCount}
+          </button>
+        )}
         <button
           onClick={() => setAddOpen(true)}
           style={{
@@ -379,7 +414,19 @@ function StudentsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | v
             onCloseMenu={() => setMenuId(null)}
             onView={() => {
               setMenuId(null);
-              toast('成长档案即将上线');
+              navigate(`/classes/${d.id}/students/${s.id}`);
+            }}
+            onSuspend={() => {
+              setMenuId(null);
+              changeStatus(s, 'suspended');
+            }}
+            onRestore={() => {
+              setMenuId(null);
+              changeStatus(s, 'active');
+            }}
+            onArchive={() => {
+              setMenuId(null);
+              setPendingArchive(s);
             }}
             onDelete={() => {
               setMenuId(null);
@@ -419,6 +466,27 @@ function StudentsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | v
         </div>
       </Modal>
 
+      <Modal open={!!pendingArchive} onClose={() => setPendingArchive(null)} title="归档学生">
+        <div style={{ fontSize: 14, color: '#3c4451', lineHeight: 1.7 }}>
+          确定归档「<b>{pendingArchive?.name}</b>」吗？归档后：
+          <br />· 从学生列表默认隐藏，不再计入班级人数
+          <br />· 移出默认分组，不进入课前配置与课堂
+          <br />· 已绑定的家长在小程序端仍可查看历史 recap
+          <br />· 可随时通过「已归档」筛选恢复在读
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 22 }}>
+          <button style={ghostBtn} onClick={() => setPendingArchive(null)}>
+            取消
+          </button>
+          <button
+            style={{ ...primaryBtn, background: '#8a929e', boxShadow: 'none', opacity: busy ? 0.6 : 1 }}
+            onClick={() => pendingArchive && changeStatus(pendingArchive, 'archived')}
+          >
+            {busy ? '归档中…' : '归档'}
+          </button>
+        </div>
+      </Modal>
+
       <Modal open={!!pendingDelete} onClose={() => setPendingDelete(null)} title="删除学生">
         <div style={{ fontSize: 14, color: '#3c4451', lineHeight: 1.7 }}>
           确定删除「<b>{pendingDelete?.name}</b>」吗？该学生的历史加分记录、分组归属与出勤都会一并移除，且不可恢复。
@@ -446,6 +514,9 @@ function StudentCard({
   onToggleMenu,
   onCloseMenu,
   onView,
+  onSuspend,
+  onRestore,
+  onArchive,
   onDelete,
 }: {
   s: Student;
@@ -454,9 +525,13 @@ function StudentCard({
   onToggleMenu: () => void;
   onCloseMenu: () => void;
   onView: () => void;
+  onSuspend: () => void;
+  onRestore: () => void;
+  onArchive: () => void;
   onDelete: () => void;
 }) {
   const tag = sourceTag(s.source);
+  const sTag = statusTag(s.status);
   return (
     <div
       style={{
@@ -507,9 +582,25 @@ function StudentCard({
               animation: 'dc-pop .14s ease',
             }}
           >
+            {/* history stays viewable for suspended/archived students (§7.4) */}
             <button style={menuItemStyle('#3c4451')} onClick={onView}>
               查看成长档案
             </button>
+            {s.status === 'active' && (
+              <button style={menuItemStyle('#b06c22')} onClick={onSuspend}>
+                停课
+              </button>
+            )}
+            {s.status !== 'active' && (
+              <button style={menuItemStyle('#2c7a48')} onClick={onRestore}>
+                恢复在读
+              </button>
+            )}
+            {s.status !== 'archived' && (
+              <button style={menuItemStyle('#5b6472')} onClick={onArchive}>
+                归档
+              </button>
+            )}
             <div style={{ height: 1, background: '#f1f3f6', margin: '4px 0' }} />
             <button style={menuItemStyle('#d94a4a')} onClick={onDelete}>
               删除学生
@@ -532,19 +623,33 @@ function StudentCard({
           >
             {s.name}
           </div>
-          <div
-            style={{
-              marginTop: 5,
-              display: 'inline-block',
-              fontSize: 10.5,
-              fontWeight: 600,
-              color: tag.color,
-              background: tag.bg,
-              padding: '2px 7px',
-              borderRadius: 5,
-            }}
-          >
-            {tag.label}
+          <div style={{ marginTop: 5, display: 'flex', gap: 5 }}>
+            <span
+              style={{
+                fontSize: 10.5,
+                fontWeight: 600,
+                color: tag.color,
+                background: tag.bg,
+                padding: '2px 7px',
+                borderRadius: 5,
+              }}
+            >
+              {tag.label}
+            </span>
+            {sTag && (
+              <span
+                style={{
+                  fontSize: 10.5,
+                  fontWeight: 600,
+                  color: sTag.color,
+                  background: sTag.bg,
+                  padding: '2px 7px',
+                  borderRadius: 5,
+                }}
+              >
+                {sTag.label}
+              </span>
+            )}
           </div>
         </div>
       </div>

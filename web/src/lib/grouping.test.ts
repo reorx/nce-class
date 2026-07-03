@@ -5,10 +5,10 @@ import { addGroup, moveStudent, removeGroup, renameGroup, toModel, toPayload } f
 // Minimal class-detail slice mirroring the 分组方案 tab's inputs.
 const detail = {
   students: [
-    { id: 's1', groupId: 'g1' },
-    { id: 's2', groupId: 'g1' },
-    { id: 's3', groupId: 'g2' },
-    { id: 's4', groupId: null },
+    { id: 's1', groupId: 'g1', status: 'active' },
+    { id: 's2', groupId: 'g1', status: 'active' },
+    { id: 's3', groupId: 'g2', status: 'active' },
+    { id: 's4', groupId: null, status: 'active' },
   ],
   groups: [
     { id: 'g1', name: '第1组', emoji: '🦁', orderIndex: 0, memberIds: ['s1', 's2'] },
@@ -20,6 +20,19 @@ describe('grouping model', () => {
   it('builds groups + ungrouped from class detail', () => {
     const m = toModel(detail);
     expect(m.groups.map((g) => g.memberIds)).toEqual([['s1', 's2'], ['s3']]);
+    expect(m.ungrouped).toEqual(['s4']);
+  });
+
+  it('keeps suspended/archived students out of the ungrouped pool', () => {
+    const d = {
+      ...detail,
+      students: [
+        ...(detail.students as unknown as any[]),
+        { id: 's5', groupId: null, status: 'suspended' },
+        { id: 's6', groupId: null, status: 'archived' },
+      ],
+    } as unknown as ClassDetail;
+    const m = toModel(d);
     expect(m.ungrouped).toEqual(['s4']);
   });
 

@@ -42,8 +42,10 @@ export interface SetupState {
 
 type Detail = Pick<ClassDetail, 'groups' | 'students'>;
 
-/** Build the initial setup state from a class's default grouping. */
+/** Build the initial setup state from a class's default grouping. Suspended /
+ *  archived students never enter a session — not even as absent. */
 export function buildSetup(detail: Detail): SetupState {
+  const roster = detail.students.filter((s) => s.status === 'active');
   const groups: SetupGroup[] = detail.groups.map((g, i) => ({
     id: g.id,
     name: g.name,
@@ -53,11 +55,11 @@ export function buildSetup(detail: Detail): SetupState {
   const valid = new Set(groups.map((g) => g.id));
   const assign: Record<string, string> = {};
   const absent: Record<string, true> = {};
-  for (const s of detail.students) {
+  for (const s of roster) {
     if (s.groupId && valid.has(s.groupId)) assign[s.id] = s.groupId;
     else absent[s.id] = true; // ungrouped → staging zone
   }
-  const students: SetupStudent[] = detail.students.map((s) => ({
+  const students: SetupStudent[] = roster.map((s) => ({
     id: s.id,
     name: s.name,
     hasPhoto: s.hasPhoto,

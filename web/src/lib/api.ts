@@ -16,10 +16,13 @@ export interface ClassListItem {
   lastSession: { date: string; weekday: string; relative: string } | null;
 }
 
+export type StudentStatus = 'active' | 'suspended' | 'archived';
+
 export interface Student {
   id: string;
   name: string;
   source: 'parent' | 'teacher';
+  status: StudentStatus;
   hasPhoto: boolean;
   score: number;
   groupId: string | null;
@@ -86,6 +89,43 @@ export interface ClassDetail {
   groups: Group[];
   sessions: Session[];
   lastRecap: LastRecap | null;
+}
+
+// ---- student growth profile (§7.4, read-only) ------------------------------
+
+/** One matrix cell; null when the student had no membership row (未入班). */
+export interface ProfileMine {
+  attended: boolean;
+  groupName: string | null;
+  groupEmoji: string | null;
+  groupScore: number | null;
+  personalScore: number;
+  homework: string; // '完成' | '没交' (missing record = 没交)
+  recitation: string; // '已背完' | '背完部分' | '没背' | '未检查' (missing record = 未检查)
+}
+
+export interface ProfileSession {
+  id: string;
+  date: string;
+  year: string;
+  weekday: string;
+  lessonNumber: number | null;
+  lessonTitle: string | null;
+  mine: ProfileMine | null;
+}
+
+export interface StudentProfile {
+  student: {
+    id: string;
+    name: string;
+    source: 'parent' | 'teacher';
+    status: StudentStatus;
+    photoUrl: string | null;
+  };
+  class: { id: string; name: string };
+  currentGroup: { name: string; emoji: string | null } | null;
+  totals: { attended: number; personalTotal: number; plus: number; minus: number };
+  sessions: ProfileSession[]; // ended sessions, oldest → newest
 }
 
 /** A pending miniapp join request (read-only here; handled inside the miniapp). */
@@ -185,10 +225,13 @@ export const api = {
   createClass: (name: string, level: string | null) => req<ClassDetail>('POST', '/api/classes', { name, level }),
   addStudent: (classId: string, name: string) => req<Student>('POST', `/api/classes/${classId}/students`, { name }),
   deleteStudent: (id: string) => req<{ ok: true }>('DELETE', `/api/students/${id}`),
+  setStudentStatus: (id: string, status: StudentStatus) =>
+    req<{ id: string; name: string; status: StudentStatus }>('PUT', `/api/students/${id}/status`, { status }),
   deleteSession: (id: string) => req<{ ok: true }>('DELETE', `/api/sessions/${id}`),
   saveGrouping: (classId: string, groups: GroupSave[]) =>
     req<ClassDetail>('PUT', `/api/classes/${classId}/groups`, { groups }),
   getSessionRecap: (sessionId: string) => get<Recap>(`/api/sessions/${sessionId}/recap`),
+  getStudentProfile: (studentId: string) => get<StudentProfile>(`/api/students/${studentId}/profile`),
   getJoinRequests: (classId: string) => get<JoinRequestItem[]>(`/api/classes/${classId}/join-requests`),
   commitSession: (classId: string, payload: CommitPayload) =>
     req<CommitResult>('POST', `/api/classes/${classId}/sessions`, payload),

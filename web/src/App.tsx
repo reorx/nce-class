@@ -7,6 +7,7 @@ import { ClassList } from './pages/ClassList';
 import { Classroom } from './pages/Classroom';
 import { Login } from './pages/Login';
 import { Setup } from './pages/Setup';
+import { StudentProfile } from './pages/StudentProfile';
 import { Teachers } from './pages/Teachers';
 
 type AuthStatus = 'loading' | 'in' | 'out';
@@ -51,6 +52,7 @@ export function App() {
         />
         <Route path="/" element={guard(<ClassList me={me} />)} />
         <Route path="/classes/:id" element={guard(<ClassDetail me={me} />)} />
+        <Route path="/classes/:id/students/:sid" element={guard(<StudentProfile me={me} />)} />
         <Route path="/classes/:id/setup" element={guard(<Setup />)} />
         <Route path="/classes/:id/classroom" element={guard(<Classroom />)} />
         <Route path="/teachers" element={guard(<Teachers me={me} />)} />

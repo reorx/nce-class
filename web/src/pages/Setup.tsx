@@ -112,7 +112,9 @@ export function Setup() {
         <span style={{ fontSize: 28 }}>🏫</span>
         <span style={{ fontWeight: 900, fontSize: 25, color: '#2c3340' }}>{detail?.name ?? ' '}</span>
         <span style={{ color: '#b7c5ad', fontSize: 22, fontWeight: 800 }}>·</span>
-        <span style={{ fontWeight: 700, fontSize: 19, color: '#66756c' }}>{detail?.studentCount ?? 0} 名学生</span>
+        <span style={{ fontWeight: 700, fontSize: 19, color: '#66756c' }}>
+          {detail?.students.filter((s) => s.status === 'active').length ?? 0} 名学生
+        </span>
         <span style={{ marginLeft: 'auto', fontWeight: 700, fontSize: 16, color: '#8a94a0' }}>{TODAY}</span>
       </div>
 

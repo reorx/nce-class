@@ -21,7 +21,9 @@ export function toModel(d: Pick<ClassDetail, 'students' | 'groups'>): GroupingMo
     .slice()
     .sort((a, b) => a.orderIndex - b.orderIndex)
     .map((g) => ({ id: g.id, name: g.name, emoji: g.emoji, memberIds: g.memberIds.slice() }));
-  const ungrouped = d.students.filter((s) => s.groupId == null).map((s) => s.id);
+  // Only active students sit in the ungrouped pool — suspended/archived ones
+  // are not draggable into groups (they'd be filtered out server-side anyway).
+  const ungrouped = d.students.filter((s) => s.groupId == null && s.status === 'active').map((s) => s.id);
   return { groups, ungrouped };
 }
 

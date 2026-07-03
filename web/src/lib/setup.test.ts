@@ -4,6 +4,7 @@ import {
   addGroup,
   buildSessionConfig,
   buildSetup,
+  configFromDetail,
   fmtDurationCN,
   membersOf,
   moveStudent,
@@ -22,10 +23,16 @@ function fixture(): Pick<ClassDetail, 'groups' | 'students'> {
     orderIndex,
     memberIds: [] as string[],
   });
-  const s = (id: string, name: string, groupId: string | null) => ({
+  const s = (
+    id: string,
+    name: string,
+    groupId: string | null,
+    status: 'active' | 'suspended' | 'archived' = 'active',
+  ) => ({
     id,
     name,
     source: 'parent' as const,
+    status,
     hasPhoto: true,
     score: 0,
     groupId,
@@ -104,6 +111,28 @@ describe('课前配置 grouping model', () => {
     expect(cfg.groups.map((g) => g.id)).toEqual(['c1-g1', 'c1-g2', 'c1-g3']);
     expect(cfg.durationMin).toBe(120);
     expect(cfg.lessonTitle).toBe('A private conversation');
+  });
+
+  it('excludes suspended/archived students entirely — not playing, not even absent', () => {
+    const fx = fixture();
+    fx.students = [
+      ...fx.students,
+      { ...fx.students[0], id: 'sx1', name: '停课生', groupId: 'c1-g1', status: 'suspended' as const },
+      { ...fx.students[0], id: 'sx2', name: '归档生', groupId: null, status: 'archived' as const },
+    ];
+    const st = buildSetup(fx);
+    expect(st.students.map((s) => s.id)).not.toContain('sx1');
+    expect(st.students.map((s) => s.id)).not.toContain('sx2');
+    expect(st.assign['sx1']).toBeUndefined();
+    expect(st.absent['sx1']).toBeUndefined();
+    expect(st.absent['sx2']).toBeUndefined();
+    expect(sums(st)).toEqual({ groups: 3, playing: 12, absent: 1 }); // unchanged from the active roster
+
+    // URL-boot shortcut: neither list of the session config carries them
+    const cfg = configFromDetail(fx, { lessonNumber: '4', lessonTitle: '', durationMin: 120 });
+    expect(cfg.students.map((s) => s.id)).not.toContain('sx1');
+    expect(cfg.absent.map((s) => s.id)).not.toContain('sx1');
+    expect(cfg.absent.map((s) => s.id)).not.toContain('sx2');
   });
 
   it('keeps a staged (absent) student’s default group so it survives writeback (decision 6)', () => {

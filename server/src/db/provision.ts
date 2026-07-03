@@ -10,6 +10,11 @@ type DB = DatabaseType.Database;
 // drizzle-kit migrations.
 export function migrate(sqlite: DB): void {
   sqlite.exec(DDL);
+  // Pre-status databases: CREATE TABLE IF NOT EXISTS won't add the column.
+  const studentCols = sqlite.prepare(`PRAGMA table_info(students)`).all() as { name: string }[];
+  if (!studentCols.some((c) => c.name === 'status')) {
+    sqlite.exec(`ALTER TABLE students ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`);
+  }
 }
 
 /** Provision a real account on a clean database: org (by name, created if missing) + teacher + password credential. */

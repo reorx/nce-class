@@ -2,7 +2,7 @@ import type DatabaseType from 'better-sqlite3';
 import type { Express } from 'express';
 import request from 'supertest';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { setupTestApp } from './helpers.js';
+import { setupTestApp, wxLogin } from './helpers.js';
 
 let app: Express;
 let sqlite: DatabaseType.Database;
@@ -51,7 +51,7 @@ describe('students', () => {
     const { agent } = await login();
     const created = await agent.post('/api/classes/c1/students').send({ name: '新同学' });
     expect(created.status).toBe(201);
-    expect(created.body).toMatchObject({ name: '新同学', source: 'teacher', score: 0 });
+    expect(created.body).toMatchObject({ name: '新同学', source: 'teacher', score: 0, status: 'active' });
 
     const detail = (await agent.get('/api/classes/c1')).body;
     expect(detail.studentCount).toBe(5);
@@ -149,6 +149,123 @@ describe('session recap', () => {
     expect(recap.warned.map((s: any) => s.name)).toEqual(['小刚']);
     expect(recap.attendancePresent).toBe(3);
     expect(recap.attendanceTotal).toBe(4);
+  });
+});
+
+describe('student growth profile', () => {
+  /** A second ended session so the matrix has 2 columns: s1 present(−1), s2 absent, s3 present; s4 has NO membership row (未入班). */
+  const addSession2 = () => {
+    sqlite.exec(`
+      INSERT INTO class_sessions (id, class_id, teacher_id, date, lesson_number, lesson_title, status, planned_duration_min, started_at, ended_at)
+      VALUES ('sess2','c1','t-wangli','2026-07-03',8,'The best and the worst','ended',120,'2026-07-03 19:00:00','2026-07-03 21:00:00');
+      INSERT INTO session_groups (id, session_id, name, emoji, order_index)
+      VALUES ('sg3','sess2','第1组','🦁',0),('sg4','sess2','第2组','🐯',1);
+      INSERT INTO session_memberships (id, session_id, student_id, session_group_id, attendance)
+      VALUES ('sm2-s1','sess2','s1','sg3','present'),('sm2-s2','sess2','s2',NULL,'absent'),('sm2-s3','sess2','s3','sg4','present');
+      INSERT INTO score_events (id, session_id, target_type, target_id, session_group_id, delta, created_by)
+      VALUES ('e2-1','sess2','student','s1','sg3',-1,'t-wangli');
+      INSERT INTO check_records (id, session_id, student_id, type, status)
+      VALUES ('ck2-1','sess2','s1','recitation','背完部分');
+    `);
+  };
+
+  it('blocks unauthenticated access with 401', async () => {
+    expect((await request(app).get('/api/students/s1/profile')).status).toBe(401);
+  });
+
+  it("404s for another org's student and for unknown ids", async () => {
+    const { agent } = await login();
+    expect((await agent.get('/api/students/so1/profile')).status).toBe(404);
+    expect((await agent.get('/api/students/nope/profile')).status).toBe(404);
+    const out = await login('waiguo');
+    expect((await out.agent.get('/api/students/s1/profile')).status).toBe(404);
+  });
+
+  it('derives header totals and per-session cells from the ledger, sessions in chronological order', async () => {
+    addSession2();
+    const { agent } = await login();
+    const res = await agent.get('/api/students/s1/profile');
+    expect(res.status).toBe(200);
+    const p = res.body;
+
+    expect(p.student).toMatchObject({ id: 's1', name: '小明', source: 'parent', status: 'active' });
+    expect(p.class).toEqual({ id: 'c1', name: '三年级A班' });
+    expect(p.currentGroup).toEqual({ name: '第1组', emoji: '🦁' });
+    // 已上课 = present memberships; 总分/加星/扣分 only count student-target events
+    expect(p.totals).toEqual({ attended: 2, personalTotal: 1, plus: 2, minus: 1 });
+
+    expect(p.sessions.map((s: any) => s.id)).toEqual(['sess1', 'sess2']); // oldest → newest
+    expect(p.sessions[0]).toMatchObject({ date: '06-26', lessonNumber: 7, lessonTitle: 'Too late' });
+    expect(p.sessions[0].mine).toEqual({
+      attended: true,
+      groupName: '第1组',
+      groupEmoji: '🦁',
+      groupScore: 4, // nested: s1(+2) + s2(+1) + group event(+1)
+      personalScore: 2,
+      homework: '完成',
+      recitation: '已背完',
+    });
+    expect(p.sessions[1].mine).toEqual({
+      attended: true,
+      groupName: '第1组',
+      groupEmoji: '🦁',
+      groupScore: -1,
+      personalScore: -1,
+      homework: '没交', // missing record → 没交
+      recitation: '背完部分',
+    });
+  });
+
+  it('applies the missing-record defaults: homework 没交, recitation 未检查', async () => {
+    const { agent } = await login();
+    const p = (await agent.get('/api/students/s3/profile')).body;
+    expect(p.totals).toEqual({ attended: 1, personalTotal: 0, plus: 1, minus: 1 });
+    expect(p.sessions[0].mine).toMatchObject({
+      attended: true,
+      personalScore: 0,
+      homework: '没交',
+      recitation: '未检查',
+    });
+  });
+
+  it('keeps an explicit absence (attended:false, no group) distinct from 未入班 (mine:null)', async () => {
+    addSession2();
+    const { agent } = await login();
+    // s4: absent in sess1 (membership row, no group), no membership at all in sess2
+    const p4 = (await agent.get('/api/students/s4/profile')).body;
+    expect(p4.currentGroup).toBeNull();
+    expect(p4.totals.attended).toBe(0);
+    expect(p4.sessions[0].mine).toMatchObject({ attended: false, groupName: null, groupScore: null });
+    expect(p4.sessions[1].mine).toBeNull();
+    // s2: absent in sess2 → still a mine card, just not attended
+    const p2 = (await agent.get('/api/students/s2/profile')).body;
+    expect(p2.totals.attended).toBe(1);
+    expect(p2.sessions[1].mine).toMatchObject({ attended: false, groupName: null });
+  });
+
+  it('ignores ongoing sessions and serves students with no history (empty profile)', async () => {
+    sqlite.exec(`
+      INSERT INTO class_sessions (id, class_id, teacher_id, date, status, planned_duration_min)
+      VALUES ('sess-live','c1','t-wangli','2026-07-04','ongoing',120);
+    `);
+    const { agent } = await login();
+    const p = (await agent.get('/api/students/s1/profile')).body;
+    expect(p.sessions.map((s: any) => s.id)).toEqual(['sess1']);
+
+    const out = await login('waiguo');
+    const empty = (await out.agent.get('/api/students/so1/profile')).body;
+    expect(empty.sessions).toEqual([]);
+    expect(empty.totals).toEqual({ attended: 0, personalTotal: 0, plus: 0, minus: 0 });
+  });
+
+  it('still serves archived students (history stays viewable)', async () => {
+    const { agent } = await login();
+    await agent.put('/api/students/s1/status').send({ status: 'archived' });
+    const res = await agent.get('/api/students/s1/profile');
+    expect(res.status).toBe(200);
+    expect(res.body.student.status).toBe('archived');
+    expect(res.body.currentGroup).toBeNull(); // archiving cleared the default grouping
+    expect(res.body.sessions[0].mine.personalScore).toBe(2);
   });
 });
 
@@ -431,6 +548,169 @@ describe('end-class commit', () => {
       .get(row.id) as any;
     expect(s2mem.c).toBe(0);
     expect(s2ev.c).toBe(0);
+  });
+});
+
+describe('student status', () => {
+  it('suspends a student: membership cleared, class count unchanged', async () => {
+    const { agent } = await login();
+    const res = await agent.put('/api/students/s1/status').send({ status: 'suspended' });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: 's1', status: 'suspended' });
+
+    expect((sqlite.prepare(`SELECT status FROM students WHERE id='s1'`).get() as any).status).toBe('suspended');
+    const mem = sqlite.prepare(`SELECT COUNT(*) c FROM class_group_memberships WHERE student_id='s1'`).get() as any;
+    expect(mem.c).toBe(0);
+
+    const detail = (await agent.get('/api/classes/c1')).body;
+    expect(detail.studentCount).toBe(4); // 在读+停课 both count
+    expect(detail.students.find((s: any) => s.id === 's1')).toMatchObject({ status: 'suspended', groupId: null });
+    expect(detail.groups.find((g: any) => g.id === 'g1').memberIds).toEqual(['s2']);
+  });
+
+  it('archives a student: out of counts + roster preview, still in the detail list', async () => {
+    const { agent } = await login();
+    await agent.put('/api/students/s1/status').send({ status: 'archived' });
+
+    const c1 = (await agent.get('/api/classes')).body.find((c: any) => c.id === 'c1');
+    expect(c1.studentCount).toBe(3);
+    expect(c1.roster).not.toContain('小明');
+
+    const detail = (await agent.get('/api/classes/c1')).body;
+    expect(detail.studentCount).toBe(3);
+    expect(detail.students.find((s: any) => s.id === 's1')).toMatchObject({ status: 'archived' });
+  });
+
+  it('restores to active without restoring the grouping', async () => {
+    const { agent } = await login();
+    await agent.put('/api/students/s1/status').send({ status: 'suspended' });
+    const res = await agent.put('/api/students/s1/status').send({ status: 'active' });
+    expect(res.status).toBe(200);
+    const detail = (await agent.get('/api/classes/c1')).body;
+    expect(detail.students.find((s: any) => s.id === 's1')).toMatchObject({ status: 'active', groupId: null });
+  });
+
+  it('rejects bogus values, unknown ids and cross-org students', async () => {
+    const { agent } = await login();
+    expect((await agent.put('/api/students/s1/status').send({ status: 'gone' })).status).toBe(400);
+    expect((await agent.put('/api/students/nope/status').send({ status: 'archived' })).status).toBe(404);
+
+    const out = (await login('waiguo')).agent;
+    expect((await out.put('/api/students/s1/status').send({ status: 'archived' })).status).toBe(404);
+    expect((sqlite.prepare(`SELECT status FROM students WHERE id='s1'`).get() as any).status).toBe('active');
+  });
+
+  it('filters suspended students out of a saved grouping', async () => {
+    const { agent } = await login();
+    await agent.put('/api/students/s2/status').send({ status: 'suspended' });
+    const res = await agent.put('/api/classes/c1/groups').send({
+      groups: [{ id: 'g1', name: '第1组', emoji: '🦁', orderIndex: 0, memberIds: ['s1', 's2'] }],
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.groups.find((g: any) => g.id === 'g1').memberIds).toEqual(['s1']);
+    const mem = sqlite.prepare(`SELECT COUNT(*) c FROM class_group_memberships WHERE student_id='s2'`).get() as any;
+    expect(mem.c).toBe(0);
+  });
+
+  it('keeps a mid-class-suspended student in the session snapshot but not the grouping writeback', async () => {
+    const { agent } = await login();
+    await agent.put('/api/students/s2/status').send({ status: 'suspended' });
+    // commit payload built before the suspension still references s2 everywhere
+    const res = await agent.post('/api/classes/c1/sessions').send({
+      clientSessionId: 'cs-status',
+      lessonNumber: 8,
+      lessonTitle: 'X',
+      plannedDurationMin: 120,
+      startedAt: '2026-07-02 19:00:00',
+      endedAt: '2026-07-02 20:00:00',
+      defaultGrouping: {
+        groups: [
+          { clientId: 'g1', name: '第1组', emoji: '🦁', orderIndex: 0, memberIds: ['s1', 's2'] },
+          { clientId: 'g2', name: '第2组', emoji: '🐯', orderIndex: 1, memberIds: ['s3'] },
+        ],
+      },
+      sessionGroups: [
+        { clientId: 'g1', name: '第1组', emoji: '🦁', orderIndex: 0 },
+        { clientId: 'g2', name: '第2组', emoji: '🐯', orderIndex: 1 },
+      ],
+      memberships: [
+        { studentId: 's1', clientGroupId: 'g1', attendance: 'present' },
+        { studentId: 's2', clientGroupId: 'g1', attendance: 'present' },
+        { studentId: 's3', clientGroupId: 'g2', attendance: 'present' },
+      ],
+      events: [
+        { targetType: 'student', targetId: 's2', clientGroupId: 'g1', delta: 1, createdAt: '2026-07-02 19:05:00' },
+      ],
+      checks: [],
+    });
+    expect(res.status).toBe(201);
+    const row = sqlite.prepare(`SELECT id FROM class_sessions WHERE client_session_id='cs-status'`).get() as any;
+    const sm = sqlite
+      .prepare(`SELECT COUNT(*) c FROM session_memberships WHERE session_id=? AND student_id='s2'`)
+      .get(row.id) as any;
+    const ev = sqlite
+      .prepare(`SELECT COUNT(*) c FROM score_events WHERE session_id=? AND target_id='s2'`)
+      .get(row.id) as any;
+    const cgm = sqlite.prepare(`SELECT COUNT(*) c FROM class_group_memberships WHERE student_id='s2'`).get() as any;
+    expect(sm.c).toBe(1);
+    expect(ev.c).toBe(1);
+    expect(cgm.c).toBe(0);
+  });
+});
+
+describe('student status (wx)', () => {
+  const auth = (token: string) => ({ Authorization: `Bearer ${token}` });
+
+  it('archiving hides the student from teacher-side wx lists but keeps the parent view', async () => {
+    const { agent } = await login();
+    await agent.put('/api/students/s1/status').send({ status: 'archived' });
+
+    const teacherToken = await wxLogin(app, 'dev-teacher');
+    const classes = await request(app).get('/api/wx/teacher/classes').set(auth(teacherToken));
+    expect(classes.body.find((c: any) => c.id === 'c1').studentCount).toBe(3);
+    const candidates = await request(app).get('/api/wx/teacher/classes/c1/students').set(auth(teacherToken));
+    expect(candidates.body.map((s: any) => s.id)).not.toContain('s1');
+
+    // dev-parent is bound to s1: children list + recap stay intact
+    const parentToken = await wxLogin(app, 'dev-parent');
+    const me = await request(app).get('/api/wx/me').set(auth(parentToken));
+    expect(me.body.children.map((c: any) => c.studentId)).toContain('s1');
+    expect((await request(app).get('/api/wx/students/s1').set(auth(parentToken))).status).toBe(200);
+    const recap = await request(app).get('/api/wx/students/s1/sessions/sess1').set(auth(parentToken));
+    expect(recap.status).toBe(200);
+    expect(recap.body.mine).toMatchObject({ attended: true, personalScore: 2 });
+  });
+
+  it('invite preview count excludes archived; linking to an archived student is 400', async () => {
+    const { agent } = await login();
+    const teacherToken = await wxLogin(app, 'dev-teacher');
+    const inviteToken = (await request(app).post('/api/wx/teacher/classes/c1/invites').set(auth(teacherToken))).body
+      .token;
+
+    const newToken = await wxLogin(app, 'dev-new');
+    expect((await request(app).get(`/api/wx/invites/${inviteToken}`).set(auth(newToken))).body.studentCount).toBe(4);
+
+    await agent.put('/api/students/s1/status').send({ status: 'archived' });
+    expect((await request(app).get(`/api/wx/invites/${inviteToken}`).set(auth(newToken))).body.studentCount).toBe(3);
+
+    const join = await request(app)
+      .post(`/api/wx/invites/${inviteToken}/join`)
+      .set(auth(newToken))
+      .send({ cnName: '新娃' });
+    expect(join.status).toBe(201);
+    const link = await request(app)
+      .post(`/api/wx/join-requests/${join.body.id}/link`)
+      .set(auth(teacherToken))
+      .send({ studentId: 's1' });
+    expect(link.status).toBe(400);
+
+    // a suspended student can still be linked
+    await agent.put('/api/students/s2/status').send({ status: 'suspended' });
+    const link2 = await request(app)
+      .post(`/api/wx/join-requests/${join.body.id}/link`)
+      .set(auth(teacherToken))
+      .send({ studentId: 's2' });
+    expect(link2.status).toBe(200);
   });
 });
 

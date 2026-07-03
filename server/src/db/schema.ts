@@ -83,6 +83,9 @@ export const students = sqliteTable('students', {
   parentPhone: text('parent_phone'),
   photoUrl: text('photo_url'),
   source: text('source').notNull(), // parent | teacher
+  // active 在读 | suspended 停课 | archived 已归档 — non-active students never
+  // enter setup/classroom/session snapshots; archived ones also leave counts.
+  status: text('status').notNull().default('active'),
   // Dormant since the wechat_account rework (kept for a future login-free H5
   // share link); miniapp access now goes through student_wechat_bindings.
   recapToken: text('recap_token').notNull().unique(),

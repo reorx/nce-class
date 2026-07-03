@@ -53,7 +53,7 @@ pnpm dev         # server :5177 + web :5173（vite 代理 /api、/uploads）
 API（除 `/api/health`、`/api/auth/login` 外全部经认证中间件，写入用 `req` 上的当前老师 + orgId 过滤）：
 - 认证：`POST /api/auth/login`、`POST /api/auth/logout`、`GET /api/me`（无会话 401）。
 - 读：`GET /api/classes`、`GET /api/classes/:id`（含 `lastRecap`）、`GET /api/sessions/:id/recap`（组分排名 + 🌟亮眼(净≥2)/⚠️被提醒(任一−1) + 出勤）。
-- 写：`POST /api/classes`、`POST /api/classes/:id/students`、`DELETE /api/students/:id`（硬删连带清账本）、`PUT /api/classes/:id/groups`（整套 replace 默认分组，前端拖拽/改名/增删即时保存）、`POST /api/classes/:id/sessions`（**结束课堂一次性提交**：单事务里回写默认分组 §7.2 + 建 ClassSession(ended)/SessionGroup/SessionMembership 快照 + 批量 ScoreEvent/CheckRecord + buildRecap 返回；`clientSessionId` 幂等，`date` 由 `startedAt` 前 10 位派生，`startedAt/endedAt` 须为 `YYYY-MM-DD HH:mm:ss`）。
+- 写：`POST /api/classes`、`POST /api/classes/:id/students`、`DELETE /api/students/:id`（硬删连带清账本）、`PUT /api/students/:id/status`（`{status:'active'|'suspended'|'archived'}`，非 active 时清默认分组 membership；恢复在读不还原分组）、`PUT /api/classes/:id/groups`（整套 replace 默认分组，前端拖拽/改名/增删即时保存）、`POST /api/classes/:id/sessions`（**结束课堂一次性提交**：单事务里回写默认分组 §7.2 + 建 ClassSession(ended)/SessionGroup/SessionMembership 快照 + 批量 ScoreEvent/CheckRecord + buildRecap 返回；`clientSessionId` 幂等，`date` 由 `startedAt` 前 10 位派生，`startedAt/endedAt` 须为 `YYYY-MM-DD HH:mm:ss`）。
 - 队列只读镜像：`GET /api/classes/:id/join-requests`（cookie 会话；处理只在小程序做）。
 - 小程序（`/api/wx/*`，**Bearer token** 而非 cookie；`POST /api/wx/login` 公开，其余走 wx gate）：
   - 会话/身份：`POST /api/wx/login`（`{code}` → code2session/mock → upsert 账户 → `{token, me}`）、`GET /api/wx/me`（`{account, teacher|null, children[], pending[]}`，children 来自 bindings、pending 是排队中的 join_request）、`POST /api/wx/bind-teacher`（`{username,password}` 一次性绑定；老师已被绑/微信已绑过 → 409）。
@@ -196,6 +196,7 @@ pnpm --filter miniapp dev:weapp
 ## 须知 / 约定
 
 - **计分是事件流**：学生累计个人分、组分都由 `score_events`(±1) 派生，不落地存储。
+- **学生状态** `students.status`：`active` 在读 / `suspended` 停课 / `archived` 已归档。非 active 完全不进课前配置、课堂与 session 快照（连缺席都不算：web 端 `buildSetup`/`toModel` 过滤，`saveGrouping` 只收 active 所以 commit 回写也会剔除）；人数口径（班级列表卡片/详情 studentCount/wx 老师班级列表/邀请预览）= 在读+停课，归档不计；归档学生详情页 students 数组仍返回（带 status，学生 tab「已归档」筛选查看/恢复/删除），wx 关联候选排除归档且 link 归档学生 400，但**已绑定家长的 children 列表与历史 recap 不受影响**；停课/归档即清默认分组 membership，恢复在读后出现在未分组区需手动拖回组。生产库迁移靠 `provision.migrate()` 的幂等 ALTER。
 - **课堂本地优先**：整节课在浏览器本地态跑（`lib/classroomStore.ts`，localStorage key `nce.classroom.<classId>`），加减分/背书作业/出勤/调组/撤销全程可离线；仅「结束课堂」把整堂 `buildCommitPayload` 一次性 POST，后端单事务落库并 `buildRecap` 返回。幂等键 `client_session_id`（`class_sessions` 的 nullable UNIQUE 列，历史 seed 置 null）随重试不变，重复提交返回既有 sessionId。默认分组回写用**开课态**分组（缺席学生保留原组），不是课中调组后的终态。
 - **鉴权**：无状态签名 cookie（`auth/session.ts`，HMAC/`AUTH_SECRET`，dev 有 fallback），`app.ts` 中间件 gate `/api/*`；写接口的 `teacherId`/`orgId` 取自当前登录老师。**疑似重复学生只提示不合并**（merge 已砍），靠删除解决。
 - seed 自带 DDL（`ddl.ts`），`db:reset` 无需 drizzle-kit；生产迁移用 `pnpm db:generate`。
