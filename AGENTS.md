@@ -20,7 +20,7 @@ web/      React + Vite + TS · 老师端桌面 Web（管理页 IBM Plex；课堂
   src/pages/{ClassList,ClassDetail,Teachers,Login}.tsx  ClassList 建班 modal；ClassDetail 学生增删/分组 DnD/recap 浮窗
   src/components/{TopBar,Modal,Toast}.tsx  TopBar 退出登录；通用 Modal + Toast
   src/pages/Setup.tsx                  课前配置：本节课信息 + 上节课回顾 + 默认分组微调（拖拽/增组/缺席暂存）→ 开始课堂（写本地 store，不发后端）
-  src/pages/Classroom.tsx              课堂主界面：看板/背书/作业/出勤/调组 五视图 + 学生/小组浮窗 + recap。本地优先：从 store 恢复/URL 参数 boot/否则跳 setup；每次改动落 localStorage；结束课堂预览→确认→一次性 commit；「退出不保存」放弃本地 session
+  src/pages/Classroom.tsx              课堂主界面：看板/背书/作业/出勤/调组 五视图 + 学生/小组浮窗 + recap。学生浮窗按视图分化（上课=加减分/背书=背书状态/作业=作业状态，点选即提交并自动关窗，状态弹窗含显式「未检查」项且高亮当前状态）。本地优先：从 store 恢复/URL 参数 boot/否则跳 setup；每次改动落 localStorage；结束课堂预览→确认→一次性 commit；「退出不保存」放弃本地 session
   src/lib/api.ts                       fetch 客户端（get/post/put/del + ApiError 401；login/logout/createClass/addStudent/deleteStudent/saveGrouping/getSessionRecap/commitSession）
   src/lib/grouping.ts (+ .test.ts)     分组方案可编辑模型（toModel/moveStudent/addGroup/removeGroup/renameGroup/toPayload）
   src/lib/session.ts (+ .test.ts)      课堂事件流计分派生（sScore/gScore/recap，学生 id 为 string）+ Lesson 3 demo scenario（仅 session.test.ts 夹具）

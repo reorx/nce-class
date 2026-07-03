@@ -119,9 +119,9 @@ export function reducer(s: ClassroomSession, a: CAction): ClassroomSession {
     case 'undo':
       return s.events.length ? { ...s, events: s.events.slice(0, -1) } : s;
     case 'setRecite':
-      return mapStudent(s, a.sid, (x) => ({ ...x, r: x.r === a.v ? null : a.v }));
+      return mapStudent(s, a.sid, (x) => ({ ...x, r: a.v }));
     case 'setHomework':
-      return mapStudent(s, a.sid, (x) => ({ ...x, h: x.h === a.v ? null : a.v }));
+      return mapStudent(s, a.sid, (x) => ({ ...x, h: a.v }));
     case 'toggleAttendance':
       return mapStudent(s, a.sid, (x) => ({ ...x, attendance: x.attendance === 'absent' ? 'present' : 'absent' }));
     case 'moveStudent':

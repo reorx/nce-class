@@ -106,14 +106,18 @@ describe('classroom reducer', () => {
     expect(sScore(s.events, 's1')).toBe(1);
   });
 
-  it('toggles recitation / homework labels off when re-selected', () => {
+  it('sets recitation / homework labels explicitly (re-selecting keeps, null clears)', () => {
     let s = boot();
     s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完' });
     expect(s.students.find((x) => x.id === 's1')!.r).toBe('已背完');
     s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完' });
+    expect(s.students.find((x) => x.id === 's1')!.r).toBe('已背完');
+    s = reducer(s, { type: 'setRecite', sid: 's1', v: null });
     expect(s.students.find((x) => x.id === 's1')!.r).toBe(null);
     s = reducer(s, { type: 'setHomework', sid: 's2', v: '完成' });
     expect(s.students.find((x) => x.id === 's2')!.h).toBe('完成');
+    s = reducer(s, { type: 'setHomework', sid: 's2', v: null });
+    expect(s.students.find((x) => x.id === 's2')!.h).toBe(null);
   });
 
   it('toggles attendance', () => {

@@ -426,7 +426,7 @@ export function Classroom() {
         </div>
       </div>
 
-      {/* student popup */}
+      {/* student popup — focused per view: board=score, recite/homework=status */}
       {openId != null &&
         (() => {
           const st = students.find((x) => x.id === openId);
@@ -435,18 +435,28 @@ export function Classroom() {
           const c = colorOf(st.g);
           const sc = sScore(events, st.id);
           const hint = sc >= 0 ? `本节 个人 +${sc} · 小组同步 +${sc}` : `本节 个人 ${sc} · 小组同步 ${sc}`;
+          const close = () => setOpenId(null);
           return (
             <StudentPopup
+              mode={view === 'recite' ? 'recite' : view === 'homework' ? 'homework' : 'score'}
               st={st}
               group={g ?? { id: st.g, name: '未分组', emoji: '🚪' }}
               ring={c.ring}
               score={sc}
               hint={hint}
-              onMinus={() => addStudentScore(st.id, -1)}
-              onPlus={() => addStudentScore(st.id, 1)}
-              onRecite={(v) => setRecite(st.id, v)}
-              onHomework={(v) => setHomework(st.id, v)}
-              onClose={() => setOpenId(null)}
+              onScore={(d) => {
+                addStudentScore(st.id, d);
+                close();
+              }}
+              onRecite={(v) => {
+                setRecite(st.id, v);
+                close();
+              }}
+              onHomework={(v) => {
+                setHomework(st.id, v);
+                close();
+              }}
+              onClose={close}
             />
           );
         })()}
@@ -935,25 +945,44 @@ function SegmentView({
 }
 
 // ===== student popup =======================================================
+// Focused per view: 'score' (board) shows only ±1, 'recite'/'homework' show
+// only that status picker. Every action commits immediately and the caller
+// closes the popup — there is no "完成" button.
+
+type PopupMode = 'score' | 'recite' | 'homework';
+
+const RECITE_OPTIONS: { v: Recitation; label: string }[] = [
+  { v: '已背完', label: '已背完' },
+  { v: '背完部分', label: '背完部分' },
+  { v: '没背', label: '没背' },
+  { v: null, label: '未检查' },
+];
+
+const HOMEWORK_OPTIONS: { v: Homework; label: string }[] = [
+  { v: '完成', label: '完成' },
+  { v: '没交', label: '没交' },
+  { v: null, label: '未检查' },
+];
+
 function StudentPopup({
+  mode,
   st,
   group,
   ring,
   score,
   hint,
-  onMinus,
-  onPlus,
+  onScore,
   onRecite,
   onHomework,
   onClose,
 }: {
+  mode: PopupMode;
   st: SStudent;
   group: SGroup;
   ring: string;
   score: number;
   hint: string;
-  onMinus: () => void;
-  onPlus: () => void;
+  onScore: (d: 1 | -1) => void;
   onRecite: (v: Recitation) => void;
   onHomework: (v: Homework) => void;
   onClose: () => void;
@@ -978,53 +1007,86 @@ function StudentPopup({
           </button>
         </div>
 
-        <div style={{ background: '#f6f9f2', borderRadius: 20, padding: 16, marginBottom: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <button onClick={onMinus} style={minusBtn}>
-              −1
-            </button>
-            <div style={{ flex: 1, textAlign: 'center' }}>
-              <div style={{ fontFamily: NUM, fontWeight: 800, fontSize: 44, lineHeight: 1, color: scoreColor }}>
-                {score > 0 ? `+${score}` : String(score)}
+        {mode === 'score' && (
+          <div style={{ background: '#f6f9f2', borderRadius: 20, padding: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+              <button onClick={() => onScore(-1)} style={minusBtn}>
+                −1
+              </button>
+              <div style={{ flex: 1, textAlign: 'center' }}>
+                <div style={{ fontFamily: NUM, fontWeight: 800, fontSize: 44, lineHeight: 1, color: scoreColor }}>
+                  {score > 0 ? `+${score}` : String(score)}
+                </div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#98a2b0', marginTop: 3 }}>本节个人分</div>
               </div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: '#98a2b0', marginTop: 3 }}>本节个人分</div>
+              <button onClick={() => onScore(1)} style={plusBtn}>
+                +1
+              </button>
             </div>
-            <button onClick={onPlus} style={plusBtn}>
-              +1
-            </button>
+            <div style={{ textAlign: 'center', marginTop: 12, fontSize: 13, fontWeight: 700, color: '#8a94a0' }}>
+              {hint}
+            </div>
           </div>
-          <div style={{ textAlign: 'center', marginTop: 12, fontSize: 13, fontWeight: 700, color: '#8a94a0' }}>
-            {hint}
-          </div>
-        </div>
+        )}
 
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ fontWeight: 800, fontSize: 15, color: '#5b6672', marginBottom: 9 }}>📖 背书</div>
-          <div style={{ display: 'flex', gap: 9 }}>
-            {(['已背完', '背完部分', '没背'] as const).map((v) => (
-              <button key={v} onClick={() => onRecite(v)} style={optStyle(st.r === v, RECITE_MAP[v])}>
-                {v}
-              </button>
-            ))}
-          </div>
-        </div>
+        {mode === 'recite' && (
+          <StatusOptions
+            title="📖 背书检查"
+            options={RECITE_OPTIONS}
+            current={st.r}
+            colorFor={(v) => (v ? RECITE_MAP[v] : GRAY)}
+            onPick={onRecite}
+          />
+        )}
 
-        <div style={{ marginBottom: 20 }}>
-          <div style={{ fontWeight: 800, fontSize: 15, color: '#5b6672', marginBottom: 9 }}>📝 作业</div>
-          <div style={{ display: 'flex', gap: 9 }}>
-            {(['完成', '没交'] as const).map((v) => (
-              <button key={v} onClick={() => onHomework(v)} style={optStyle(st.h === v, HOMEWORK_MAP[v])}>
-                {v}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <button onClick={onClose} style={doneBtn}>
-          完成
-        </button>
+        {mode === 'homework' && (
+          <StatusOptions
+            title="📝 作业检查"
+            options={HOMEWORK_OPTIONS}
+            current={st.h}
+            colorFor={(v) => (v ? HOMEWORK_MAP[v] : GRAY)}
+            onPick={onHomework}
+          />
+        )}
       </div>
     </Overlay>
+  );
+}
+
+function StatusOptions<V extends Recitation | Homework>({
+  title,
+  options,
+  current,
+  colorFor,
+  onPick,
+}: {
+  title: string;
+  options: { v: V; label: string }[];
+  current: V;
+  colorFor: (v: V) => { dot: string; soft: string; fg: string };
+  onPick: (v: V) => void;
+}) {
+  return (
+    <div>
+      <div style={{ fontWeight: 800, fontSize: 15, color: '#5b6672', marginBottom: 9 }}>{title}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+        {options.map(({ v, label }) => {
+          const sel = current === v;
+          const m = colorFor(v);
+          return (
+            <button
+              key={label}
+              onClick={() => onPick(v)}
+              style={{ ...optStyle(sel, m), display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px' }}
+            >
+              <span style={{ width: 10, height: 10, borderRadius: '50%', background: m.dot, flexShrink: 0 }} />
+              <span style={{ flex: 1, textAlign: 'left' }}>{label}</span>
+              {sel && <span style={{ fontSize: 13, fontWeight: 800 }}>当前 ✓</span>}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
