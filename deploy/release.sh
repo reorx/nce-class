@@ -2,9 +2,10 @@
 # Release nce-class to server.name: update code, build image on the server,
 # extract web/dist for Caddy, run migration with the NEW image, restart.
 # See kb/plans/2026-07-02-nce-class-deploy.md.
+# (2026-07-03: host switched server.name → server.name after server.name died)
 set -euo pipefail
 
-HOST=server.name
+HOST=${1:-server.name}
 
 ssh "$HOST" bash -s <<'EOF'
 set -euo pipefail
