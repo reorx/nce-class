@@ -274,6 +274,41 @@ describe('buildCommitPayload', () => {
   });
 });
 
+describe('主讲老师 (lead teacher)', () => {
+  const withTeacher = () => buildClassroomSession({ ...config(), teacherId: 't-wangli', teacherName: '王莉' }, META);
+
+  it('carries the setup-picked teacher into the session and the commit payload', () => {
+    const s = withTeacher();
+    expect(s.teacherId).toBe('t-wangli');
+    expect(s.teacherName).toBe('王莉');
+    expect(buildCommitPayload(s, '2026-07-02 20:00:00').teacherId).toBe('t-wangli');
+  });
+
+  it('emits a null teacherId when unset (server falls back to the committing teacher)', () => {
+    const s = boot();
+    expect(s.teacherId).toBeUndefined();
+    expect(buildCommitPayload(s, '2026-07-02 20:00:00').teacherId).toBeNull();
+  });
+
+  it('setLessonInfo can change the teacher mid-class, and keeps it when omitted', () => {
+    let s = withTeacher();
+    s = reducer(s, {
+      type: 'setLessonInfo',
+      lessonNumber: '5',
+      lessonTitle: '',
+      durationMin: 90,
+      teacherId: 't-lifang',
+      teacherName: '李芳',
+    });
+    expect(s.teacherId).toBe('t-lifang');
+    expect(s.teacherName).toBe('李芳');
+    // an old-shape action (no teacher fields) must not wipe the choice
+    s = reducer(s, { type: 'setLessonInfo', lessonNumber: '6', lessonTitle: '', durationMin: 90 });
+    expect(s.teacherId).toBe('t-lifang');
+    expect(s.teacherName).toBe('李芳');
+  });
+});
+
 describe('nowSql', () => {
   it('formats a date as naive YYYY-MM-DD HH:mm:ss', () => {
     expect(nowSql(new Date(2026, 6, 2, 9, 5, 3))).toBe('2026-07-02 09:05:03');

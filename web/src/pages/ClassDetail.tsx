@@ -1097,6 +1097,10 @@ function InviteTab({ d }: { d: Detail }) {
 // ===== SESSIONS TAB ========================================================
 const fmtDur = (m: number) => `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m`;
 
+/** "第4课 · A private conversation", either part optional (no literal "null"). */
+const fmtLesson = (no: number | null, title: string | null) =>
+  [no != null && `第${no}课`, title].filter(Boolean).join(' · ');
+
 function SessionsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | void }) {
   const [recap, setRecap] = useState<Recap | null>(null);
   const [recapOpen, setRecapOpen] = useState(false);
@@ -1195,8 +1199,11 @@ function SessionsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | v
                     textOverflow: 'ellipsis',
                   }}
                 >
-                  {s.lessonNumber != null ? `第${s.lessonNumber}课 · ${s.lessonTitle}` : s.lessonTitle}
+                  {fmtLesson(s.lessonNumber, s.lessonTitle)}
                 </div>
+                {s.teacherName && (
+                  <div style={{ fontSize: 11, color: '#a6adb8', marginTop: 2 }}>主讲 {s.teacherName}</div>
+                )}
               </div>
               <div style={{ width: 118 }}>
                 <div className="mono" style={{ fontWeight: 600, fontSize: 13.5, color: '#3c4451' }}>
@@ -1262,11 +1269,7 @@ function SessionsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | v
       <Modal open={!!pendingDelete} onClose={() => setPendingDelete(null)} title="删除上课记录">
         <div style={{ fontSize: 14, color: '#3c4451', lineHeight: 1.7 }}>
           确定删除 <b>{pendingDelete?.date}</b>「
-          <b>
-            {pendingDelete?.lessonNumber != null
-              ? `第${pendingDelete.lessonNumber}课 · ${pendingDelete.lessonTitle}`
-              : pendingDelete?.lessonTitle}
-          </b>
+          <b>{pendingDelete && fmtLesson(pendingDelete.lessonNumber, pendingDelete.lessonTitle)}</b>
           」这条上课记录吗？该节课的得分、背书作业与出勤都会一并清除，且不可恢复。
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 22 }}>
@@ -1290,7 +1293,7 @@ function RecapBody({ recap }: { recap: Recap }) {
   return (
     <div>
       <div style={{ fontSize: 13, color: '#7a828f', marginBottom: 4 }}>
-        {recap.lessonNumber != null ? `第${recap.lessonNumber}课 · ${recap.lessonTitle}` : recap.lessonTitle}
+        {fmtLesson(recap.lessonNumber, recap.lessonTitle)}
       </div>
       <div style={{ display: 'flex', gap: 14, fontSize: 12.5, color: '#8a929e', marginBottom: 18 }}>
         <span className="mono">

@@ -469,6 +469,29 @@ describe('end-class commit', () => {
     const detail = (await agent.get('/api/classes/c1')).body;
     const s = detail.sessions.find((x: any) => x.id === row.id);
     expect(s.actualDurationMin).toBe(60);
+    // 主讲老师 defaults to the committing teacher and surfaces in the list
+    expect(row.teacher_id).toBe('t-wangli');
+    expect(s.teacherName).toBe('王莉');
+  });
+
+  it('stores the chosen 主讲老师 when a same-org teacherId is sent', async () => {
+    const { agent } = await login();
+    await agent.post('/api/teachers').send({ name: '李芳', username: 'lifang', password: 'secret66' });
+    const tid = (sqlite.prepare(`SELECT id FROM teachers WHERE username='lifang'`).get() as any).id;
+    const res = await agent.post('/api/classes/c1/sessions').send(body({ clientSessionId: 'cs-t1', teacherId: tid }));
+    expect(res.status).toBe(201);
+    const row = sqlite.prepare(`SELECT teacher_id FROM class_sessions WHERE client_session_id='cs-t1'`).get() as any;
+    expect(row.teacher_id).toBe(tid);
+    const detail = (await agent.get('/api/classes/c1')).body;
+    expect(detail.sessions.find((x: any) => x.id === res.body.sessionId).teacherName).toBe('李芳');
+  });
+
+  it('rejects a cross-org or unknown 主讲老师 with 400 and stores nothing', async () => {
+    const { agent } = await login();
+    expect((await agent.post('/api/classes/c1/sessions').send(body({ teacherId: 't-out' }))).status).toBe(400);
+    expect((await agent.post('/api/classes/c1/sessions').send(body({ teacherId: 'nope' }))).status).toBe(400);
+    const c = sqlite.prepare(`SELECT COUNT(*) c FROM class_sessions WHERE client_session_id='cs-1'`).get() as any;
+    expect(c.c).toBe(0);
   });
 
   it('writes back the default grouping (open-time), keeping absent students + minting new-group ids', async () => {

@@ -150,6 +150,8 @@ export interface SessionInfo {
   lessonTitle: string;
   durationMin: number;
   className?: string;
+  teacherId?: string; // 主讲老师 (defaults to the logged-in teacher; server falls back when absent)
+  teacherName?: string;
 }
 
 /** A pre-class-absent student, carried so the classroom can register them

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { GroupEditPopover } from '../components/GroupEditMenu';
 import { useToast } from '../components/Toast';
-import { ApiError, api } from '../lib/api';
+import { ApiError, api, type TeacherItem } from '../lib/api';
 import {
   buildClassroomSession,
   buildCommitPayload,
@@ -67,6 +67,9 @@ export function Classroom() {
   const [discardVerifying, setDiscardVerifying] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  // 主讲老师 dropdown data (best-effort — the classroom itself stays offline-first)
+  const [teachers, setTeachers] = useState<TeacherItem[]>([]);
+  const [meId, setMeId] = useState('');
   const dragId = useRef<string | null>(null);
 
   // ---- boot: resume from store · else URL-param boot · else → 课前配置 -------
@@ -110,6 +113,19 @@ export function Classroom() {
   useEffect(() => {
     if (session) saveSession(session);
   }, [session]);
+
+  // Same-org teachers + self, for the 主讲老师 dropdown in the info dialog.
+  // A failed fetch just leaves the current choice as the only option.
+  useEffect(() => {
+    api
+      .teachers()
+      .then(setTeachers)
+      .catch(() => {});
+    api
+      .me()
+      .then((m) => setMeId(m.id))
+      .catch(() => {});
+  }, []);
 
   // 1s tick drives the countdown off the persisted startedAt (survives refresh).
   useEffect(() => {
@@ -675,6 +691,9 @@ export function Classroom() {
           lessonNumber={session.lessonNumber ?? ''}
           lessonTitle={session.lessonTitle ?? ''}
           durationMin={session.plannedDurationMin}
+          teacherId={session.teacherId ?? meId}
+          teacherName={session.teacherName ?? ''}
+          teachers={teachers}
           onSave={(v) => {
             dispatch({ type: 'setLessonInfo', ...v });
             setShowInfo(false);
@@ -1332,23 +1351,40 @@ function LessonInfoDialog({
   lessonNumber,
   lessonTitle,
   durationMin,
+  teacherId,
+  teacherName,
+  teachers,
   onSave,
   onClose,
 }: {
   lessonNumber: string;
   lessonTitle: string;
   durationMin: number;
-  onSave: (v: { lessonNumber: string; lessonTitle: string; durationMin: number }) => void;
+  teacherId: string;
+  teacherName: string;
+  teachers: TeacherItem[];
+  onSave: (v: {
+    lessonNumber: string;
+    lessonTitle: string;
+    durationMin: number;
+    teacherId?: string;
+    teacherName?: string;
+  }) => void;
   onClose: () => void;
 }) {
   const [no, setNo] = useState(lessonNumber);
   const [title, setTitle] = useState(lessonTitle);
   const [duration, setDuration] = useState(String(durationMin));
+  const [tid, setTid] = useState(teacherId);
   const save = () =>
     onSave({
       lessonNumber: no.trim(),
       lessonTitle: title.trim(),
       durationMin: Math.max(1, Number(duration) || 120),
+      // undefined keeps the session's current 主讲老师 (e.g. teachers 拉取失败)
+      teacherId: tid || undefined,
+      teacherName:
+        teachers.find((t) => t.id === tid)?.name ?? (tid === teacherId ? teacherName || undefined : undefined),
     });
   const onKey = (e: React.KeyboardEvent) => e.key === 'Enter' && save();
   return (
@@ -1418,6 +1454,23 @@ function LessonInfoDialog({
         <div style={{ fontSize: 13, fontWeight: 700, color: '#a7b0bb', marginTop: 8 }}>
           改时长会按开课时间重新计算右上角倒计时
         </div>
+
+        <label style={{ ...fieldLabel, marginTop: 18 }}>主讲老师</label>
+        <InfoField last>
+          <span style={{ fontSize: 20 }}>🧑‍🏫</span>
+          <select
+            value={tid}
+            onChange={(e) => setTid(e.target.value)}
+            style={{ flex: 1, minWidth: 0, width: '100%', ...inputBase, fontSize: 16, cursor: 'pointer' }}
+          >
+            {!teachers.some((t) => t.id === tid) && <option value={tid}>{teacherName || '—'}</option>}
+            {teachers.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </InfoField>
 
         <button onClick={save} style={{ ...doneBtn, marginTop: 20 }}>
           保存

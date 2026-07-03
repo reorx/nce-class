@@ -246,6 +246,7 @@ function classDetailPayload(id: string) {
       weekday: weekdayCN(s.date),
       lessonNumber: s.lesson_number,
       lessonTitle: s.lesson_title,
+      teacherName: (s.teacher_id ? (q.teacherById.get(s.teacher_id) as any)?.name : null) ?? null,
       plannedDurationMin: s.planned_duration_min,
       actualDurationMin: actual,
       durationLabel: fmtDuration(actual),
@@ -328,11 +329,20 @@ const intOr = (v: unknown, fallback: number | null): number | null =>
 /**
  * Validate + normalise an end-class commit body into a CommitInput, or return an
  * error message. Enforces: time-string format, delta ∈ {±1}, student/group ids
- * belong to the class, attendance ∈ {present,absent}.
+ * belong to the class, attendance ∈ {present,absent}. The optional teacherId
+ * (主讲老师, picked in 课前配置/课堂信息) must be a same-org teacher; absent →
+ * the committing teacher.
  */
-function buildCommitInput(body: any, classId: string, teacherId: string): { input: CommitInput } | { error: string } {
+function buildCommitInput(body: any, classId: string, teacher: any): { input: CommitInput } | { error: string } {
   const clientSessionId = str(body?.clientSessionId);
   if (!clientSessionId) return { error: 'clientSessionId 必填' };
+  let teacherId = teacher.id;
+  const chosen = str(body?.teacherId);
+  if (chosen) {
+    const t = q.teacherById.get(chosen) as any;
+    if (!t || t.org_id !== teacher.org_id) return { error: '主讲老师不存在或不属于本校' };
+    teacherId = t.id;
+  }
   const startedAt = str(body?.startedAt);
   const endedAt = str(body?.endedAt);
   if (!startedAt || !TIME_RE.test(startedAt)) return { error: 'startedAt 必须是 YYYY-MM-DD HH:mm:ss' };
@@ -972,7 +982,7 @@ export function createApp() {
     const teacher = res.locals.teacher;
     if (!classInOrg(req.params.id, teacher.org_id)) return res.status(404).json({ error: 'class not found' });
 
-    const built = buildCommitInput(req.body, req.params.id, teacher.id);
+    const built = buildCommitInput(req.body, req.params.id, teacher);
     if ('error' in built) return res.status(400).json({ error: built.error });
 
     // Idempotent replay: a retried submit returns the already-stored session.

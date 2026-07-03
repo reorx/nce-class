@@ -164,6 +164,19 @@ describe('课前配置 grouping model', () => {
     expect(cfg.absent.map((s) => s.id)).not.toContain('sx2');
   });
 
+  it('carries the picked 主讲老师 through the handoff config', () => {
+    const st = buildSetup(fixture());
+    const cfg = buildSessionConfig(st, {
+      lessonNumber: '4',
+      lessonTitle: '',
+      durationMin: 120,
+      teacherId: 't-wangli',
+      teacherName: '王莉',
+    });
+    expect(cfg.teacherId).toBe('t-wangli');
+    expect(cfg.teacherName).toBe('王莉');
+  });
+
   it('keeps a staged (absent) student’s default group so it survives writeback (decision 6)', () => {
     // 小明 (default group c1-g1) is dragged to the staging zone before class.
     const st = moveStudent(buildSetup(fixture()), 's1', 'absent');

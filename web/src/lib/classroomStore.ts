@@ -36,6 +36,8 @@ export interface ClassroomSession {
   className?: string;
   lessonNumber?: string; // as typed in 课前配置 (optional)
   lessonTitle?: string;
+  teacherId?: string; // 主讲老师 (unset → server falls back to the committing teacher)
+  teacherName?: string;
   plannedDurationMin: number;
   startedAt: string; // real wall clock at 开始课堂, 'YYYY-MM-DD HH:mm:ss'
   defaultGrouping: DefaultGroup[];
@@ -87,6 +89,8 @@ export function buildClassroomSession(
     className: cfg.className,
     lessonNumber: cfg.lessonNumber || undefined,
     lessonTitle: cfg.lessonTitle || undefined,
+    teacherId: cfg.teacherId,
+    teacherName: cfg.teacherName,
     plannedDurationMin: cfg.durationMin,
     startedAt: meta.startedAt,
     defaultGrouping,
@@ -107,7 +111,14 @@ export type CAction =
   | { type: 'setHomework'; sid: string; v: Homework }
   | { type: 'toggleAttendance'; sid: string }
   | { type: 'moveStudent'; sid: string; gid: string }
-  | { type: 'setLessonInfo'; lessonNumber: string; lessonTitle: string; durationMin: number }
+  | {
+      type: 'setLessonInfo';
+      lessonNumber: string;
+      lessonTitle: string;
+      durationMin: number;
+      teacherId?: string; // omitted → keep the current 主讲老师
+      teacherName?: string;
+    }
   | { type: 'setGroupEmoji'; gid: string; emoji: string }
   | { type: 'renameGroup'; gid: string; name: string }
   | { type: 'removeGroup'; gid: string };
@@ -137,6 +148,8 @@ export function reducer(s: ClassroomSession, a: CAction): ClassroomSession {
         ...s,
         lessonNumber: a.lessonNumber || undefined,
         lessonTitle: a.lessonTitle || undefined,
+        teacherId: a.teacherId ?? s.teacherId,
+        teacherName: a.teacherName ?? s.teacherName,
         plannedDurationMin: a.durationMin,
       };
     case 'setGroupEmoji':
@@ -266,6 +279,7 @@ export function buildCommitPayload(s: ClassroomSession, endedAt: string): Commit
     clientSessionId: s.clientSessionId,
     lessonNumber,
     lessonTitle: s.lessonTitle ?? null,
+    teacherId: s.teacherId ?? null,
     plannedDurationMin: s.plannedDurationMin,
     startedAt: s.startedAt,
     endedAt,

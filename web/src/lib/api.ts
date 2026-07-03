@@ -50,6 +50,7 @@ export interface Session {
   weekday: string;
   lessonNumber: number | null;
   lessonTitle: string | null;
+  teacherName: string | null; // 主讲老师
   plannedDurationMin: number;
   actualDurationMin: number;
   durationLabel: string;
@@ -169,6 +170,7 @@ export interface CommitPayload {
   clientSessionId: string; // idempotency key (stable across retries)
   lessonNumber: number | null;
   lessonTitle: string | null;
+  teacherId: string | null; // 主讲老师; null → server falls back to the committing teacher
   plannedDurationMin: number;
   startedAt: string; // 'YYYY-MM-DD HH:mm:ss'
   endedAt: string; // 'YYYY-MM-DD HH:mm:ss'

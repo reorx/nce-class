@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { GroupEditPopover } from '../components/GroupEditMenu';
-import { api, type ClassDetail, type LastRecap } from '../lib/api';
+import { api, type ClassDetail, type LastRecap, type TeacherItem } from '../lib/api';
 import { buildClassroomSession, loadSession, newClientSessionId, nowSql, saveSession } from '../lib/classroomStore';
 import { GROUP_COLORS } from '../lib/session';
 import {
@@ -44,6 +44,9 @@ export function Setup() {
   const [lessonNo, setLessonNo] = useState('');
   const [lessonTitle, setLessonTitle] = useState('');
   const [durationMin, setDurationMin] = useState('120');
+  // 主讲老师: all same-org teachers, defaulting to the logged-in one.
+  const [teachers, setTeachers] = useState<TeacherItem[]>([]);
+  const [teacherId, setTeacherId] = useState('');
   const [hoverZone, setHoverZone] = useState<string | null>(null);
   // 组编辑菜单：点表头开/关（gid + 定位锚点）
   const [edit, setEdit] = useState<{ gid: string; el: HTMLElement } | null>(null);
@@ -64,6 +67,14 @@ export function Setup() {
         setState(buildSetup(d));
         setLessonNo(String((d.lastRecap?.lessonNumber ?? 0) + 1));
       })
+      .catch(() => {});
+    api
+      .me()
+      .then((me) => setTeacherId((cur) => cur || me.id))
+      .catch(() => {});
+    api
+      .teachers()
+      .then(setTeachers)
       .catch(() => {});
   }, [id, nav]);
 
@@ -87,6 +98,8 @@ export function Setup() {
       lessonTitle: lessonTitle.trim(),
       durationMin: Math.max(1, Number(durationMin) || 120),
       className: detail?.name,
+      teacherId: teacherId || undefined,
+      teacherName: teachers.find((t) => t.id === teacherId)?.name,
     });
     const session = buildClassroomSession(config, {
       classId: id,
@@ -142,9 +155,12 @@ export function Setup() {
             lessonNo={lessonNo}
             lessonTitle={lessonTitle}
             durationMin={durationMin}
+            teachers={teachers}
+            teacherId={teacherId}
             onLessonNo={setLessonNo}
             onLessonTitle={setLessonTitle}
             onDuration={(v) => setDurationMin(v.replace(/[^0-9]/g, '').slice(0, 3))}
+            onTeacher={setTeacherId}
           />
           <LastRecapCard recap={detail?.lastRecap ?? null} />
         </div>
@@ -443,16 +459,22 @@ function SessionInfoCard({
   lessonNo,
   lessonTitle,
   durationMin,
+  teachers,
+  teacherId,
   onLessonNo,
   onLessonTitle,
   onDuration,
+  onTeacher,
 }: {
   lessonNo: string;
   lessonTitle: string;
   durationMin: string;
+  teachers: TeacherItem[];
+  teacherId: string;
   onLessonNo: (v: string) => void;
   onLessonTitle: (v: string) => void;
   onDuration: (v: string) => void;
+  onTeacher: (v: string) => void;
 }) {
   return (
     <div
@@ -520,6 +542,26 @@ function SessionInfoCard({
       </Field>
       <div style={{ fontSize: 13, fontWeight: 700, color: '#a7b0bb', marginTop: 8 }}>
         默认 120 分钟（2 小时）· 驱动课堂右上角倒计时
+      </div>
+
+      <label style={{ ...fieldLabel, marginTop: 18 }}>主讲老师</label>
+      <Field last>
+        <span style={{ fontSize: 20 }}>🧑‍🏫</span>
+        <select
+          value={teacherId}
+          onChange={(e) => onTeacher(e.target.value)}
+          style={{ flex: 1, minWidth: 0, width: '100%', ...inputBase, fontSize: 16, cursor: 'pointer' }}
+        >
+          {!teachers.some((t) => t.id === teacherId) && <option value={teacherId}>—</option>}
+          {teachers.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <div style={{ fontSize: 13, fontWeight: 700, color: '#a7b0bb', marginTop: 8 }}>
+        默认为当前登录老师 · 记入本节课记录
       </div>
     </div>
   );
