@@ -371,6 +371,7 @@ export function Classroom() {
             groups={groups}
             colorOf={colorOf}
             onBadge={(sid) => (view === 'attendance' ? toggleAbsent(sid) : setOpenId(sid))}
+            onMove={(sid, v) => (view === 'recite' ? setRecite(sid, v as Recitation) : setHomework(sid, v as Homework))}
           />
         )}
       </div>
@@ -663,6 +664,7 @@ interface Seg {
   soft: string;
   students: ClassroomStudent[];
   empty?: boolean;
+  value?: Recitation | Homework;
 }
 
 function SegmentView({
@@ -671,14 +673,19 @@ function SegmentView({
   groups,
   colorOf,
   onBadge,
+  onMove,
 }: {
   view: View;
   students: ClassroomStudent[];
   groups: SGroup[];
   colorOf: (gid: string) => (typeof GROUP_COLORS)[number];
   onBadge: (sid: string) => void;
+  onMove?: (sid: string, value: Recitation | Homework) => void;
 }) {
   const groupById = new Map(groups.map((g) => [g.id, g]));
+  const dragSid = useRef<string | null>(null);
+  const [overSeg, setOverSeg] = useState<string | null>(null);
+  const canDrag = onMove != null && (view === 'recite' || view === 'homework');
   const total = students.length;
   const bucket = (pred: (s: ClassroomStudent) => boolean) => students.filter(pred);
 
@@ -692,10 +699,16 @@ function SegmentView({
     title = '背书检查';
     progress = `已检查 ${done} / ${total}`;
     segs = [
-      { title: '未检查', dot: '#c9cfd6', soft: '#f4f6f8', students: bucket((s) => s.r === null) },
-      { title: '已背完', dot: '#34c759', soft: '#eaf9ef', students: bucket((s) => s.r === '已背完') },
-      { title: '背完部分', dot: '#ffb020', soft: '#fff6e0', students: bucket((s) => s.r === '背完部分') },
-      { title: '没背', dot: '#c9cfd6', soft: '#eef1f4', students: bucket((s) => s.r === '没背') },
+      { title: '未检查', dot: '#c9cfd6', soft: '#f4f6f8', students: bucket((s) => s.r === null), value: null },
+      { title: '已背完', dot: '#34c759', soft: '#eaf9ef', students: bucket((s) => s.r === '已背完'), value: '已背完' },
+      {
+        title: '背完部分',
+        dot: '#ffb020',
+        soft: '#fff6e0',
+        students: bucket((s) => s.r === '背完部分'),
+        value: '背完部分',
+      },
+      { title: '没背', dot: '#c9cfd6', soft: '#eef1f4', students: bucket((s) => s.r === '没背'), value: '没背' },
     ];
   } else if (view === 'homework') {
     const done = students.filter((s) => s.h !== null).length;
@@ -703,9 +716,9 @@ function SegmentView({
     title = '作业检查';
     progress = `已批改 ${done} / ${total}`;
     segs = [
-      { title: '未批改', dot: '#c9cfd6', soft: '#f4f6f8', students: bucket((s) => s.h === null) },
-      { title: '完成', dot: '#34c759', soft: '#eaf9ef', students: bucket((s) => s.h === '完成') },
-      { title: '没交', dot: '#c9cfd6', soft: '#eef1f4', students: bucket((s) => s.h === '没交') },
+      { title: '未批改', dot: '#c9cfd6', soft: '#f4f6f8', students: bucket((s) => s.h === null), value: null },
+      { title: '完成', dot: '#34c759', soft: '#eaf9ef', students: bucket((s) => s.h === '完成'), value: '完成' },
+      { title: '没交', dot: '#c9cfd6', soft: '#eef1f4', students: bucket((s) => s.h === '没交'), value: '没交' },
     ];
   } else {
     const present = students.filter((s) => s.attendance === 'present');
@@ -744,6 +757,9 @@ function SegmentView({
       >
         <span style={{ fontSize: 26 }}>{icon}</span>
         <span style={{ fontWeight: 900, fontSize: 22, color: '#2c3340' }}>{title}</span>
+        {canDrag && (
+          <span style={{ fontWeight: 700, fontSize: 14, color: '#a7b0bb' }}>✋ 拖拽学生卡到目标状态栏可直接改状态</span>
+        )}
         <div
           style={{
             marginLeft: 'auto',
@@ -770,7 +786,44 @@ function SegmentView({
         }}
       >
         {segs.map((seg) => (
-          <div key={seg.title} style={{ padding: '16px 0', borderBottom: '1px solid #f2f5ef' }}>
+          <div
+            key={seg.title}
+            onDragOver={
+              canDrag
+                ? (e) => {
+                    e.preventDefault();
+                    if (overSeg !== seg.title) setOverSeg(seg.title);
+                  }
+                : undefined
+            }
+            onDragLeave={
+              canDrag
+                ? (e) => {
+                    if (!e.currentTarget.contains(e.relatedTarget as Node)) setOverSeg(null);
+                  }
+                : undefined
+            }
+            onDrop={
+              canDrag
+                ? (e) => {
+                    e.preventDefault();
+                    setOverSeg(null);
+                    if (dragSid.current != null) onMove!(dragSid.current, seg.value ?? null);
+                    dragSid.current = null;
+                  }
+                : undefined
+            }
+            style={{
+              padding: '16px 10px',
+              margin: '0 -10px',
+              borderBottom: '1px solid #f2f5ef',
+              borderRadius: 16,
+              outline: overSeg === seg.title ? `2px dashed ${seg.dot}` : 'none',
+              outlineOffset: -2,
+              background: overSeg === seg.title ? seg.soft : 'transparent',
+              transition: 'background .12s',
+            }}
+          >
             <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 14 }}>
               <span style={{ width: 14, height: 14, borderRadius: '50%', background: seg.dot, flexShrink: 0 }} />
               <span style={{ fontWeight: 800, fontSize: 18, color: '#3a4350' }}>{seg.title}</span>
@@ -800,6 +853,8 @@ function SegmentView({
                   <div
                     key={s.id}
                     onClick={() => onBadge(s.id)}
+                    draggable={canDrag}
+                    onDragStart={canDrag ? () => (dragSid.current = s.id) : undefined}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -808,7 +863,7 @@ function SegmentView({
                       borderRadius: 16,
                       background: seg.soft,
                       border: '2px solid transparent',
-                      cursor: 'pointer',
+                      cursor: canDrag ? 'grab' : 'pointer',
                       transition: 'transform .12s,border-color .12s',
                     }}
                     onMouseEnter={(e) => {
