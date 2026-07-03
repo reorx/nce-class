@@ -8,6 +8,9 @@ import {
   fmtDurationCN,
   membersOf,
   moveStudent,
+  removeGroup,
+  renameGroup,
+  setGroupEmoji,
   stagingMembers,
   sums,
 } from './setup';
@@ -99,6 +102,32 @@ describe('课前配置 grouping model', () => {
     expect(last.ci).toBe(3);
     expect(membersOf(st, last.id)).toEqual([]);
     expect(sums(st).groups).toBe(4);
+  });
+
+  it('sets a group emoji without touching other groups, and it rides the handoff config', () => {
+    const st = setGroupEmoji(buildSetup(fixture()), 'c1-g2', '🐸');
+    expect(st.groups.find((g) => g.id === 'c1-g2')!.emoji).toBe('🐸');
+    expect(st.groups.find((g) => g.id === 'c1-g1')!.emoji).toBe('🦁');
+    const cfg = buildSessionConfig(st, { lessonNumber: '4', lessonTitle: '', durationMin: 120 });
+    expect(cfg.groups.find((g) => g.id === 'c1-g2')!.emoji).toBe('🐸');
+  });
+
+  it('renames a group without touching the others', () => {
+    const st = renameGroup(buildSetup(fixture()), 'c1-g2', '猛虎队');
+    expect(st.groups.find((g) => g.id === 'c1-g2')!.name).toBe('猛虎队');
+    expect(st.groups.find((g) => g.id === 'c1-g1')!.name).toBe('第1组');
+  });
+
+  it('removes a group, moving its members to the staging zone (未分组)', () => {
+    const st = removeGroup(buildSetup(fixture()), 'c1-g2');
+    expect(st.groups.map((g) => g.id)).toEqual(['c1-g1', 'c1-g3']);
+    // its 4 members join the previously staged 浩浩
+    expect(stagingMembers(st).map((s) => s.name)).toEqual(['丽丽', '大壮', '欣欣', '明明', '浩浩']);
+    expect(sums(st)).toEqual({ groups: 2, playing: 8, absent: 5 });
+    // and the handoff config no longer carries the group
+    const cfg = buildSessionConfig(st, { lessonNumber: '4', lessonTitle: '', durationMin: 120 });
+    expect(cfg.groups.map((g) => g.id)).toEqual(['c1-g1', 'c1-g3']);
+    expect(cfg.students.some((s) => s.g === 'c1-g2')).toBe(false);
   });
 
   it('builds a classroom handoff config of playing students + an absent list', () => {

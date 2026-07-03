@@ -44,6 +44,32 @@ describe('auth', () => {
     await agent.post('/api/auth/logout');
     expect((await agent.get('/api/me')).status).toBe(401);
   });
+
+  it('verifies the current teacher password (放弃本节课 gate)', async () => {
+    const { agent } = await login();
+    const ok = await agent.post('/api/auth/verify-password').send({ password: 'demo1234' });
+    expect(ok.status).toBe(200);
+    expect(ok.body).toEqual({ ok: true });
+  });
+
+  it('rejects a wrong current-teacher password with 403 (not 401, session stays valid)', async () => {
+    const { agent } = await login();
+    const bad = await agent.post('/api/auth/verify-password').send({ password: 'nope' });
+    expect(bad.status).toBe(403);
+    expect((await agent.get('/api/me')).status).toBe(200);
+  });
+
+  it('verify-password checks the logged-in teacher, not any teacher', async () => {
+    // waiguo (org-2) shares the seed password; log in as him and verify works,
+    // but an empty/absent password is still rejected.
+    const { agent } = await login('waiguo');
+    expect((await agent.post('/api/auth/verify-password').send({ password: 'demo1234' })).status).toBe(200);
+    expect((await agent.post('/api/auth/verify-password').send({})).status).toBe(403);
+  });
+
+  it('blocks unauthenticated verify-password with 401', async () => {
+    expect((await request(app).post('/api/auth/verify-password').send({ password: 'demo1234' })).status).toBe(401);
+  });
 });
 
 describe('students', () => {

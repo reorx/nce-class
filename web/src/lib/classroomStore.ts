@@ -106,7 +106,10 @@ export type CAction =
   | { type: 'setRecite'; sid: string; v: Recitation }
   | { type: 'setHomework'; sid: string; v: Homework }
   | { type: 'toggleAttendance'; sid: string }
-  | { type: 'moveStudent'; sid: string; gid: string };
+  | { type: 'moveStudent'; sid: string; gid: string }
+  | { type: 'setGroupEmoji'; gid: string; emoji: string }
+  | { type: 'renameGroup'; gid: string; name: string }
+  | { type: 'removeGroup'; gid: string };
 
 export function reducer(s: ClassroomSession, a: CAction): ClassroomSession {
   switch (a.type) {
@@ -126,6 +129,30 @@ export function reducer(s: ClassroomSession, a: CAction): ClassroomSession {
       return mapStudent(s, a.sid, (x) => ({ ...x, attendance: x.attendance === 'absent' ? 'present' : 'absent' }));
     case 'moveStudent':
       return mapStudent(s, a.sid, (x) => ({ ...x, g: a.gid }));
+    case 'setGroupEmoji':
+      // Cosmetic, not membership — unlike re-grouping it also updates the
+      // frozen default grouping so the new emoji writes back to the class.
+      return {
+        ...s,
+        groups: s.groups.map((g) => (g.id === a.gid ? { ...g, emoji: a.emoji } : g)),
+        defaultGrouping: s.defaultGrouping.map((g) => (g.clientId === a.gid ? { ...g, emoji: a.emoji } : g)),
+      };
+    case 'renameGroup':
+      return {
+        ...s,
+        groups: s.groups.map((g) => (g.id === a.gid ? { ...g, name: a.name } : g)),
+        defaultGrouping: s.defaultGrouping.map((g) => (g.clientId === a.gid ? { ...g, name: a.name } : g)),
+      };
+    case 'removeGroup':
+      // Members (present or absent) become ungrouped; the group leaves both the
+      // session snapshot and the default-grouping writeback. The event ledger is
+      // untouched — commitSession maps the orphaned clientGroupId to null.
+      return {
+        ...s,
+        groups: s.groups.filter((g) => g.id !== a.gid),
+        defaultGrouping: s.defaultGrouping.filter((g) => g.clientId !== a.gid),
+        students: s.students.map((x) => (x.g === a.gid ? { ...x, g: '' } : x)),
+      };
   }
 }
 

@@ -220,6 +220,7 @@ export const api = {
   me: () => get<Me>('/api/me'),
   login: (username: string, password: string) => req<Me>('POST', '/api/auth/login', { username, password }),
   logout: () => req<{ ok: true }>('POST', '/api/auth/logout'),
+  verifyPassword: (password: string) => req<{ ok: true }>('POST', '/api/auth/verify-password', { password }),
   classes: () => get<ClassListItem[]>('/api/classes'),
   classDetail: (id: string) => get<ClassDetail>(`/api/classes/${id}`),
   createClass: (name: string, level: string | null) => req<ClassDetail>('POST', '/api/classes', { name, level }),

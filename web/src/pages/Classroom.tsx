@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { EmojiPickerButton } from '../components/EmojiPicker';
 import { useToast } from '../components/Toast';
 import { ApiError, api } from '../lib/api';
 import {
@@ -58,6 +59,9 @@ export function Classroom() {
   const [openGid, setOpenGid] = useState<string | null>(null);
   const [showEnd, setShowEnd] = useState(false);
   const [showDiscard, setShowDiscard] = useState(false);
+  const [discardPw, setDiscardPw] = useState('');
+  const [discardErr, setDiscardErr] = useState('');
+  const [discardVerifying, setDiscardVerifying] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const dragId = useRef<string | null>(null);
@@ -133,6 +137,7 @@ export function Classroom() {
   const setHomework = (sid: string, v: Homework) => dispatch({ type: 'setHomework', sid, v });
   const toggleAbsent = (sid: string) => dispatch({ type: 'toggleAttendance', sid });
   const moveStudent = (sid: string, gid: string) => dispatch({ type: 'moveStudent', sid, gid });
+  const changeGroupEmoji = (gid: string, emoji: string) => dispatch({ type: 'setGroupEmoji', gid, emoji });
 
   const goView = (v: View) => {
     setView(v);
@@ -171,9 +176,27 @@ export function Classroom() {
   };
 
   // 放弃本节课: the only self-rescue for a broken local session (decision 12).
+  // Gated on the teacher's own password so it can't be triggered casually.
+  const openDiscard = () => {
+    setDiscardPw('');
+    setDiscardErr('');
+    setDiscardVerifying(false);
+    setShowDiscard(true);
+  };
   const discard = () => {
-    clearSession(id);
-    nav(`/classes/${id}?tab=sessions`);
+    if (discardVerifying || !discardPw) return;
+    setDiscardVerifying(true);
+    setDiscardErr('');
+    api
+      .verifyPassword(discardPw)
+      .then(() => {
+        clearSession(id);
+        nav(`/classes/${id}?tab=sessions`);
+      })
+      .catch((e) => {
+        setDiscardVerifying(false);
+        setDiscardErr(e instanceof ApiError && e.status === 403 ? '密码错误' : '验证失败，请重试');
+      });
   };
 
   return (
@@ -237,7 +260,8 @@ export function Classroom() {
                   gap: 8,
                 }}
               >
-                <span style={{ fontSize: 18 }}>✋</span>拖拽学生卡可在组间移动 · 调组只影响后续加分归属，不改写历史组分
+                <span style={{ fontSize: 18 }}>✋</span>
+                拖拽学生卡可在组间移动 · 点击组 emoji 可更换 · 调组只影响后续加分归属，不改写历史组分
               </div>
             )}
             <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 18, paddingBottom: 6 }}>
@@ -282,7 +306,15 @@ export function Classroom() {
                         cursor: 'pointer',
                       }}
                     >
-                      <span style={{ fontSize: 25, lineHeight: 1, flexShrink: 0 }}>{g.emoji}</span>
+                      {view === 'regroup' ? (
+                        <EmojiPickerButton
+                          emoji={g.emoji}
+                          fontSize={25}
+                          onSelect={(em) => changeGroupEmoji(g.id, em)}
+                        />
+                      ) : (
+                        <span style={{ fontSize: 25, lineHeight: 1, flexShrink: 0 }}>{g.emoji}</span>
+                      )}
                       <span
                         style={{
                           fontWeight: 900,
@@ -396,7 +428,7 @@ export function Classroom() {
           ))}
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 12, alignItems: 'center' }}>
-          <button onClick={() => setShowDiscard(true)} style={discardStyle}>
+          <button onClick={openDiscard} style={discardStyle}>
             退出不保存
           </button>
           <button onClick={undo} style={undoStyle(events.length > 0)}>
@@ -493,25 +525,52 @@ export function Classroom() {
           onConfirm={confirmEnd}
           onDiscard={() => {
             setShowEnd(false);
-            setShowDiscard(true);
+            openDiscard();
           }}
         />
       )}
 
       {/* discard confirmation */}
       {showDiscard && (
-        <Overlay z={65} onClose={() => setShowDiscard(false)} strong>
+        <Overlay z={65} onClose={() => !discardVerifying && setShowDiscard(false)} strong>
           <div style={popupCard(440)} onClick={stop}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
               <span style={{ fontSize: 28 }}>⚠️</span>
               <span style={{ fontWeight: 900, fontSize: 22, color: '#2c3340' }}>放弃本节课？</span>
             </div>
-            <div style={{ fontSize: 15, fontWeight: 600, color: '#66756c', lineHeight: 1.6, marginBottom: 22 }}>
+            <div style={{ fontSize: 15, fontWeight: 600, color: '#66756c', lineHeight: 1.6, marginBottom: 18 }}>
               本节课的加减分、背书 / 作业、出勤记录将全部丢弃且不会保存到后端。此操作不可撤销。
             </div>
+            <input
+              type="password"
+              value={discardPw}
+              autoFocus
+              placeholder="输入你的登录密码以确认"
+              onChange={(e) => {
+                setDiscardPw(e.target.value);
+                setDiscardErr('');
+              }}
+              onKeyDown={(e) => e.key === 'Enter' && discard()}
+              style={{
+                width: '100%',
+                boxSizing: 'border-box',
+                padding: '13px 16px',
+                borderRadius: 14,
+                border: `2px solid ${discardErr ? '#ff5a5f' : '#dfe6da'}`,
+                fontSize: 16,
+                fontWeight: 700,
+                fontFamily: 'inherit',
+                color: '#2c3340',
+                outline: 'none',
+                marginBottom: discardErr ? 8 : 22,
+              }}
+            />
+            {discardErr && (
+              <div style={{ color: '#ff5a5f', fontSize: 14, fontWeight: 700, marginBottom: 14 }}>{discardErr}</div>
+            )}
             <div style={{ display: 'flex', gap: 12 }}>
               <button
-                onClick={() => setShowDiscard(false)}
+                onClick={() => !discardVerifying && setShowDiscard(false)}
                 style={{
                   flex: 1,
                   padding: 14,
@@ -529,6 +588,7 @@ export function Classroom() {
               </button>
               <button
                 onClick={discard}
+                disabled={!discardPw || discardVerifying}
                 style={{
                   flex: 1,
                   padding: 14,
@@ -539,11 +599,12 @@ export function Classroom() {
                   fontWeight: 800,
                   fontSize: 16,
                   fontFamily: 'inherit',
-                  cursor: 'pointer',
+                  cursor: !discardPw || discardVerifying ? 'not-allowed' : 'pointer',
+                  opacity: !discardPw || discardVerifying ? 0.5 : 1,
                   boxShadow: '0 5px 14px rgba(255,90,95,.3)',
                 }}
               >
-                放弃并退出
+                {discardVerifying ? '验证中…' : '放弃并退出'}
               </button>
             </div>
           </div>

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { GroupEditPopover } from '../components/GroupEditMenu';
 import { api, type ClassDetail, type LastRecap } from '../lib/api';
 import { buildClassroomSession, loadSession, newClientSessionId, nowSql, saveSession } from '../lib/classroomStore';
 import { GROUP_COLORS } from '../lib/session';
@@ -11,6 +12,9 @@ import {
   MEDALS,
   membersOf,
   moveStudent,
+  removeGroup,
+  renameGroup,
+  setGroupEmoji,
   stagingMembers,
   sums,
   type SetupState,
@@ -41,6 +45,8 @@ export function Setup() {
   const [lessonTitle, setLessonTitle] = useState('');
   const [durationMin, setDurationMin] = useState('120');
   const [hoverZone, setHoverZone] = useState<string | null>(null);
+  // 组编辑菜单：点表头开/关（gid + 定位锚点）
+  const [edit, setEdit] = useState<{ gid: string; el: HTMLElement } | null>(null);
   const dragId = useRef<string | null>(null);
 
   useEffect(() => {
@@ -168,21 +174,6 @@ export function Setup() {
           >
             <span style={{ fontSize: 22 }}>🧩</span>
             <span style={{ fontWeight: 900, fontSize: 20, color: '#2c3340' }}>分组方案</span>
-            <span
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 5,
-                padding: '8px 14px',
-                borderRadius: 12,
-                background: '#eafaef',
-                color: '#1e9e4a',
-                fontWeight: 800,
-                fontSize: 14,
-              }}
-            >
-              <span style={{ fontSize: 13 }}>⭐</span>默认分组
-            </span>
             <button
               onClick={() => state && setState(addGroup(state))}
               style={addGroupBtn}
@@ -257,7 +248,11 @@ export function Setup() {
                       background: c.headBg,
                     }}
                   >
-                    <span style={{ fontSize: 23, lineHeight: 1 }}>{g.emoji}</span>
+                    <EmojiPickerButton
+                      emoji={g.emoji}
+                      fontSize={23}
+                      onSelect={(em) => setState((st) => (st ? setGroupEmoji(st, g.id, em) : st))}
+                    />
                     <span
                       style={{
                         fontWeight: 900,

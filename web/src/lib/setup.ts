@@ -94,6 +94,28 @@ export function addGroup(state: SetupState): SetupState {
   return { ...state, groups: [...state.groups, g], gidSeq: state.gidSeq + 1 };
 }
 
+/** Change a group's emoji (picked from the animal palette). */
+export function setGroupEmoji(state: SetupState, gid: string, emoji: string): SetupState {
+  return { ...state, groups: state.groups.map((g) => (g.id === gid ? { ...g, emoji } : g)) };
+}
+
+export function renameGroup(state: SetupState, gid: string, name: string): SetupState {
+  return { ...state, groups: state.groups.map((g) => (g.id === gid ? { ...g, name } : g)) };
+}
+
+/** Delete a group; its members drop into the staging zone (未分组/今日缺席). */
+export function removeGroup(state: SetupState, gid: string): SetupState {
+  const assign = { ...state.assign };
+  const absent = { ...state.absent };
+  for (const [sid, g] of Object.entries(state.assign)) {
+    if (g === gid) {
+      delete assign[sid];
+      absent[sid] = true;
+    }
+  }
+  return { ...state, groups: state.groups.filter((g) => g.id !== gid), assign, absent };
+}
+
 /** Members of a group, preserving roster order. */
 export function membersOf(state: SetupState, gid: string): SetupStudent[] {
   return state.students.filter((s) => state.assign[s.id] === gid);

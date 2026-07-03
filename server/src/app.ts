@@ -783,6 +783,17 @@ export function createApp() {
 
   app.get('/api/me', (_req, res) => res.json(mePayload(res.locals.teacher)));
 
+  // Re-confirm the logged-in teacher's password for destructive actions
+  // (放弃本节课). 403 on mismatch — the session itself stays valid.
+  app.post('/api/auth/verify-password', (req, res) => {
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    const cred = q.credByTeacher.get(res.locals.teacher.id) as any;
+    if (!password || !cred?.secret || !verifyPassword(password, cred.secret)) {
+      return res.status(403).json({ error: '密码错误' });
+    }
+    res.json({ ok: true });
+  });
+
   // ---- classes (read) ----
   app.get('/api/classes', (_req, res) => res.json(classListPayload()));
 

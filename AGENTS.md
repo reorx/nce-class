@@ -51,7 +51,7 @@ pnpm dev         # server :5177 + web :5173（vite 代理 /api、/uploads）
 
 已实现页面：登录 `/login`；班级列表 `/`；班级详情 `/classes/c1?tab=students|groups|invite|sessions`（学生增删、分组 DnD 保存、上课记录 recap 浮窗）；课前配置 `/classes/c1/setup`；课堂主界面 `/classes/c1/classroom`（直连判定顺序：①本地 store 命中该班进行中课堂→恢复 ②URL 带 `?lesson=4&title=...&duration=120`→用真实默认分组 boot 全新 session ③否则重定向 `/setup`；Lesson 3 固定 demo 不再有页面入口）。
 API（除 `/api/health`、`/api/auth/login` 外全部经认证中间件，写入用 `req` 上的当前老师 + orgId 过滤）：
-- 认证：`POST /api/auth/login`、`POST /api/auth/logout`、`GET /api/me`（无会话 401）。
+- 认证：`POST /api/auth/login`、`POST /api/auth/logout`、`GET /api/me`（无会话 401）、`POST /api/auth/verify-password`（登录墙内重验当前老师密码，错误 403 不影响会话；课堂「放弃本节课」弹窗用）。
 - 读：`GET /api/classes`、`GET /api/classes/:id`（含 `lastRecap`）、`GET /api/sessions/:id/recap`（组分排名 + 🌟亮眼(净≥2)/⚠️被提醒(任一−1) + 出勤）。
 - 写：`POST /api/classes`、`POST /api/classes/:id/students`、`DELETE /api/students/:id`（硬删连带清账本）、`PUT /api/students/:id/status`（`{status:'active'|'suspended'|'archived'}`，非 active 时清默认分组 membership；恢复在读不还原分组）、`PUT /api/classes/:id/groups`（整套 replace 默认分组，前端拖拽/改名/增删即时保存）、`POST /api/classes/:id/sessions`（**结束课堂一次性提交**：单事务里回写默认分组 §7.2 + 建 ClassSession(ended)/SessionGroup/SessionMembership 快照 + 批量 ScoreEvent/CheckRecord + buildRecap 返回；`clientSessionId` 幂等，`date` 由 `startedAt` 前 10 位派生，`startedAt/endedAt` 须为 `YYYY-MM-DD HH:mm:ss`）。
 - 队列只读镜像：`GET /api/classes/:id/join-requests`（cookie 会话；处理只在小程序做）。

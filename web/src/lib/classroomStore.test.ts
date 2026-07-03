@@ -128,6 +128,41 @@ describe('classroom reducer', () => {
     expect(s.students.find((x) => x.id === 's1')!.attendance).toBe('present');
   });
 
+  it('sets a group emoji on the live groups AND the default-grouping writeback', () => {
+    let s = boot();
+    s = reducer(s, { type: 'setGroupEmoji', gid: 'g1', emoji: '🐸' });
+    expect(s.groups.find((g) => g.id === 'g1')!.emoji).toBe('🐸');
+    expect(s.groups.find((g) => g.id === 'g2')!.emoji).toBe('🐯');
+    expect(s.defaultGrouping.find((g) => g.clientId === 'g1')!.emoji).toBe('🐸');
+    // and it ships in the one-shot commit payload
+    const p = buildCommitPayload(s, '2026-07-02 21:00:00');
+    expect(p.sessionGroups.find((g) => g.clientId === 'g1')!.emoji).toBe('🐸');
+    expect(p.defaultGrouping.groups.find((g) => g.clientId === 'g1')!.emoji).toBe('🐸');
+  });
+
+  it('renames a group on the live groups AND the default-grouping writeback', () => {
+    let s = boot();
+    s = reducer(s, { type: 'renameGroup', gid: 'g1', name: '雄狮队' });
+    expect(s.groups.find((g) => g.id === 'g1')!.name).toBe('雄狮队');
+    expect(s.groups.find((g) => g.id === 'g2')!.name).toBe('第2组');
+    expect(s.defaultGrouping.find((g) => g.clientId === 'g1')!.name).toBe('雄狮队');
+  });
+
+  it('removes a group: members become ungrouped, snapshot & writeback drop it, history stays', () => {
+    let s = boot();
+    s = reducer(s, { type: 'scoreGroup', gid: 'g1', d: 1, at });
+    s = reducer(s, { type: 'removeGroup', gid: 'g1' });
+    expect(s.groups.map((g) => g.id)).toEqual(['g2']);
+    expect(s.defaultGrouping.map((g) => g.clientId)).toEqual(['g2']);
+    // every member of g1 (present s1/s2 + pre-class absent s3) is now ungrouped
+    expect(s.students.filter((x) => ['s1', 's2', 's3'].includes(x.id)).every((x) => x.g === '')).toBe(true);
+    expect(s.events).toHaveLength(1); // 调组/删组 never rewrites the ledger
+    const p = buildCommitPayload(s, '2026-07-02 21:00:00');
+    expect(p.sessionGroups.map((g) => g.clientId)).toEqual(['g2']);
+    expect(p.defaultGrouping.groups.map((g) => g.clientId)).toEqual(['g2']);
+    expect(p.memberships.find((m) => m.studentId === 's1')!.clientGroupId).toBe(null);
+  });
+
   it('re-grouping only affects future scoring, not historical group scores', () => {
     let s = boot();
     s = reducer(s, { type: 'scoreStudent', sid: 's1', d: 1, at }); // earns for g1
