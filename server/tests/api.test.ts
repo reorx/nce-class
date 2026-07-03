@@ -152,6 +152,40 @@ describe('session recap', () => {
   });
 });
 
+describe('session deletion', () => {
+  const childCount = (table: string, sid = 'sess1') =>
+    (sqlite.prepare(`SELECT COUNT(*) c FROM ${table} WHERE session_id=?`).get(sid) as any).c;
+
+  it('deletes the session and rolls back all of its ledger rows', async () => {
+    const { agent } = await login();
+    const res = await agent.delete('/api/sessions/sess1');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+
+    const detail = (await agent.get('/api/classes/c1')).body;
+    expect(detail.sessions.map((s: any) => s.id)).not.toContain('sess1');
+    expect(detail.sessionCount).toBe(0);
+    expect(detail.lastRecap).toBeNull(); // sess1 was the only ended session
+
+    for (const t of ['score_events', 'session_memberships', 'check_records', 'session_groups']) {
+      expect(childCount(t)).toBe(0);
+    }
+    expect((sqlite.prepare(`SELECT COUNT(*) c FROM class_sessions WHERE id='sess1'`).get() as any).c).toBe(0);
+  });
+
+  it("blocks deleting another org's session with 404 and leaves the data intact", async () => {
+    const { agent } = await login('waiguo'); // org-2 teacher
+    expect((await agent.delete('/api/sessions/sess1')).status).toBe(404);
+    expect(childCount('score_events')).toBeGreaterThan(0);
+    expect((sqlite.prepare(`SELECT COUNT(*) c FROM class_sessions WHERE id='sess1'`).get() as any).c).toBe(1);
+  });
+
+  it('returns 404 for an unknown session id', async () => {
+    const { agent } = await login();
+    expect((await agent.delete('/api/sessions/nope')).status).toBe(404);
+  });
+});
+
 describe('end-class commit', () => {
   // Base payload over the seeded c1 (s1,s2 in g1; s3 in g2; s4 ungrouped).
   // Ledger: 小明 +2 (star), 小红 +1−1 (net 0, warned), 组 g1 +1 → g1 nested = 3.
@@ -288,6 +322,18 @@ describe('end-class commit', () => {
     expect(second.body.sessionId).toBe(first.body.sessionId);
     const count = sqlite.prepare(`SELECT COUNT(*) c FROM class_sessions WHERE client_session_id='cs-dup'`).get() as any;
     expect(count.c).toBe(1);
+  });
+
+  it('frees the clientSessionId when the session is deleted — a retry re-creates it', async () => {
+    const { agent } = await login();
+    const first = await agent.post('/api/classes/c1/sessions').send(body({ clientSessionId: 'cs-del' }));
+    expect(first.body.created).toBe(true);
+    expect((await agent.delete(`/api/sessions/${first.body.sessionId}`)).status).toBe(200);
+
+    const retry = await agent.post('/api/classes/c1/sessions').send(body({ clientSessionId: 'cs-del' }));
+    expect(retry.status).toBe(201);
+    expect(retry.body.created).toBe(true);
+    expect(retry.body.sessionId).not.toBe(first.body.sessionId);
   });
 
   it('rejects malformed payloads and foreign ids', async () => {

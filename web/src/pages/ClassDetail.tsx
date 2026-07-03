@@ -116,7 +116,7 @@ export function ClassDetail({ me }: { me: Me | null }) {
         {d && tab === 'students' && <StudentsTab d={d} reload={reload} />}
         {d && tab === 'groups' && <GroupsTab d={d} reload={reload} />}
         {d && tab === 'invite' && <InviteTab d={d} />}
-        {d && tab === 'sessions' && <SessionsTab d={d} />}
+        {d && tab === 'sessions' && <SessionsTab d={d} reload={reload} />}
       </div>
     </div>
   );
@@ -992,10 +992,12 @@ function InviteTab({ d }: { d: Detail }) {
 // ===== SESSIONS TAB ========================================================
 const fmtDur = (m: number) => `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m`;
 
-function SessionsTab({ d }: { d: Detail }) {
+function SessionsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | void }) {
   const [recap, setRecap] = useState<Recap | null>(null);
   const [recapOpen, setRecapOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<Session | null>(null);
+  const [busy, setBusy] = useState(false);
   const toast = useToast();
 
   async function openRecap(s: Session) {
@@ -1009,6 +1011,21 @@ function SessionsTab({ d }: { d: Detail }) {
       setRecapOpen(false);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function confirmDelete() {
+    if (!pendingDelete || busy) return;
+    setBusy(true);
+    try {
+      await api.deleteSession(pendingDelete.id);
+      await reload();
+      toast('已删除该条上课记录');
+      setPendingDelete(null);
+    } catch {
+      toast('删除失败，请重试', 'error');
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -1033,7 +1050,7 @@ function SessionsTab({ d }: { d: Detail }) {
           <span style={{ flex: 1 }}>LESSON</span>
           <span style={{ width: 118 }}>DURATION</span>
           <span style={{ width: 58 }}>GROUPS</span>
-          <span style={{ width: 104, textAlign: 'right' }}>RECAP</span>
+          <span style={{ width: 148, textAlign: 'right' }}>RECAP</span>
         </div>
         {d.sessions.map((s) => {
           const early = s.actualDurationMin < s.plannedDurationMin;
@@ -1083,7 +1100,7 @@ function SessionsTab({ d }: { d: Detail }) {
                 <div style={{ fontSize: 11, color: early ? '#c58a1e' : '#a6adb8', marginTop: 2 }}>{note}</div>
               </div>
               <div style={{ width: 58, fontSize: 13, color: '#5b6472' }}>{s.groupCount} 组</div>
-              <div style={{ width: 104, display: 'flex', justifyContent: 'flex-end' }}>
+              <div style={{ width: 148, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
                 <button
                   onClick={() => openRecap(s)}
                   style={{
@@ -1103,6 +1120,23 @@ function SessionsTab({ d }: { d: Detail }) {
                 >
                   查看 recap
                 </button>
+                <button
+                  onClick={() => setPendingDelete(s)}
+                  title="删除这条上课记录"
+                  style={{
+                    height: 34,
+                    padding: '0 10px',
+                    background: 'transparent',
+                    color: '#a6adb8',
+                    border: '1px solid transparent',
+                    borderRadius: 8,
+                    fontWeight: 600,
+                    fontSize: 12.5,
+                    cursor: 'pointer',
+                  }}
+                >
+                  删除
+                </button>
               </div>
             </div>
           );
@@ -1118,6 +1152,29 @@ function SessionsTab({ d }: { d: Detail }) {
         ) : (
           <RecapBody recap={recap} />
         )}
+      </Modal>
+
+      <Modal open={!!pendingDelete} onClose={() => setPendingDelete(null)} title="删除上课记录">
+        <div style={{ fontSize: 14, color: '#3c4451', lineHeight: 1.7 }}>
+          确定删除 <b>{pendingDelete?.date}</b>「
+          <b>
+            {pendingDelete?.lessonNumber != null
+              ? `第${pendingDelete.lessonNumber}课 · ${pendingDelete.lessonTitle}`
+              : pendingDelete?.lessonTitle}
+          </b>
+          」这条上课记录吗？该节课的得分、背书作业与出勤都会一并清除，且不可恢复。
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 22 }}>
+          <button style={ghostBtn} onClick={() => setPendingDelete(null)}>
+            取消
+          </button>
+          <button
+            style={{ ...primaryBtn, background: '#d94a4a', boxShadow: 'none', opacity: busy ? 0.6 : 1 }}
+            onClick={confirmDelete}
+          >
+            {busy ? '删除中…' : '删除'}
+          </button>
+        </div>
       </Modal>
     </div>
   );

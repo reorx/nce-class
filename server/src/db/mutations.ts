@@ -195,6 +195,22 @@ export function deleteStudent(sqlite: DB, studentId: string): void {
 }
 
 /**
+ * Hard-delete an ended session and everything it committed (single transaction).
+ * The default-grouping writeback is intentionally NOT reverted — the class keeps
+ * its current grouping; the teacher can adjust it on the groups page.
+ */
+export function deleteSession(sqlite: DB, sessionId: string): void {
+  const tx = sqlite.transaction((sid: string) => {
+    sqlite.prepare(`DELETE FROM score_events WHERE session_id=?`).run(sid);
+    sqlite.prepare(`DELETE FROM session_memberships WHERE session_id=?`).run(sid);
+    sqlite.prepare(`DELETE FROM check_records WHERE session_id=?`).run(sid);
+    sqlite.prepare(`DELETE FROM session_groups WHERE session_id=?`).run(sid);
+    sqlite.prepare(`DELETE FROM class_sessions WHERE id=?`).run(sid);
+  });
+  tx(sessionId);
+}
+
+/**
  * Replace a class's entire default grouping (PRD "save = update default group").
  * Idempotent: rebuilds class_groups + memberships from `groups`; any student not
  * listed in a group becomes ungrouped. Members are filtered to the class roster.

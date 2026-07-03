@@ -481,6 +481,10 @@ export function Classroom() {
           colorOf={colorOf}
           onClose={() => !submitting && setShowEnd(false)}
           onConfirm={confirmEnd}
+          onDiscard={() => {
+            setShowEnd(false);
+            setShowDiscard(true);
+          }}
         />
       )}
 
@@ -1106,6 +1110,7 @@ function EndRecap({
   colorOf,
   onClose,
   onConfirm,
+  onDiscard,
 }: {
   className: string;
   lesson: string;
@@ -1116,6 +1121,7 @@ function EndRecap({
   colorOf: (gid: string) => (typeof GROUP_COLORS)[number];
   onClose: () => void;
   onConfirm: () => void;
+  onDiscard: () => void;
 }) {
   const ranking = [...groups]
     .map((g) => ({ ...g, score: gScore(events, g.id), c: colorOf(g.id) }))
@@ -1241,6 +1247,26 @@ function EndRecap({
             }}
           >
             {submitting ? '保存中…' : '确认结束 · 生成 recap 推送家长'}
+          </button>
+        </div>
+        <div style={{ textAlign: 'center', marginTop: 14 }}>
+          <button
+            onClick={onDiscard}
+            disabled={submitting}
+            style={{
+              border: 'none',
+              background: 'transparent',
+              color: '#a7b0bb',
+              fontWeight: 600,
+              fontSize: 13,
+              fontFamily: 'inherit',
+              cursor: submitting ? 'default' : 'pointer',
+              textDecoration: 'underline',
+              textUnderlineOffset: 3,
+              opacity: submitting ? 0.5 : 1,
+            }}
+          >
+            丢弃本次上课，不计入记录
           </button>
         </div>
       </div>

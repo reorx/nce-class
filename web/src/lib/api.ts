@@ -185,6 +185,7 @@ export const api = {
   createClass: (name: string, level: string | null) => req<ClassDetail>('POST', '/api/classes', { name, level }),
   addStudent: (classId: string, name: string) => req<Student>('POST', `/api/classes/${classId}/students`, { name }),
   deleteStudent: (id: string) => req<{ ok: true }>('DELETE', `/api/students/${id}`),
+  deleteSession: (id: string) => req<{ ok: true }>('DELETE', `/api/sessions/${id}`),
   saveGrouping: (classId: string, groups: GroupSave[]) =>
     req<ClassDetail>('PUT', `/api/classes/${classId}/groups`, { groups }),
   getSessionRecap: (sessionId: string) => get<Recap>(`/api/sessions/${sessionId}/recap`),

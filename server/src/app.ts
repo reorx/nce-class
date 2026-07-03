@@ -22,6 +22,7 @@ import {
   commitSession,
   createClass,
   createInvite,
+  deleteSession,
   deleteStudent,
   dismissJoinRequest,
   linkJoinRequest,
@@ -849,6 +850,15 @@ export function createApp() {
     const teacher = res.locals.teacher;
     if (!classInOrg(req.params.id, teacher.org_id)) return res.status(404).json({ error: 'class not found' });
     res.json((q.pendingRequestsOfClass.all(req.params.id) as any[]).map(joinRequestItem));
+  });
+
+  // ---- session deletion (rolls back one committed session; grouping writeback stays) ----
+  app.delete('/api/sessions/:id', (req, res) => {
+    const teacher = res.locals.teacher;
+    const s = q.sessionById.get(req.params.id) as any;
+    if (!s || !classInOrg(s.class_id, teacher.org_id)) return res.status(404).json({ error: 'session not found' });
+    deleteSession(sqlite, req.params.id);
+    res.json({ ok: true });
   });
 
   // ---- recap (read) ----
