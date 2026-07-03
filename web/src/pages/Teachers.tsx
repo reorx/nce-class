@@ -155,6 +155,7 @@ export function Teachers({ me }: { me: Me | null }) {
         />
         <label style={{ ...labelStyle, marginTop: 15 }}>密码</label>
         <input
+          type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && submitAdd()}
