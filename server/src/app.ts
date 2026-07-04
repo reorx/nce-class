@@ -28,6 +28,7 @@ import {
   dismissJoinRequest,
   linkJoinRequest,
   saveGrouping,
+  setClassNotes,
   setStudentStatus,
   upsertJoinRequest,
   upsertWechatAccount,
@@ -257,6 +258,7 @@ function classDetailPayload(id: string) {
     id: c.id,
     name: c.name,
     level: c.level,
+    notes: c.notes ?? null,
     teacherName: teacher?.name ?? '—',
     studentCount: students.filter((s) => s.status !== 'archived').length,
     groupCount: groups.length,
@@ -974,6 +976,16 @@ export function createApp() {
       });
     }
     saveGrouping(sqlite, req.params.id, groups);
+    res.json(classDetailPayload(req.params.id));
+  });
+
+  // ---- class notes (班级资源 markdown; blank replaces with null) ----
+  app.put('/api/classes/:id/notes', (req, res) => {
+    const teacher = res.locals.teacher;
+    if (!classInOrg(req.params.id, teacher.org_id)) return res.status(404).json({ error: 'class not found' });
+    const raw = req.body?.notes;
+    if (typeof raw !== 'string') return res.status(400).json({ error: 'notes 必须是字符串' });
+    setClassNotes(sqlite, req.params.id, raw.trim() ? raw : null);
     res.json(classDetailPayload(req.params.id));
   });
 

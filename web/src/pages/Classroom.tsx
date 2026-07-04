@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { GroupEditPopover } from '../components/GroupEditMenu';
+import { Markdown } from '../components/Markdown';
 import { useToast } from '../components/Toast';
-import { ApiError, api, type TeacherItem } from '../lib/api';
+import { ApiError, api, type ClassDetail, type TeacherItem } from '../lib/api';
 import {
   applyStartTime,
   buildClassroomSession,
@@ -39,7 +40,7 @@ import {
 // that swaps between five views; scoring is an event stream (see lib/session).
 // The whole lesson runs in local state (lib/classroomStore), persisted to
 // LocalStorage after every change, and is POSTed once at 结束课堂.
-type View = 'board' | 'recite' | 'homework' | 'attendance' | 'regroup';
+type View = 'board' | 'recite' | 'homework' | 'attendance' | 'regroup' | 'info';
 
 const FONT = "'Nunito','PingFang SC','Microsoft YaHei',system-ui,sans-serif";
 const NUM = "'Baloo 2','Nunito','PingFang SC',sans-serif";
@@ -568,7 +569,9 @@ export function Classroom() {
             );
           })()}
 
-        {!isBoard && (
+        {view === 'info' && <ClassInfoView classId={id} session={session} />}
+
+        {!isBoard && view !== 'info' && (
           <SegmentView
             view={view}
             students={students}
@@ -584,6 +587,9 @@ export function Classroom() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '14px 22px 18px', flexShrink: 0 }}>
         <button onClick={() => goView('attendance')} style={attnStyle(view === 'attendance')}>
           <span style={{ fontSize: 17 }}>📋</span>出勤
+        </button>
+        <button onClick={() => goView('info')} style={attnStyle(view === 'info')}>
+          <span style={{ fontSize: 17 }}>📚</span>班级信息
         </button>
         <div style={{ display: 'flex', gap: 6, background: '#eef2ea', padding: 6, borderRadius: 18 }}>
           {(
@@ -930,6 +936,240 @@ interface Seg {
   students: ClassroomStudent[];
   empty?: boolean;
   value?: Recitation | Homework;
+}
+
+// ---- 班级信息 view: left = class/lesson facts, right = 班级资源 markdown ----
+// Notes deliberately live on the server (not in the offline session snapshot),
+// so this view fetches fresh on entry and saving needs the network.
+function ClassInfoView({ classId, session }: { classId: string; session: ClassroomSession }) {
+  const toast = useToast();
+  const [detail, setDetail] = useState<ClassDetail | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const load = () => {
+    setFailed(false);
+    api
+      .classDetail(classId)
+      .then(setDetail)
+      .catch(() => setFailed(true));
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(load, [classId]);
+
+  const save = () => {
+    if (busy) return;
+    setBusy(true);
+    api
+      .updateClassNotes(classId, draft)
+      .then((d) => {
+        setDetail(d);
+        setEditing(false);
+        toast('班级资源已保存');
+      })
+      .catch(() => toast('保存失败，请重试', 'error'))
+      .finally(() => setBusy(false));
+  };
+
+  const startedHm = session.startedAt.slice(11, 16);
+  const facts: [string, string][] = detail
+    ? [
+        ['班级', detail.name + (detail.level ? ` · ${detail.level}` : '')],
+        ['负责老师', detail.teacherName],
+        ['学生', `${detail.studentCount} 人`],
+        ['默认分组', `${detail.groupCount} 组`],
+        ['累计课次', `${detail.sessionCount} 节`],
+      ]
+    : [];
+  const lessonFacts: [string, string][] = [
+    ['课次', fmtLessonLabel({ lessonNumber: session.lessonNumber ?? '', lessonTitle: session.lessonTitle ?? '' })],
+    ['主讲老师', session.teacherName || '—'],
+    ['开始时间', startedHm],
+    ['计划时长', `${session.plannedDurationMin} 分钟`],
+  ];
+
+  const factRow = ([label, value]: [string, string]) => (
+    <div key={label} style={{ display: 'flex', alignItems: 'baseline', gap: 12, padding: '7px 0' }}>
+      <span style={{ width: 74, flexShrink: 0, fontSize: 14, fontWeight: 700, color: '#a7b0bb' }}>{label}</span>
+      <span style={{ fontSize: 16, fontWeight: 800, color: '#2c3340' }}>{value}</span>
+    </div>
+  );
+
+  const paneBtn = (primary: boolean): CSSProperties => ({
+    padding: '9px 20px',
+    borderRadius: 12,
+    border: primary ? 'none' : '2px solid #dfe6da',
+    background: primary ? '#2fb457' : '#fff',
+    color: primary ? '#fff' : '#5b6672',
+    fontWeight: 800,
+    fontSize: 15,
+    fontFamily: 'inherit',
+    cursor: 'pointer',
+    boxShadow: primary ? '0 4px 12px rgba(47,180,87,.32)' : 'none',
+    opacity: busy ? 0.6 : 1,
+  });
+
+  return (
+    <div
+      style={{
+        flex: 1,
+        minHeight: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        background: '#ffffff',
+        borderRadius: 26,
+        boxShadow: '0 10px 28px rgba(60,90,55,.08)',
+        overflow: 'hidden',
+        marginBottom: 6,
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          padding: '18px 24px',
+          borderBottom: '2px solid #f0f3ed',
+        }}
+      >
+        <span style={{ fontSize: 26 }}>📚</span>
+        <span style={{ fontWeight: 900, fontSize: 22, color: '#2c3340' }}>班级信息</span>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 10 }}>
+          {editing ? (
+            <>
+              <button style={paneBtn(false)} onClick={() => setEditing(false)} disabled={busy}>
+                取消
+              </button>
+              <button style={paneBtn(true)} onClick={save} disabled={busy}>
+                {busy ? '保存中…' : '保存'}
+              </button>
+            </>
+          ) : (
+            <button
+              style={paneBtn(false)}
+              onClick={() => {
+                setDraft(detail?.notes ?? '');
+                setEditing(true);
+              }}
+              disabled={!detail}
+            >
+              ✎ 编辑资源
+            </button>
+          )}
+        </div>
+      </div>
+
+      {failed ? (
+        <div
+          style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 14,
+          }}
+        >
+          <div style={{ fontSize: 16, fontWeight: 800, color: '#a7b0bb' }}>班级信息加载失败</div>
+          <button style={paneBtn(false)} onClick={load}>
+            重试
+          </button>
+        </div>
+      ) : !detail ? (
+        <div
+          style={{
+            flex: 1,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: 16,
+            fontWeight: 800,
+            color: '#a7b0bb',
+          }}
+        >
+          加载中…
+        </div>
+      ) : (
+        <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
+          <div
+            style={{
+              width: 320,
+              flexShrink: 0,
+              padding: '18px 24px',
+              borderRight: '2px solid #f0f3ed',
+              overflow: 'auto',
+            }}
+          >
+            {facts.map(factRow)}
+            <div style={{ margin: '14px 0 8px', fontSize: 13, fontWeight: 900, color: '#a7b0bb', letterSpacing: 1 }}>
+              本节课
+            </div>
+            {lessonFacts.map(factRow)}
+          </div>
+          <div
+            style={{
+              flex: 1,
+              minWidth: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              padding: '18px 24px',
+              overflow: 'hidden',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10, flexShrink: 0 }}>
+              <span style={{ fontSize: 16, fontWeight: 900, color: '#2c3340' }}>📖 班级资源</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: '#a7b0bb' }}>
+                教材、链接、注意事项 · 支持 Markdown
+              </span>
+            </div>
+            {editing ? (
+              <textarea
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                placeholder={'# 教材\n\n- 《新概念英语》第二册\n- [单词表](https://…)'}
+                autoFocus
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  width: '100%',
+                  padding: '12px 14px',
+                  border: '2px solid #dfe6da',
+                  borderRadius: 14,
+                  background: '#fbfcf9',
+                  color: '#2c3340',
+                  fontFamily: "'IBM Plex Mono', monospace",
+                  fontSize: 14,
+                  lineHeight: 1.65,
+                  resize: 'none',
+                  outline: 'none',
+                }}
+              />
+            ) : detail.notes ? (
+              <div style={{ flex: 1, minHeight: 0, overflow: 'auto', paddingRight: 6 }}>
+                <Markdown text={detail.notes} />
+              </div>
+            ) : (
+              <div
+                style={{
+                  flex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 15,
+                  fontWeight: 700,
+                  color: '#a7b0bb',
+                }}
+              >
+                还没有班级资源，点击右上角「编辑资源」添加
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function SegmentView({

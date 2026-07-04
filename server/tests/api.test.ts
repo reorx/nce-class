@@ -227,6 +227,41 @@ describe('class creation', () => {
   });
 });
 
+describe('class notes', () => {
+  it('saves markdown notes and echoes them in the class detail', async () => {
+    const { agent } = await login();
+    const md = '# 教材\n\n- 新概念二册\n- [单词表](https://example.com/words)';
+    const res = await agent.put('/api/classes/c1/notes').send({ notes: md });
+    expect(res.status).toBe(200);
+    expect(res.body.notes).toBe(md);
+
+    expect((sqlite.prepare(`SELECT notes FROM classes WHERE id='c1'`).get() as any).notes).toBe(md);
+    expect((await agent.get('/api/classes/c1')).body.notes).toBe(md);
+  });
+
+  it('defaults to null and clears back to null on blank input', async () => {
+    const { agent } = await login();
+    expect((await agent.get('/api/classes/c1')).body.notes).toBeNull();
+
+    await agent.put('/api/classes/c1/notes').send({ notes: '内容' });
+    const res = await agent.put('/api/classes/c1/notes').send({ notes: '   ' });
+    expect(res.status).toBe(200);
+    expect(res.body.notes).toBeNull();
+    expect((sqlite.prepare(`SELECT notes FROM classes WHERE id='c1'`).get() as any).notes).toBeNull();
+  });
+
+  it('rejects non-string bodies, unknown and cross-org classes', async () => {
+    const { agent } = await login();
+    expect((await agent.put('/api/classes/c1/notes').send({ notes: 42 })).status).toBe(400);
+    expect((await agent.put('/api/classes/c1/notes').send({})).status).toBe(400);
+    expect((await agent.put('/api/classes/nope/notes').send({ notes: 'x' })).status).toBe(404);
+
+    const out = (await login('waiguo')).agent;
+    expect((await out.put('/api/classes/c1/notes').send({ notes: 'x' })).status).toBe(404);
+    expect((sqlite.prepare(`SELECT notes FROM classes WHERE id='c1'`).get() as any).notes).toBeNull();
+  });
+});
+
 describe('session recap', () => {
   it('derives group ranking, 亮眼/被提醒, and attendance from the ledger', async () => {
     const { agent } = await login();

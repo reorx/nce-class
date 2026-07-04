@@ -54,6 +54,7 @@ export const classes = sqliteTable('classes', {
     .references(() => organizations.id),
   name: text('name').notNull(),
   level: text('level'), // 新概念二册 etc. (optional grade / book)
+  notes: text('notes'), // 班级资源 — free-form markdown kept by the teachers
   teacherId: text('teacher_id').references(() => teachers.id), // 负责老师
   createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
 });

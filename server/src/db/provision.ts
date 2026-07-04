@@ -15,6 +15,11 @@ export function migrate(sqlite: DB): void {
   if (!studentCols.some((c) => c.name === 'status')) {
     sqlite.exec(`ALTER TABLE students ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`);
   }
+  // Pre-notes databases: 班级资源 markdown column on classes.
+  const classCols = sqlite.prepare(`PRAGMA table_info(classes)`).all() as { name: string }[];
+  if (!classCols.some((c) => c.name === 'notes')) {
+    sqlite.exec(`ALTER TABLE classes ADD COLUMN notes TEXT`);
+  }
 }
 
 /** Provision a real account on a clean database: org (by name, created if missing) + teacher + password credential. */

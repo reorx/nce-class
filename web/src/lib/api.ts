@@ -89,6 +89,7 @@ export interface ClassDetail {
   id: string;
   name: string;
   level: string | null;
+  notes: string | null; // 班级资源 — free-form markdown
   teacherName: string;
   studentCount: number;
   groupCount: number;
@@ -243,6 +244,8 @@ export const api = {
   deleteSession: (id: string) => req<{ ok: true }>('DELETE', `/api/sessions/${id}`),
   saveGrouping: (classId: string, groups: GroupSave[]) =>
     req<ClassDetail>('PUT', `/api/classes/${classId}/groups`, { groups }),
+  updateClassNotes: (classId: string, notes: string) =>
+    req<ClassDetail>('PUT', `/api/classes/${classId}/notes`, { notes }),
   getSessionRecap: (sessionId: string) => get<Recap>(`/api/sessions/${sessionId}/recap`),
   getStudentProfile: (studentId: string) => get<StudentProfile>(`/api/students/${studentId}/profile`),
   getJoinRequests: (classId: string) => get<JoinRequestItem[]>(`/api/classes/${classId}/join-requests`),

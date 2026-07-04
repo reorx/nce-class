@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Markdown } from '../components/Markdown';
 import { Modal } from '../components/Modal';
 import { TopBar } from '../components/TopBar';
 import { useToast } from '../components/Toast';
@@ -22,8 +23,8 @@ import {
 } from '../lib/grouping';
 import { avatarStyle, GREEN, initial, sourceTag, statusTag } from '../lib/theme';
 
-type Tab = 'students' | 'groups' | 'invite' | 'sessions';
-const TABS: Tab[] = ['students', 'groups', 'invite', 'sessions'];
+type Tab = 'students' | 'groups' | 'notes' | 'invite' | 'sessions';
+const TABS: Tab[] = ['students', 'groups', 'notes', 'invite', 'sessions'];
 
 export function ClassDetail({ me }: { me: Me | null }) {
   const { id = '' } = useParams();
@@ -114,6 +115,7 @@ export function ClassDetail({ me }: { me: Me | null }) {
 
         {d && tab === 'students' && <StudentsTab d={d} reload={reload} />}
         {d && tab === 'groups' && <GroupsTab d={d} reload={reload} />}
+        {d && tab === 'notes' && <NotesTab d={d} reload={reload} />}
         {d && tab === 'invite' && <InviteTab d={d} />}
         {d && tab === 'sessions' && <SessionsTab d={d} reload={reload} />}
       </div>
@@ -128,7 +130,8 @@ function TabCount({ n }: { n?: number }) {
     </span>
   );
 }
-const tabLabel = (t: Tab) => ({ students: '学生', groups: '分组方案', invite: '邀请家长', sessions: '上课记录' })[t];
+const tabLabel = (t: Tab) =>
+  ({ students: '学生', groups: '分组方案', notes: '班级资源', invite: '邀请家长', sessions: '上课记录' })[t];
 const tabStyle = (active: boolean): CSSProperties => ({
   display: 'flex',
   alignItems: 'center',
@@ -176,6 +179,88 @@ const ghostBtn: CSSProperties = {
   fontSize: 14,
   cursor: 'pointer',
 };
+
+// ===== NOTES TAB (班级资源, free-form markdown) =============================
+function NotesTab({ d, reload }: { d: Detail; reload: () => Promise<void> | void }) {
+  const toast = useToast();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await api.updateClassNotes(d.id, draft);
+      await reload();
+      toast('班级资源已保存');
+      setEditing(false);
+    } catch {
+      toast('保存失败，请重试', 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div style={{ background: '#fff', border: '1px solid #e7e9ee', borderRadius: 14, padding: '20px 24px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+        <div style={{ fontSize: 15, fontWeight: 700 }}>班级资源</div>
+        <div style={{ fontSize: 12.5, color: '#aab1bc' }}>教材、链接、注意事项 · 支持 Markdown</div>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 10 }}>
+          {editing ? (
+            <>
+              <button style={ghostBtn} onClick={() => setEditing(false)} disabled={busy}>
+                取消
+              </button>
+              <button style={{ ...primaryBtn, opacity: busy ? 0.6 : 1 }} onClick={save} disabled={busy}>
+                {busy ? '保存中…' : '保存'}
+              </button>
+            </>
+          ) : (
+            <button
+              style={ghostBtn}
+              onClick={() => {
+                setDraft(d.notes ?? '');
+                setEditing(true);
+              }}
+            >
+              ✎ 编辑
+            </button>
+          )}
+        </div>
+      </div>
+      {editing ? (
+        <textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder={'# 教材\n\n- 《新概念英语》第二册\n- [单词表](https://…)'}
+          autoFocus
+          style={{
+            width: '100%',
+            minHeight: 380,
+            padding: '12px 14px',
+            border: '1px solid #e2e5ea',
+            borderRadius: 10,
+            background: '#fbfcfd',
+            color: '#1e2430',
+            fontFamily: "'IBM Plex Mono', monospace",
+            fontSize: 13.5,
+            lineHeight: 1.65,
+            resize: 'vertical',
+            outline: 'none',
+          }}
+        />
+      ) : d.notes ? (
+        <Markdown text={d.notes} />
+      ) : (
+        <div style={{ color: '#aab1bc', fontSize: 14, padding: '28px 0', textAlign: 'center' }}>
+          还没有班级资源，点击右上角「编辑」添加
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ===== STUDENTS TAB ========================================================
 function StudentsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | void }) {

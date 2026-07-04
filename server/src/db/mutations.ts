@@ -203,6 +203,11 @@ export function dismissJoinRequest(sqlite: DB, p: { requestId: string; teacherId
     .run(p.teacherId, p.requestId);
 }
 
+/** Replace the class 班级资源 markdown (null clears it). */
+export function setClassNotes(sqlite: DB, classId: string, notes: string | null): void {
+  sqlite.prepare(`UPDATE classes SET notes=? WHERE id=?`).run(notes, classId);
+}
+
 /**
  * Set a student's status (active 在读 / suspended 停课 / archived 已归档).
  * Leaving active also removes them from the default grouping (decision 3);
