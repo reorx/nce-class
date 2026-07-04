@@ -54,6 +54,8 @@ export interface Session {
   plannedDurationMin: number;
   actualDurationMin: number;
   durationLabel: string;
+  startedAt: string | null; // 'YYYY-MM-DD HH:mm:ss'; null on legacy rows
+  endedAt: string | null;
   groupCount: number;
 }
 
@@ -242,6 +244,8 @@ export const api = {
   setStudentStatus: (id: string, status: StudentStatus) =>
     req<{ id: string; name: string; status: StudentStatus }>('PUT', `/api/students/${id}/status`, { status }),
   deleteSession: (id: string) => req<{ ok: true }>('DELETE', `/api/sessions/${id}`),
+  updateSessionStartedAt: (id: string, startedAt: string) =>
+    req<{ ok: true }>('PUT', `/api/sessions/${id}`, { startedAt }),
   saveGrouping: (classId: string, groups: GroupSave[]) =>
     req<ClassDetail>('PUT', `/api/classes/${classId}/groups`, { groups }),
   updateClassNotes: (classId: string, notes: string) =>

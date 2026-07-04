@@ -4,14 +4,8 @@ import { Markdown } from '../components/Markdown';
 import { Modal } from '../components/Modal';
 import { TopBar } from '../components/TopBar';
 import { useToast } from '../components/Toast';
-import {
-  api,
-  type ClassDetail as Detail,
-  type JoinRequestItem,
-  type Me,
-  type Session,
-  type Student,
-} from '../lib/api';
+import { api, type ClassDetail as Detail, type JoinRequestItem, type Me, type Session, type Student } from '../lib/api';
+import { applyStartTime, startTimeOf } from '../lib/classroomStore';
 import {
   addGroup,
   moveStudent,
@@ -1187,8 +1181,41 @@ const fmtLesson = (no: number | null, title: string | null) =>
 
 function SessionsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | void }) {
   const [pendingDelete, setPendingDelete] = useState<Session | null>(null);
+  const [editing, setEditing] = useState<Session | null>(null);
+  const [editTime, setEditTime] = useState('');
+  const [editErr, setEditErr] = useState('');
   const [busy, setBusy] = useState(false);
   const toast = useToast();
+
+  function openEdit(s: Session) {
+    setEditing(s);
+    setEditTime(s.startedAt ? startTimeOf(s.startedAt) : '');
+    setEditErr('');
+  }
+
+  async function confirmEdit() {
+    if (!editing?.startedAt || busy) return;
+    const next = applyStartTime(editing.startedAt, editTime);
+    if (!next) {
+      setEditErr('请输入有效的开始时间');
+      return;
+    }
+    if (editing.endedAt && next >= editing.endedAt) {
+      setEditErr('开始时间必须早于结束时间');
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.updateSessionStartedAt(editing.id, next);
+      await reload();
+      toast('已更新开始时间');
+      setEditing(null);
+    } catch {
+      toast('保存失败，请重试', 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function confirmDelete() {
     if (!pendingDelete || busy) return;
@@ -1226,7 +1253,7 @@ function SessionsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | v
           <span style={{ flex: 1 }}>LESSON</span>
           <span style={{ width: 118 }}>DURATION</span>
           <span style={{ width: 58 }}>GROUPS</span>
-          <span style={{ width: 148, textAlign: 'right' }}>RECAP</span>
+          <span style={{ width: 210, textAlign: 'right' }}>RECAP</span>
         </div>
         {d.sessions.map((s) => {
           const early = s.actualDurationMin < s.plannedDurationMin;
@@ -1279,7 +1306,7 @@ function SessionsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | v
                 <div style={{ fontSize: 11, color: early ? '#c58a1e' : '#a6adb8', marginTop: 2 }}>{note}</div>
               </div>
               <div style={{ width: 58, fontSize: 13, color: '#5b6472' }}>{s.groupCount} 组</div>
-              <div style={{ width: 148, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <div style={{ width: 210, display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
                 <Link
                   to={`/classes/${d.id}/sessions/${s.id}/recap`}
                   target="_blank"
@@ -1301,6 +1328,25 @@ function SessionsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | v
                 >
                   查看 recap
                 </Link>
+                {s.startedAt && (
+                  <button
+                    onClick={() => openEdit(s)}
+                    title="修改这节课的开始时间"
+                    style={{
+                      height: 34,
+                      padding: '0 10px',
+                      background: 'transparent',
+                      color: '#a6adb8',
+                      border: '1px solid transparent',
+                      borderRadius: 8,
+                      fontWeight: 600,
+                      fontSize: 12.5,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    改时间
+                  </button>
+                )}
                 <button
                   onClick={() => setPendingDelete(s)}
                   title="删除这条上课记录"
@@ -1327,6 +1373,37 @@ function SessionsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | v
         仅展示本班历次课堂 · recap 家长可在专属链接查看个性化版本
       </div>
 
+      <Modal open={!!editing} onClose={() => setEditing(null)} title="修改开始时间">
+        <div style={{ fontSize: 14, color: '#3c4451', lineHeight: 1.7, marginBottom: 16 }}>
+          <b>{editing?.date}</b>「<b>{editing && fmtLesson(editing.lessonNumber, editing.lessonTitle)}</b>」 · 结束时间{' '}
+          <b className="mono">{editing?.endedAt ? editing.endedAt.slice(11, 16) : '—'}</b>
+          ，修改开始时间后课堂时长会重新计算。
+        </div>
+        <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#5b6472', marginBottom: 6 }}>
+          开始时间
+        </label>
+        <input
+          type="time"
+          value={editTime}
+          autoFocus
+          onChange={(e) => {
+            setEditTime(e.target.value);
+            setEditErr('');
+          }}
+          onKeyDown={(e) => e.key === 'Enter' && confirmEdit()}
+          style={fieldStyle}
+        />
+        {editErr && <div style={{ color: '#ff5a5f', fontSize: 13, fontWeight: 700, marginTop: 8 }}>{editErr}</div>}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 22 }}>
+          <button style={ghostBtn} onClick={() => setEditing(null)}>
+            取消
+          </button>
+          <button style={{ ...primaryBtn, opacity: busy ? 0.6 : 1 }} onClick={confirmEdit}>
+            {busy ? '保存中…' : '保存'}
+          </button>
+        </div>
+      </Modal>
+
       <Modal open={!!pendingDelete} onClose={() => setPendingDelete(null)} title="删除上课记录">
         <div style={{ fontSize: 14, color: '#3c4451', lineHeight: 1.7 }}>
           确定删除 <b>{pendingDelete?.date}</b>「
@@ -1348,4 +1425,3 @@ function SessionsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | v
     </div>
   );
 }
-

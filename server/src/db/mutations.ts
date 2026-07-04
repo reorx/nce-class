@@ -253,6 +253,17 @@ export function deleteSession(sqlite: DB, sessionId: string): void {
 }
 
 /**
+ * Adjust a committed session's start time (record fix-up from the 上课记录 tab).
+ * The stored `date` follows startedAt (decision 9), so date labels and recap
+ * ordering stay consistent; the actual duration is derived on read.
+ */
+export function updateSessionStartedAt(sqlite: DB, sessionId: string, startedAt: string): void {
+  sqlite
+    .prepare(`UPDATE class_sessions SET started_at=?, date=? WHERE id=?`)
+    .run(startedAt, startedAt.slice(0, 10), sessionId);
+}
+
+/**
  * Replace a class's entire default grouping (PRD "save = update default group").
  * Idempotent: rebuilds class_groups + memberships from `groups`; any student not
  * listed in a group becomes ungrouped. Members are filtered to the class's

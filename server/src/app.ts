@@ -30,6 +30,7 @@ import {
   saveGrouping,
   setClassNotes,
   setStudentStatus,
+  updateSessionStartedAt,
   upsertJoinRequest,
   upsertWechatAccount,
   type CommitInput,
@@ -251,6 +252,8 @@ function classDetailPayload(id: string) {
       plannedDurationMin: s.planned_duration_min,
       actualDurationMin: actual,
       durationLabel: fmtDuration(actual),
+      startedAt: s.started_at ?? null,
+      endedAt: s.ended_at ?? null,
       groupCount: sgCounts.get(s.id) ?? 0,
     };
   });
@@ -1025,6 +1028,20 @@ export function createApp() {
     const s = q.sessionById.get(req.params.id) as any;
     if (!s || !classInOrg(s.class_id, teacher.org_id)) return res.status(404).json({ error: 'session not found' });
     deleteSession(sqlite, req.params.id);
+    res.json({ ok: true });
+  });
+
+  // ---- session start-time edit (record fix-up; actual duration is derived on read) ----
+  app.put('/api/sessions/:id', (req, res) => {
+    const teacher = res.locals.teacher;
+    const s = q.sessionById.get(req.params.id) as any;
+    if (!s || !classInOrg(s.class_id, teacher.org_id)) return res.status(404).json({ error: 'session not found' });
+    const startedAt = str(req.body?.startedAt);
+    if (!startedAt || !TIME_RE.test(startedAt))
+      return res.status(400).json({ error: 'startedAt 必须是 YYYY-MM-DD HH:mm:ss' });
+    // Same naive format on both sides, so plain string order IS chronological order.
+    if (s.ended_at && startedAt >= s.ended_at) return res.status(400).json({ error: '开始时间必须早于结束时间' });
+    updateSessionStartedAt(sqlite, req.params.id, startedAt);
     res.json({ ok: true });
   });
 

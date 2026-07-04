@@ -428,6 +428,55 @@ describe('session deletion', () => {
   });
 });
 
+describe('session start-time update', () => {
+  const row = () =>
+    sqlite.prepare(`SELECT date, started_at, ended_at FROM class_sessions WHERE id='sess1'`).get() as any;
+
+  it('updates startedAt and recomputes the actual duration in classDetail', async () => {
+    const { agent } = await login();
+    const res = await agent.put('/api/sessions/sess1').send({ startedAt: '2026-06-26 18:30:00' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+    expect(row()).toMatchObject({ date: '2026-06-26', started_at: '2026-06-26 18:30:00' });
+
+    const detail = (await agent.get('/api/classes/c1')).body;
+    const s = detail.sessions.find((x: any) => x.id === 'sess1');
+    expect(s.actualDurationMin).toBe(148); // 18:30 → 20:58
+    expect(s.startedAt).toBe('2026-06-26 18:30:00');
+    expect(s.endedAt).toBe('2026-06-26 20:58:00');
+  });
+
+  it('re-derives the session date when startedAt moves to another day', async () => {
+    const { agent } = await login();
+    expect((await agent.put('/api/sessions/sess1').send({ startedAt: '2026-06-25 23:30:00' })).status).toBe(200);
+    expect(row()).toMatchObject({ date: '2026-06-25', started_at: '2026-06-25 23:30:00' });
+  });
+
+  it('rejects malformed startedAt with 400 and leaves the row untouched', async () => {
+    const { agent } = await login();
+    for (const bad of ['2026-06-26T18:30:00Z', '18:30', '2026-13-99 99:99:99', '', null, 5]) {
+      expect((await agent.put('/api/sessions/sess1').send({ startedAt: bad })).status).toBe(400);
+    }
+    expect(row()).toMatchObject({ date: '2026-06-26', started_at: '2026-06-26 19:00:00' });
+  });
+
+  it('rejects a startedAt at or after endedAt with 400', async () => {
+    const { agent } = await login();
+    expect((await agent.put('/api/sessions/sess1').send({ startedAt: '2026-06-26 20:58:00' })).status).toBe(400);
+    expect((await agent.put('/api/sessions/sess1').send({ startedAt: '2026-06-26 21:30:00' })).status).toBe(400);
+    expect(row()).toMatchObject({ started_at: '2026-06-26 19:00:00' });
+  });
+
+  it("blocks unauthenticated (401), another org's session and unknown ids (404)", async () => {
+    expect((await request(app).put('/api/sessions/sess1').send({ startedAt: '2026-06-26 18:30:00' })).status).toBe(401);
+    const out = await login('waiguo'); // org-2 teacher
+    expect((await out.agent.put('/api/sessions/sess1').send({ startedAt: '2026-06-26 18:30:00' })).status).toBe(404);
+    const { agent } = await login();
+    expect((await agent.put('/api/sessions/nope').send({ startedAt: '2026-06-26 18:30:00' })).status).toBe(404);
+    expect(row()).toMatchObject({ started_at: '2026-06-26 19:00:00' });
+  });
+});
+
 describe('end-class commit', () => {
   // Base payload over the seeded c1 (s1,s2 in g1; s3 in g2; s4 ungrouped).
   // Ledger: 小明 +2 (star), 小红 +1−1 (net 0, warned), 组 g1 +1 → g1 nested = 3.
