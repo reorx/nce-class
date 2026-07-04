@@ -82,6 +82,7 @@ export interface RecapGroup {
 export interface RecapStar {
   name: string;
   net: number;
+  photoUrl?: string | null; // resolved storage URL; absent on legacy payloads
 }
 
 /** One student's 奖章 tags in a recap (name-keyed like stars/warned). */

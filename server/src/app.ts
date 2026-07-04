@@ -118,7 +118,7 @@ const q = {
   ),
   // Per-student net + min delta within a session, for the recap 亮眼 / 被提醒 lists.
   sessionStudentDeltas: sqlite.prepare(
-    `SELECT st.id sid, st.name name, st.created_at ca,
+    `SELECT st.id sid, st.name name, st.photo_url, st.created_at ca,
        COALESCE(SUM(e.delta),0) net, COALESCE(MIN(e.delta),0) mind
      FROM students st
      JOIN score_events e
@@ -318,7 +318,7 @@ function buildRecap(s: any) {
   const stars = deltas
     .filter((r) => r.net >= 2)
     .sort((a, b) => b.net - a.net)
-    .map((r) => ({ name: r.name, net: r.net }));
+    .map((r) => ({ name: r.name, net: r.net, photoUrl: r.photo_url ? storageClient.getUrl(r.photo_url) : null }));
   const warned = deltas.filter((r) => r.mind < 0).map((r) => ({ name: r.name }));
   const att = q.sessionAttendance.get(s.id) as any;
   // 奖章, grouped per student (name-keyed like stars/warned — the class-level

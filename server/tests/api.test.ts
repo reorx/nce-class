@@ -581,6 +581,11 @@ describe('session recap', () => {
     ]);
     expect(recap.stars.map((s: any) => s.name)).toEqual(['小明']);
     expect(recap.warned.map((s: any) => s.name)).toEqual(['小刚']);
+    // stars carry a resolved photoUrl (storage key → URL; null when no photo)
+    expect(recap.stars[0].photoUrl).toBeNull();
+    sqlite.prepare(`UPDATE students SET photo_url='photos/xm.png' WHERE id='s1'`).run();
+    const withPhoto = (await agent.get('/api/sessions/sess1/recap')).body;
+    expect(withPhoto.stars[0].photoUrl).toBe('/uploads/photos/xm.png');
     expect(recap.attendancePresent).toBe(3);
     expect(recap.attendanceTotal).toBe(4);
     // 奖章 tags grouped per student (seeded: s1 got 进步之星)

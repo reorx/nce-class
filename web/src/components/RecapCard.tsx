@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import { useState, type CSSProperties } from 'react';
 import type { Recap } from '../lib/api';
 import {
   dateLabel,
@@ -77,7 +77,7 @@ export function RecapCard({
           <div style={{ marginTop: 5, fontWeight: 800, fontSize: 13, color: '#8a7f63' }}>{recap.lessonTitle}</div>
         )}
         <div style={{ marginTop: 6, fontWeight: 700, fontSize: 12, color: '#a89a72' }}>
-          时长 {fmtDurationCn(recap.actualDurationMin)} · {recap.attendancePresent}人到课
+          时长 {fmtDurationCn(recap.actualDurationMin)}
         </div>
       </div>
 
@@ -132,10 +132,8 @@ export function RecapCard({
             <div style={{ fontWeight: 700, fontSize: 12, color: '#b5ab8e' }}>本节暂无 · 下节课争取上榜！</div>
           ) : (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-              {recap.stars.map((s) => (
-                <span key={s.name} style={chip('#fdf3da', '#e8d193', '#8f6b16')}>
-                  {s.name} +{s.net}
-                </span>
+              {recap.stars.slice(0, 3).map((s) => (
+                <StarPill key={s.name} star={s} />
               ))}
             </div>
           )}
@@ -166,6 +164,53 @@ export function RecapCard({
         </div>
       </div>
     </div>
+  );
+}
+
+// 今日之星胶囊：圆头像（无照片回退首字）+ 姓名 + 净得分。
+function StarPill({ star }: { star: { name: string; net: number; photoUrl?: string | null } }) {
+  // 照片 404（如 dev seed 的假 key）时回退首字头像，避免导出图片带破图。
+  const [broken, setBroken] = useState(false);
+  const avatar: CSSProperties = {
+    width: 28,
+    height: 28,
+    borderRadius: '50%',
+    border: '1.5px solid #d9b45a',
+    flexShrink: 0,
+  };
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 7,
+        padding: '4px 13px 4px 4px',
+        borderRadius: 999,
+        background: '#fdf3da',
+        border: '1px solid #e8d193',
+      }}
+    >
+      {star.photoUrl && !broken ? (
+        <img src={star.photoUrl} alt="" onError={() => setBroken(true)} style={{ ...avatar, objectFit: 'cover' }} />
+      ) : (
+        <span
+          style={{
+            ...avatar,
+            background: '#f5e9c9',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontWeight: 800,
+            fontSize: 13,
+            color: '#8f6b16',
+          }}
+        >
+          {star.name[0]}
+        </span>
+      )}
+      <span style={{ fontWeight: 800, fontSize: 13, color: '#8f6b16' }}>{star.name}</span>
+      <span style={{ fontFamily: BALOO, fontWeight: 800, fontSize: 14, color: '#b8891f' }}>+{star.net}</span>
+    </span>
   );
 }
 
