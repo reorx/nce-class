@@ -1,7 +1,14 @@
 import Taro from '@tarojs/taro';
 
-// h5 走 devServer 代理（相对路径）；weapp 直连本机 server（开发者工具需关闭域名校验）。
-export const BASE = process.env.TARO_ENV === 'h5' ? '' : 'http://localhost:5177';
+// h5 走 devServer 代理（相对路径）；weapp 开发构建（dev:weapp --watch）直连本机 server
+// （开发者工具需关闭域名校验），正式构建（build:weapp）指向生产域名——mp 后台须配好
+// request/uploadFile/downloadFile 三类合法域名 = https://service.domain。
+export const BASE =
+  process.env.TARO_ENV === 'h5'
+    ? ''
+    : process.env.NODE_ENV === 'production'
+      ? 'https://service.domain'
+      : 'http://localhost:5177';
 
 export class ApiError extends Error {
   status: number;

@@ -2,7 +2,7 @@
   "miniprogramRoot": "./dist",
   "projectname": "nce-class-miniapp",
   "description": "NCE Class 学生端（家长：加入班级 + 课堂回顾）",
-  "appid": "touristappid",
+  "appid": "wx19490e22f3580fb0",
   "setting": {
     "urlCheck": false,
     "es6": false,
