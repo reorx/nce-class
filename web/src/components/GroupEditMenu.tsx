@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { effectiveZoom, portalPanelPos } from '../lib/zoom';
 
 // 动物 emoji 调色板 — 组编辑菜单里点选。6 行 × 8 列；
 // 包含 lib/setup EMOJIS 的默认循环款，保证当前值总能被高亮。
@@ -90,13 +91,15 @@ export function GroupEditPopover({
   onClose: () => void;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
-  const [pos] = useState(() => {
-    const r = anchor.getBoundingClientRect();
-    const left = Math.max(12, Math.min(r.left, window.innerWidth - PANEL_W - 12));
-    const below = r.bottom + 8;
-    const top = below + PANEL_H > window.innerHeight - 12 ? Math.max(12, r.top - 8 - PANEL_H) : below;
-    return { left, top };
-  });
+  // 课堂投屏放大：portal 在课堂根节点的 zoom 子树外，读锚点的有效 zoom 跟随缩放
+  // （currentCSSZoom：Chrome/FF 126+；定位换算见 lib/zoom portalPanelPos）
+  const [zoom] = useState(() => effectiveZoom(anchor));
+  const [pos] = useState(() =>
+    portalPanelPos(anchor.getBoundingClientRect(), { w: PANEL_W, h: PANEL_H }, zoom, {
+      w: window.innerWidth,
+      h: window.innerHeight,
+    }),
+  );
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
@@ -133,6 +136,7 @@ export function GroupEditPopover({
         position: 'fixed',
         left: pos.left,
         top: pos.top,
+        zoom,
         zIndex: 120,
         width: PANEL_W,
         padding: PAD,

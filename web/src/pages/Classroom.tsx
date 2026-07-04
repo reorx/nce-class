@@ -25,6 +25,7 @@ import {
 } from '../lib/classroomStore';
 import { buildLogLines, type LogLine } from '../lib/classroomLog';
 import { configFromDetail, lessonLabel as fmtLessonLabel } from '../lib/setup';
+import { displayZoom } from '../lib/zoom';
 import {
   GRAY,
   GROUP_COLORS,
@@ -83,6 +84,13 @@ export function Classroom() {
   // org 奖章 tag 库 (best-effort likewise; 离线时下拉只剩本节课新加的 tag)
   const [orgTags, setOrgTags] = useState<string[]>([]);
   const dragId = useRef<string | null>(null);
+  // 投屏放大：>1440 宽（如 1920 投影）整体 zoom 等比放大（lib/zoom）
+  const [zoom, setZoom] = useState(() => displayZoom(window.innerWidth));
+  useEffect(() => {
+    const onResize = () => setZoom(displayZoom(window.innerWidth));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   // ---- boot: resume from store · else URL-param boot · else → 课前配置 -------
   useEffect(() => {
@@ -263,6 +271,7 @@ export function Classroom() {
         background: '#e9f3e4',
         color: '#2c3340',
         fontFamily: FONT,
+        zoom,
       }}
     >
       {/* header — 左：课次(点击编辑课堂信息)；右：班级名 + 倒计时（弱化灰） */}
