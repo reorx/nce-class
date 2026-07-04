@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { GroupEditPopover } from '../components/GroupEditMenu';
 import { Markdown } from '../components/Markdown';
@@ -26,6 +26,7 @@ import {
 import { buildLogLines, type LogLine } from '../lib/classroomLog';
 import { allSelected, dragTargets, someSelected, toggleAll, toggleOne } from '../lib/multiSelect';
 import { lessonLabel as fmtLessonLabel } from '../lib/lesson';
+import { prevLessonInfo, type PrevLessonInfo } from '../lib/prevLesson';
 import { configFromDetail } from '../lib/setup';
 import { displayZoom } from '../lib/zoom';
 import {
@@ -299,6 +300,7 @@ export function Classroom() {
           <span style={{ fontSize: 15, color: '#a3b39a' }}>✎</span>
         </span>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 18 }}>
+          <PrevLessonButton classId={id} />
           <span style={{ fontWeight: 800, fontSize: 18, color: '#a7b0bb' }}>{className}</span>
           <div
             style={{
@@ -992,6 +994,134 @@ interface Seg {
   students: ClassroomStudent[];
   empty?: boolean;
   value?: Recitation | Homework;
+}
+
+// ---- 上节课 popover: header button opens a downward card with the previous
+// session's 日期/课次/作业 for quick reference. Data lives on the server (not in
+// the offline session snapshot), so it fetches lazily on first open and caches
+// for the rest of the lesson; homework text needs a second fetch (sessionDetail).
+function PrevLessonButton({ classId }: { classId: string }) {
+  const [open, setOpen] = useState(false);
+  const [state, setState] = useState<
+    { status: 'idle' | 'loading' | 'error' } | { status: 'ready'; info: PrevLessonInfo | null; homework: string | null }
+  >({ status: 'idle' });
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (!next || state.status === 'loading' || state.status === 'ready') return;
+    setState({ status: 'loading' });
+    api
+      .classDetail(classId)
+      .then(async (d) => {
+        const info = prevLessonInfo(d.sessions);
+        const homework = info?.hasHomework ? (await api.sessionDetail(info.sessionId)).homeworkContent : null;
+        setState({ status: 'ready', info, homework });
+      })
+      .catch(() => setState({ status: 'error' }));
+  };
+
+  const row = (label: string, value: ReactNode) => (
+    <div key={label} style={{ display: 'flex', alignItems: 'baseline', gap: 12, padding: '5px 0' }}>
+      <span style={{ width: 34, flexShrink: 0, fontSize: 13, fontWeight: 700, color: '#a7b0bb' }}>{label}</span>
+      <div style={{ flex: 1, minWidth: 0, fontSize: 15, fontWeight: 800, color: '#2c3340' }}>{value}</div>
+    </div>
+  );
+
+  const body = () => {
+    if (state.status !== 'ready') {
+      return (
+        <div style={{ padding: '6px 0', fontSize: 14, fontWeight: 700, color: '#a7b0bb' }}>
+          {state.status === 'error' ? '加载失败，请关闭后重试' : '加载中…'}
+        </div>
+      );
+    }
+    if (!state.info) {
+      return (
+        <div style={{ padding: '6px 0', fontSize: 14, fontWeight: 700, color: '#a7b0bb' }}>本班还没有上课记录</div>
+      );
+    }
+    return (
+      <>
+        {row('日期', state.info.dateLabel)}
+        {row('课次', state.info.lessonText)}
+        {row(
+          '作业',
+          state.homework ? (
+            <div
+              style={{
+                whiteSpace: 'pre-wrap',
+                overflowWrap: 'break-word',
+                maxHeight: 240,
+                overflowY: 'auto',
+                fontSize: 14,
+                fontWeight: 600,
+                lineHeight: 1.6,
+              }}
+            >
+              {state.homework}
+            </div>
+          ) : (
+            <span style={{ color: '#a7b0bb' }}>未布置作业</span>
+          ),
+        )}
+      </>
+    );
+  };
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative' }}>
+      <button
+        onClick={toggle}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 7,
+          padding: '6px 14px',
+          borderRadius: 12,
+          border: 'none',
+          background: open ? '#fff' : 'rgba(255,255,255,.65)',
+          boxShadow: open ? '0 4px 12px rgba(60,90,55,.14)' : 'none',
+          color: '#5b6672',
+          fontWeight: 800,
+          fontSize: 15,
+          fontFamily: 'inherit',
+          cursor: 'pointer',
+        }}
+      >
+        <span style={{ fontSize: 15 }}>📖</span>
+        上节课
+      </button>
+      {open && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 10px)',
+            right: 0,
+            width: 340,
+            padding: '14px 18px',
+            background: '#fff',
+            borderRadius: 18,
+            boxShadow: '0 14px 34px rgba(60,90,55,.2)',
+            zIndex: 60,
+            cursor: 'default',
+          }}
+        >
+          {body()}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ---- 班级信息 view: left = class/lesson facts, right = 班级资源 markdown ----
