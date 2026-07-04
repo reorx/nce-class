@@ -118,6 +118,7 @@ export type CAction =
       durationMin: number;
       teacherId?: string; // omitted → keep the current 主讲老师
       teacherName?: string;
+      startedAt?: string; // omitted → keep the current 开始时间 ('YYYY-MM-DD HH:mm:ss')
     }
   | { type: 'setGroupEmoji'; gid: string; emoji: string }
   | { type: 'renameGroup'; gid: string; name: string }
@@ -151,6 +152,7 @@ export function reducer(s: ClassroomSession, a: CAction): ClassroomSession {
         teacherId: a.teacherId ?? s.teacherId,
         teacherName: a.teacherName ?? s.teacherName,
         plannedDurationMin: a.durationMin,
+        startedAt: a.startedAt ?? s.startedAt,
       };
     case 'setGroupEmoji':
       // Cosmetic, not membership — unlike re-grouping it also updates the
@@ -298,6 +300,23 @@ const pad = (n: number) => String(n).padStart(2, '0');
 /** Local wall clock as the naive 'YYYY-MM-DD HH:mm:ss' string the server parses. */
 export function nowSql(d: Date = new Date()): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+/** The 'HH:MM' slice of a stored startedAt for the dialog's time input
+ *  ('' when malformed, so the input just starts blank). */
+export function startTimeOf(startedAt: string): string {
+  return /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(startedAt) ? startedAt.slice(11, 16) : '';
+}
+
+/** Replace the HH:mm of a 'YYYY-MM-DD HH:mm:ss' startedAt with a dialog-edited
+ *  'HH:MM', zeroing seconds. Returns null for an invalid HH:MM so callers keep
+ *  the original. A malformed stored startedAt falls back to today's date so
+ *  the edit still lands a server-parseable timestamp. */
+export function applyStartTime(startedAt: string, hhmm: string): string | null {
+  const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(hhmm);
+  if (!m) return null;
+  const date = /^\d{4}-\d{2}-\d{2} /.test(startedAt) ? startedAt.slice(0, 10) : nowSql().slice(0, 10);
+  return `${date} ${m[1]}:${m[2]}:00`;
 }
 
 /** A fresh idempotency key for a new session (stable across submit retries). */

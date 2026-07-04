@@ -4,6 +4,7 @@ import { GroupEditPopover } from '../components/GroupEditMenu';
 import { useToast } from '../components/Toast';
 import { ApiError, api, type TeacherItem } from '../lib/api';
 import {
+  applyStartTime,
   buildClassroomSession,
   buildCommitPayload,
   clearSession,
@@ -12,6 +13,7 @@ import {
   nowSql,
   reducer,
   saveSession,
+  startTimeOf,
   type CAction,
   type ClassroomSession,
   type ClassroomStudent,
@@ -234,24 +236,22 @@ export function Classroom() {
         fontFamily: FONT,
       }}
     >
-      {/* header */}
+      {/* header — 左：课次(点击编辑课堂信息)；右：班级名 + 倒计时（弱化灰） */}
       <div style={{ display: 'flex', alignItems: 'center', padding: '16px 26px 12px', gap: 14, flexShrink: 0 }}>
         <span style={{ fontSize: 28 }}>🏫</span>
-        <span style={{ fontWeight: 900, fontSize: 25, color: '#2c3340' }}>{className}</span>
-        <span style={{ color: '#b7c5ad', fontSize: 22, fontWeight: 800 }}>·</span>
         <span
           onClick={() => setShowInfo(true)}
           title="编辑课堂信息"
           style={{
             display: 'flex',
             alignItems: 'center',
-            gap: 7,
+            gap: 9,
             padding: '4px 12px',
             margin: '-4px -12px',
             borderRadius: 12,
-            fontWeight: 700,
-            fontSize: 20,
-            color: '#66756c',
+            fontWeight: 900,
+            fontSize: 25,
+            color: '#2c3340',
             cursor: 'pointer',
             transition: 'background .12s',
           }}
@@ -259,28 +259,26 @@ export function Classroom() {
           onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
         >
           {lessonLabel}
-          <span style={{ fontSize: 14, color: '#a3b39a' }}>✎</span>
+          <span style={{ fontSize: 15, color: '#a3b39a' }}>✎</span>
         </span>
-        <div
-          style={{
-            marginLeft: 'auto',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 9,
-            padding: '9px 20px',
-            borderRadius: 16,
-            background: overtime ? '#ff5a5f' : '#2fb457',
-            color: '#fff',
-            fontWeight: 800,
-            fontSize: 21,
-            boxShadow: overtime ? '0 5px 14px rgba(255,90,95,.32)' : '0 5px 14px rgba(47,180,87,.32)',
-          }}
-        >
-          <span style={{ fontSize: 18 }}>{overtime ? '⏰' : '⏱'}</span>
-          <span style={{ fontFamily: NUM, letterSpacing: '.5px', fontVariantNumeric: 'tabular-nums' }}>
-            {overtime ? `+${timerStr}` : timerStr}
-          </span>
-          {overtime && <span style={{ fontSize: 13, fontWeight: 800, opacity: 0.9 }}>超时</span>}
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 18 }}>
+          <span style={{ fontWeight: 800, fontSize: 18, color: '#a7b0bb' }}>{className}</span>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              color: overtime ? '#ff5a5f' : '#a7b0bb',
+              fontWeight: 800,
+              fontSize: 21,
+            }}
+          >
+            <span style={{ fontSize: 18 }}>{overtime ? '⏰' : '⏱'}</span>
+            <span style={{ fontFamily: NUM, letterSpacing: '.5px', fontVariantNumeric: 'tabular-nums' }}>
+              {overtime ? `+${timerStr}` : timerStr}
+            </span>
+            {overtime && <span style={{ fontSize: 13, fontWeight: 800, opacity: 0.9 }}>超时</span>}
+          </div>
         </div>
       </div>
 
@@ -691,6 +689,7 @@ export function Classroom() {
           lessonNumber={session.lessonNumber ?? ''}
           lessonTitle={session.lessonTitle ?? ''}
           durationMin={session.plannedDurationMin}
+          startedAt={session.startedAt}
           teacherId={session.teacherId ?? meId}
           teacherName={session.teacherName ?? ''}
           teachers={teachers}
@@ -1351,6 +1350,7 @@ function LessonInfoDialog({
   lessonNumber,
   lessonTitle,
   durationMin,
+  startedAt,
   teacherId,
   teacherName,
   teachers,
@@ -1360,6 +1360,7 @@ function LessonInfoDialog({
   lessonNumber: string;
   lessonTitle: string;
   durationMin: number;
+  startedAt: string;
   teacherId: string;
   teacherName: string;
   teachers: TeacherItem[];
@@ -1369,18 +1370,22 @@ function LessonInfoDialog({
     durationMin: number;
     teacherId?: string;
     teacherName?: string;
+    startedAt?: string;
   }) => void;
   onClose: () => void;
 }) {
   const [no, setNo] = useState(lessonNumber);
   const [title, setTitle] = useState(lessonTitle);
   const [duration, setDuration] = useState(String(durationMin));
+  const [start, setStart] = useState(() => startTimeOf(startedAt));
   const [tid, setTid] = useState(teacherId);
   const save = () =>
     onSave({
       lessonNumber: no.trim(),
       lessonTitle: title.trim(),
       durationMin: Math.max(1, Number(duration) || 120),
+      // undefined keeps the session's current 开始时间 (cleared / invalid input)
+      startedAt: applyStartTime(startedAt, start) ?? undefined,
       // undefined keeps the session's current 主讲老师 (e.g. teachers 拉取失败)
       teacherId: tid || undefined,
       teacherName:
@@ -1438,6 +1443,18 @@ function LessonInfoDialog({
           />
         </InfoField>
 
+        <label style={fieldLabel}>开始时间</label>
+        <InfoField>
+          <span style={{ fontSize: 20 }}>🕒</span>
+          <input
+            type="time"
+            value={start}
+            onChange={(e) => setStart(e.target.value)}
+            onKeyDown={onKey}
+            style={{ flex: 1, minWidth: 0, width: '100%', ...inputBase, fontVariantNumeric: 'tabular-nums' }}
+          />
+        </InfoField>
+
         <label style={fieldLabel}>课堂时长</label>
         <InfoField last>
           <span style={{ fontSize: 20 }}>⏱</span>
@@ -1452,7 +1469,7 @@ function LessonInfoDialog({
           <span style={{ fontWeight: 800, fontSize: 16, color: '#a7b0bb' }}>分钟</span>
         </InfoField>
         <div style={{ fontSize: 13, fontWeight: 700, color: '#a7b0bb', marginTop: 8 }}>
-          改时长会按开课时间重新计算右上角倒计时
+          改开始时间或时长会重新计算右上角倒计时
         </div>
 
         <label style={{ ...fieldLabel, marginTop: 18 }}>主讲老师</label>

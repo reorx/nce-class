@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { gScore, sScore } from './session';
 import type { SessionConfig } from './setup';
 import {
+  applyStartTime,
   buildClassroomSession,
   buildCommitPayload,
   clearSession,
@@ -9,6 +10,7 @@ import {
   nowSql,
   reducer,
   saveSession,
+  startTimeOf,
   type ClassroomSession,
 } from './classroomStore';
 
@@ -175,6 +177,24 @@ describe('classroom reducer', () => {
     expect(p.plannedDurationMin).toBe(90);
   });
 
+  it('setLessonInfo can shift startedAt (开始时间), and keeps it when omitted', () => {
+    let s = boot();
+    s = reducer(s, {
+      type: 'setLessonInfo',
+      lessonNumber: '4',
+      lessonTitle: 'A private conversation',
+      durationMin: 120,
+      startedAt: '2026-07-02 19:30:00',
+    });
+    expect(s.startedAt).toBe('2026-07-02 19:30:00');
+    // an old-shape action (no startedAt) must not wipe it — pre-existing call
+    // sites and sessions persisted by older builds stay intact
+    s = reducer(s, { type: 'setLessonInfo', lessonNumber: '5', lessonTitle: '', durationMin: 90 });
+    expect(s.startedAt).toBe('2026-07-02 19:30:00');
+    const p = buildCommitPayload(s, '2026-07-02 21:00:00');
+    expect(p.startedAt).toBe('2026-07-02 19:30:00');
+  });
+
   it('clearing lesson fields mid-class reverts them to unset (null in the payload)', () => {
     let s = boot();
     s = reducer(s, { type: 'setLessonInfo', lessonNumber: '', lessonTitle: '', durationMin: 120 });
@@ -306,6 +326,28 @@ describe('主讲老师 (lead teacher)', () => {
     s = reducer(s, { type: 'setLessonInfo', lessonNumber: '6', lessonTitle: '', durationMin: 90 });
     expect(s.teacherId).toBe('t-lifang');
     expect(s.teacherName).toBe('李芳');
+  });
+});
+
+describe('applyStartTime / startTimeOf (开始时间 dialog helpers)', () => {
+  it('replaces only HH:mm, keeping the date and zeroing seconds', () => {
+    expect(applyStartTime('2026-07-02 19:00:23', '09:05')).toBe('2026-07-02 09:05:00');
+    expect(applyStartTime('2026-07-02 19:00:00', '23:59')).toBe('2026-07-02 23:59:00');
+  });
+
+  it('rejects an invalid HH:MM so callers keep the original startedAt', () => {
+    expect(applyStartTime('2026-07-02 19:00:00', '24:00')).toBeNull();
+    expect(applyStartTime('2026-07-02 19:00:00', '9:5')).toBeNull();
+    expect(applyStartTime('2026-07-02 19:00:00', '')).toBeNull();
+  });
+
+  it("falls back to today's date when the stored startedAt is malformed (old/corrupt entry)", () => {
+    expect(applyStartTime('garbage', '09:30')).toMatch(/^\d{4}-\d{2}-\d{2} 09:30:00$/);
+  });
+
+  it('extracts HH:MM for the time input, empty when malformed', () => {
+    expect(startTimeOf('2026-07-02 19:00:00')).toBe('19:00');
+    expect(startTimeOf('garbage')).toBe('');
   });
 });
 
