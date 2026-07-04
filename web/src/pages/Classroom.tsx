@@ -2,8 +2,10 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { GroupEditPopover } from '../components/GroupEditMenu';
 import { Markdown } from '../components/Markdown';
+import { TagPicker } from '../components/TagPicker';
 import { useToast } from '../components/Toast';
 import { ApiError, api, type ClassDetail, type TeacherItem } from '../lib/api';
+import { mergeTagOptions, tagKey } from '../lib/tags';
 import {
   applyStartTime,
   buildClassroomSession,
@@ -32,6 +34,7 @@ import {
   gScore,
   sScore,
   stars as recapStars,
+  studentTags,
   warned as recapWarned,
   type Homework,
   type Recitation,
@@ -77,6 +80,8 @@ export function Classroom() {
   // 主讲老师 dropdown data (best-effort — the classroom itself stays offline-first)
   const [teachers, setTeachers] = useState<TeacherItem[]>([]);
   const [meId, setMeId] = useState('');
+  // org 奖章 tag 库 (best-effort likewise; 离线时下拉只剩本节课新加的 tag)
+  const [orgTags, setOrgTags] = useState<string[]>([]);
   const dragId = useRef<string | null>(null);
 
   // ---- boot: resume from store · else URL-param boot · else → 课前配置 -------
@@ -132,6 +137,10 @@ export function Classroom() {
       .me()
       .then((m) => setMeId(m.id))
       .catch(() => {});
+    api
+      .orgTags()
+      .then((ts) => setOrgTags(ts.map((t) => t.name)))
+      .catch(() => {});
   }, []);
 
   // 1s tick drives the countdown off the persisted startedAt (survives refresh).
@@ -147,6 +156,11 @@ export function Classroom() {
 
   const { students, groups, events } = session;
   const groupById = new Map(groups.map((g) => [g.id, g]));
+  // 奖章下拉数据源 = 开课时 fetch 的 org 库 ∪ 本节课本地新加的
+  const tagOptions = mergeTagOptions(
+    orgTags,
+    students.flatMap((s) => s.tags ?? []),
+  );
   const colorOf = (gid: string) =>
     GROUP_COLORS[
       Math.max(
@@ -162,6 +176,8 @@ export function Classroom() {
   const undoEvent = (eventId: number) => dispatch({ type: 'undoEvent', eventId });
   const setRecite = (sid: string, v: Recitation) => dispatch({ type: 'setRecite', sid, v, at: nowSql() });
   const setHomework = (sid: string, v: Homework) => dispatch({ type: 'setHomework', sid, v, at: nowSql() });
+  const addTag = (sid: string, tag: string) => dispatch({ type: 'addTag', sid, tag });
+  const removeTag = (sid: string, tag: string) => dispatch({ type: 'removeTag', sid, tag });
   const toggleAbsent = (sid: string) => dispatch({ type: 'toggleAttendance', sid, at: nowSql() });
   const moveStudent = (sid: string, gid: string) => dispatch({ type: 'moveStudent', sid, gid });
   const changeGroupEmoji = (gid: string, emoji: string) => dispatch({ type: 'setGroupEmoji', gid, emoji });
@@ -685,6 +701,10 @@ export function Classroom() {
                 setHomework(st.id, v);
                 close();
               }}
+              tagOptions={tagOptions}
+              // 奖章可连续加/删，浮窗保持打开（唯一不 close() 的一组回调）
+              onAddTag={(t) => addTag(st.id, t)}
+              onRemoveTag={(t) => removeTag(st.id, t)}
               onClose={close}
             />
           );
@@ -899,6 +919,7 @@ function StudentBoardCard({
       }}
     >
       <div style={{ position: 'absolute', top: -11, right: 12, display: 'flex', gap: 5, zIndex: 2 }}>
+        {(s.tags?.length ?? 0) > 0 && <Badge text={`🏅${s.tags!.length}`} bg="#f5a623" />}
         <Badge text="背" bg={r.dot} />
         <Badge text="作" bg={h.dot} />
       </div>
@@ -1631,6 +1652,9 @@ function StudentPopup({
   onScore,
   onRecite,
   onHomework,
+  tagOptions,
+  onAddTag,
+  onRemoveTag,
   onClose,
 }: {
   mode: PopupMode;
@@ -1642,6 +1666,9 @@ function StudentPopup({
   onScore: (d: 1 | -1) => void;
   onRecite: (v: Recitation) => void;
   onHomework: (v: Homework) => void;
+  tagOptions: string[];
+  onAddTag: (tag: string) => void;
+  onRemoveTag: (tag: string) => void;
   onClose: () => void;
 }) {
   const scoreColor = score > 0 ? '#1e9e4a' : score < 0 ? '#e0454a' : '#98a2b0';
@@ -1665,25 +1692,28 @@ function StudentPopup({
         </div>
 
         {mode === 'score' && (
-          <div style={{ background: '#f6f9f2', borderRadius: 20, padding: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-              <button onClick={() => onScore(-1)} style={minusBtn}>
-                −1
-              </button>
-              <div style={{ flex: 1, textAlign: 'center' }}>
-                <div style={{ fontFamily: NUM, fontWeight: 800, fontSize: 44, lineHeight: 1, color: scoreColor }}>
-                  {score > 0 ? `+${score}` : String(score)}
+          <>
+            <div style={{ background: '#f6f9f2', borderRadius: 20, padding: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                <button onClick={() => onScore(-1)} style={minusBtn}>
+                  −1
+                </button>
+                <div style={{ flex: 1, textAlign: 'center' }}>
+                  <div style={{ fontFamily: NUM, fontWeight: 800, fontSize: 44, lineHeight: 1, color: scoreColor }}>
+                    {score > 0 ? `+${score}` : String(score)}
+                  </div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: '#98a2b0', marginTop: 3 }}>本节个人分</div>
                 </div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: '#98a2b0', marginTop: 3 }}>本节个人分</div>
+                <button onClick={() => onScore(1)} style={plusBtn}>
+                  +1
+                </button>
               </div>
-              <button onClick={() => onScore(1)} style={plusBtn}>
-                +1
-              </button>
+              <div style={{ textAlign: 'center', marginTop: 12, fontSize: 13, fontWeight: 700, color: '#8a94a0' }}>
+                {hint}
+              </div>
             </div>
-            <div style={{ textAlign: 'center', marginTop: 12, fontSize: 13, fontWeight: 700, color: '#8a94a0' }}>
-              {hint}
-            </div>
-          </div>
+            <TagsSection tags={st.tags ?? []} options={tagOptions} onAdd={onAddTag} onRemove={onRemoveTag} />
+          </>
         )}
 
         {mode === 'recite' && (
@@ -1743,6 +1773,103 @@ function StatusOptions<V extends Recitation | Homework>({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// 奖章区块（score mode 专用）：chips 带 ✕ 可删 + [+] 弹 TagPicker。加/删都
+// 不关学生浮窗（可连续操作）；只有 TagPicker 自己在选中后关闭。
+function TagsSection({
+  tags,
+  options,
+  onAdd,
+  onRemove,
+}: {
+  tags: string[];
+  options: string[];
+  onAdd: (tag: string) => void;
+  onRemove: (tag: string) => void;
+}) {
+  const [pickerEl, setPickerEl] = useState<HTMLElement | null>(null);
+  return (
+    <div style={{ marginTop: 14 }}>
+      <div style={{ fontWeight: 800, fontSize: 15, color: '#5b6672', marginBottom: 9 }}>🏅 奖章</div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+        {tags.map((t) => (
+          <span
+            key={t}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 7,
+              padding: '7px 9px 7px 13px',
+              borderRadius: 999,
+              background: '#fff8e5',
+              border: '1.5px solid #f2dfae',
+              color: '#8f6b16',
+              fontWeight: 800,
+              fontSize: 14,
+            }}
+          >
+            {t}
+            <button
+              onClick={() => onRemove(t)}
+              title="移除奖章"
+              style={{
+                width: 20,
+                height: 20,
+                borderRadius: '50%',
+                border: 'none',
+                background: '#f2e4bb',
+                color: '#8f6b16',
+                fontSize: 11,
+                fontWeight: 800,
+                lineHeight: 1,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: 0,
+              }}
+            >
+              ✕
+            </button>
+          </span>
+        ))}
+        <button
+          onClick={(e) => setPickerEl(pickerEl ? null : e.currentTarget)}
+          title="添加奖章"
+          style={{
+            width: 34,
+            height: 34,
+            borderRadius: '50%',
+            border: '2px dashed #d8cfa8',
+            background: pickerEl ? '#fff3d6' : '#fffdf6',
+            color: '#b8891f',
+            fontSize: 18,
+            fontWeight: 800,
+            lineHeight: 1,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 0,
+          }}
+        >
+          ＋
+        </button>
+      </div>
+      {pickerEl && (
+        <TagPicker
+          anchor={pickerEl}
+          options={options.filter((o) => !tags.some((t) => tagKey(t) === tagKey(o)))}
+          onPick={(t) => {
+            onAdd(t);
+            setPickerEl(null);
+          }}
+          onClose={() => setPickerEl(null)}
+        />
+      )}
     </div>
   );
 }
@@ -2067,6 +2194,7 @@ function EndRecap({
     .map((g, i) => ({ ...g, medal: ['🥇', '🥈', '🥉'][i] || '' }));
   const stars = recapStars(students, events);
   const warned = recapWarned(students, events);
+  const tagged = studentTags(students);
   return (
     <Overlay z={60} onClose={onClose} strong>
       <div
@@ -2137,6 +2265,31 @@ function EndRecap({
             <RecapBadge key={s.id} name={s.name} ring={colorOf(s.g).ring} bg="#eaf9ef" fg="#1e9e4a" />
           ))}
         </div>
+
+        {tagged.length > 0 && (
+          <>
+            <div style={{ fontWeight: 800, fontSize: 16, color: '#5b6672', marginBottom: 12 }}>🏅 奖章</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 22 }}>
+              {tagged.map((s) => (
+                <div
+                  key={s.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 9,
+                    padding: '8px 15px 8px 8px',
+                    borderRadius: 16,
+                    background: '#fff6dd',
+                  }}
+                >
+                  <div style={ringAvatar(36, '#f5a623', 15)}>{s.name[0]}</div>
+                  <span style={{ fontWeight: 800, fontSize: 16, color: '#8f6b16' }}>{s.name}</span>
+                  <span style={{ fontWeight: 700, fontSize: 14, color: '#b8891f' }}>{s.tags.join('、')}</span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
 
         <div style={{ fontWeight: 800, fontSize: 16, color: '#5b6672', marginBottom: 12 }}>⚠️ 被老师提醒</div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 26 }}>

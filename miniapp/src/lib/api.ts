@@ -136,6 +136,7 @@ export interface Mine {
   personalScore: number;
   homework: string;
   recitation: string;
+  tags?: string[]; // 奖章；optional 容忍旧服务端（读侧 `?? []`）
 }
 
 export interface ParentRecap {
@@ -149,6 +150,7 @@ export interface ParentRecap {
   groups: RecapGroup[];
   stars: { name: string; net: number }[];
   warned: { name: string }[];
+  studentTags?: { name: string; tags: string[] }[]; // 奖章（班级级）；optional 同上
   mine: Mine | null;
 }
 

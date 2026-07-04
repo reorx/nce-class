@@ -42,6 +42,11 @@ export default function RecapView({
                 <Text className={`tag tone-${recitationTone(recap.mine.recitation)}`}>
                   背书 {recap.mine.recitation}
                 </Text>
+                {(recap.mine.tags ?? []).map((t) => (
+                  <Text key={t} className="tag t-star">
+                    🏅 {t}
+                  </Text>
+                ))}
               </>
             ) : (
               <Text className="tag tone-muted">本堂课缺席</Text>
@@ -78,6 +83,19 @@ export default function RecapView({
             {recap.stars.map((s) => (
               <Text key={s.name} className="b good">
                 {s.name}
+              </Text>
+            ))}
+          </View>
+        </View>
+      )}
+
+      {(recap.studentTags ?? []).length > 0 && (
+        <View className="sec">
+          <View className="h">🏅 今天的奖章</View>
+          <View className="names">
+            {recap.studentTags!.map((s) => (
+              <Text key={s.name} className="b good">
+                {s.name} · {s.tags.join('、')}
               </Text>
             ))}
           </View>

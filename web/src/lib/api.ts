@@ -13,6 +13,12 @@ export interface TeacherItem {
   role: string;
 }
 
+/** One org-library 奖章 tag (GET /api/tags). */
+export interface TagItem {
+  id: string;
+  name: string;
+}
+
 export interface ClassListItem {
   id: string;
   name: string;
@@ -71,6 +77,12 @@ export interface RecapStar {
   net: number;
 }
 
+/** One student's 奖章 tags in a recap (name-keyed like stars/warned). */
+export interface RecapStudentTags {
+  name: string;
+  tags: string[];
+}
+
 export interface Recap {
   date: string;
   weekday: string;
@@ -82,6 +94,7 @@ export interface Recap {
   groups: RecapGroup[];
   stars: RecapStar[];
   warned: { name: string }[];
+  studentTags: RecapStudentTags[];
 }
 
 // The 课前配置 side rail consumes the same shape as a full recap.
@@ -195,6 +208,7 @@ export interface CommitPayload {
     createdAt: string;
   }[];
   checks: { studentId: string; type: 'recitation' | 'homework'; status: string }[];
+  tags: { studentId: string; tag: string }[]; // 奖章 (server upserts the org library by name)
 }
 
 export interface CommitResult {
@@ -241,6 +255,7 @@ export const api = {
   logout: () => req<{ ok: true }>('POST', '/api/auth/logout'),
   verifyPassword: (password: string) => req<{ ok: true }>('POST', '/api/auth/verify-password', { password }),
   teachers: () => get<TeacherItem[]>('/api/teachers'),
+  orgTags: () => get<TagItem[]>('/api/tags'),
   createTeacher: (name: string, username: string, password: string) =>
     req<TeacherItem>('POST', '/api/teachers', { name, username, password }),
   classes: () => get<ClassListItem[]>('/api/classes'),

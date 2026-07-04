@@ -35,6 +35,10 @@ export interface CommitCheck {
   type: string;
   status: string;
 }
+export interface CommitTag {
+  studentId: string;
+  tag: string; // normalised 奖章 name (buildCommitInput trims/collapses/caps it)
+}
 // The validated end-class commit (built by app.ts buildCommitInput — see its
 // ⚠️ SCHEMA COMPAT note: the wire payload evolves protobuf-style, so every
 // field added here after the first classroom release must stay optional on
@@ -42,6 +46,7 @@ export interface CommitCheck {
 export interface CommitInput {
   classId: string;
   teacherId: string;
+  orgId: string; // acting teacher's org — org_tags upsert target
   clientSessionId: string;
   date: string; // startedAt's date (decision 9)
   lessonNumber: number | null;
@@ -54,6 +59,7 @@ export interface CommitInput {
   memberships: CommitMembership[];
   events: CommitEvent[];
   checks: CommitCheck[];
+  tags: CommitTag[]; // 奖章 (absent on old-client payloads → [])
 }
 
 /**
@@ -246,6 +252,7 @@ export function deleteStudent(sqlite: DB, studentId: string): void {
     sqlite.prepare(`DELETE FROM session_memberships WHERE student_id=?`).run(sid);
     sqlite.prepare(`DELETE FROM score_events WHERE target_type='student' AND target_id=?`).run(sid);
     sqlite.prepare(`DELETE FROM check_records WHERE student_id=?`).run(sid);
+    sqlite.prepare(`DELETE FROM session_tags WHERE student_id=?`).run(sid);
     sqlite.prepare(`DELETE FROM students WHERE id=?`).run(sid);
   });
   tx(studentId);
@@ -261,6 +268,7 @@ export function deleteSession(sqlite: DB, sessionId: string): void {
     sqlite.prepare(`DELETE FROM score_events WHERE session_id=?`).run(sid);
     sqlite.prepare(`DELETE FROM session_memberships WHERE session_id=?`).run(sid);
     sqlite.prepare(`DELETE FROM check_records WHERE session_id=?`).run(sid);
+    sqlite.prepare(`DELETE FROM session_tags WHERE session_id=?`).run(sid);
     sqlite.prepare(`DELETE FROM session_groups WHERE session_id=?`).run(sid);
     sqlite.prepare(`DELETE FROM class_sessions WHERE id=?`).run(sid);
   });
@@ -401,6 +409,22 @@ export function commitSession(sqlite: DB, input: CommitInput): string {
       `INSERT INTO check_records (id, session_id, student_id, type, status) VALUES (?,?,?,?,?)`,
     );
     for (const c of input.checks) insCk.run(nanoid(), sessionId, c.studentId, c.type, c.status);
+
+    // ⑦ 奖章 tags: upsert the org library by name (INSERT OR IGNORE rides the
+    // NOCASE unique index), then snapshot tag_name per award like session_groups
+    // snapshots names — a future library rename never rewrites history.
+    if (input.tags.length) {
+      const insTag = sqlite.prepare(`INSERT OR IGNORE INTO org_tags (id, org_id, name, created_by) VALUES (?,?,?,?)`);
+      const selTag = sqlite.prepare(`SELECT id FROM org_tags WHERE org_id=? AND name=? COLLATE NOCASE`);
+      const insSt = sqlite.prepare(
+        `INSERT INTO session_tags (id, session_id, student_id, tag_id, tag_name, created_by) VALUES (?,?,?,?,?,?)`,
+      );
+      for (const t of input.tags) {
+        insTag.run(`tag-${nanoid(10)}`, input.orgId, t.tag, input.teacherId);
+        const row = selTag.get(input.orgId, t.tag) as any;
+        insSt.run(nanoid(), sessionId, t.studentId, row.id, t.tag, input.teacherId);
+      }
+    }
 
     return sessionId;
   });

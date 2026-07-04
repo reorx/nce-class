@@ -229,3 +229,39 @@ export const checkRecords = sqliteTable('check_records', {
   status: text('status').notNull(),
   updatedAt: text('updated_at').notNull().default(sql`(datetime('now'))`),
 });
+
+// ---- OrgTag — org-wide 奖章 tag library (upserted by end-class commits) ----
+// Deliberate exception to "only teachers/classes carry org_id": tags are an
+// org-root entity with no class to hang off, so they sit next to teachers.
+export const orgTags = sqliteTable(
+  'org_tags',
+  {
+    id: text('id').primaryKey(),
+    orgId: text('org_id')
+      .notNull()
+      .references(() => organizations.id),
+    name: text('name').notNull(),
+    createdBy: text('created_by'),
+    createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+  },
+  (t) => [uniqueIndex('uq_org_tag_name').on(t.orgId, sql`${t.name} COLLATE NOCASE`)],
+);
+
+// ---- SessionTag — one 奖章 awarded to a student in one session ----
+// tag_name is a point-in-time snapshot (precedent: session_groups.name), so a
+// future library rename never rewrites history; tag_id is the aggregation hook.
+export const sessionTags = sqliteTable('session_tags', {
+  id: text('id').primaryKey(),
+  sessionId: text('session_id')
+    .notNull()
+    .references(() => classSessions.id),
+  studentId: text('student_id')
+    .notNull()
+    .references(() => students.id),
+  tagId: text('tag_id')
+    .notNull()
+    .references(() => orgTags.id),
+  tagName: text('tag_name').notNull(),
+  createdBy: text('created_by'),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+});

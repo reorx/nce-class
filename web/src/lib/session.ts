@@ -21,6 +21,9 @@ export interface SStudent {
   name: string;
   r: Recitation;
   h: Homework;
+  // 奖章 tag names awarded this session. Optional (persisted-shape compat):
+  // sessions saved by pre-tag builds lack it — every reader uses `tags ?? []`.
+  tags?: string[];
 }
 
 export interface SGroup {
@@ -103,6 +106,11 @@ export function stars(students: SStudent[], events: SEvent[]): SStudent[] {
 /** Recap "被提醒" list: any negative personal event this session (§6). */
 export function warned(students: SStudent[], events: SEvent[]): SStudent[] {
   return students.filter((s) => events.some((e) => e.tt === 'student' && e.tid === s.id && e.d < 0));
+}
+
+/** Recap 奖章 list: students with ≥1 tag this session, in roster order. */
+export function studentTags(students: SStudent[]): { id: string; name: string; tags: string[] }[] {
+  return students.filter((s) => (s.tags ?? []).length > 0).map((s) => ({ id: s.id, name: s.name, tags: s.tags! }));
 }
 
 // ---- demo scenario (Lesson 3) --------------------------------------------

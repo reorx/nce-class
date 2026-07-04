@@ -167,9 +167,11 @@ describe('students', () => {
     const events = sqlite.prepare(`SELECT COUNT(*) c FROM score_events WHERE target_id='s1'`).get() as any;
     const mem = sqlite.prepare(`SELECT COUNT(*) c FROM class_group_memberships WHERE student_id='s1'`).get() as any;
     const smem = sqlite.prepare(`SELECT COUNT(*) c FROM session_memberships WHERE student_id='s1'`).get() as any;
+    const stags = sqlite.prepare(`SELECT COUNT(*) c FROM session_tags WHERE student_id='s1'`).get() as any;
     expect(events.c).toBe(0);
     expect(mem.c).toBe(0);
     expect(smem.c).toBe(0);
+    expect(stags.c).toBe(0);
   });
 });
 
@@ -334,6 +336,24 @@ describe('session recap', () => {
     expect(recap.warned.map((s: any) => s.name)).toEqual(['小刚']);
     expect(recap.attendancePresent).toBe(3);
     expect(recap.attendanceTotal).toBe(4);
+    // 奖章 tags grouped per student (seeded: s1 got 进步之星)
+    expect(recap.studentTags).toEqual([{ name: '小明', tags: ['进步之星'] }]);
+  });
+});
+
+describe('org tag library (GET /api/tags)', () => {
+  it('lists the org library and stays org-isolated', async () => {
+    const { agent } = await login();
+    const res = await agent.get('/api/tags');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([{ id: 'tag1', name: '进步之星' }]);
+
+    const out = await login('waiguo'); // org-2 sees nothing of org-1's library
+    expect((await out.agent.get('/api/tags')).body).toEqual([]);
+  });
+
+  it('requires a session (401 unauthenticated)', async () => {
+    expect((await request(app).get('/api/tags')).status).toBe(401);
   });
 });
 
@@ -469,7 +489,7 @@ describe('session deletion', () => {
     expect(detail.sessionCount).toBe(0);
     expect(detail.lastRecap).toBeNull(); // sess1 was the only ended session
 
-    for (const t of ['score_events', 'session_memberships', 'check_records', 'session_groups']) {
+    for (const t of ['score_events', 'session_memberships', 'check_records', 'session_groups', 'session_tags']) {
       expect(childCount(t)).toBe(0);
     }
     expect((sqlite.prepare(`SELECT COUNT(*) c FROM class_sessions WHERE id='sess1'`).get() as any).c).toBe(0);
@@ -630,6 +650,80 @@ describe('end-class commit', () => {
     expect(detail.sessions.find((x: any) => x.id === res.body.sessionId).teacherName).toBe('李芳');
   });
 
+  it('persists 奖章 tags, upserts the org library, and groups them in the recap', async () => {
+    const { agent } = await login();
+    const res = await agent.post('/api/classes/c1/sessions').send(
+      body({
+        clientSessionId: 'cs-tags',
+        tags: [
+          { studentId: 's1', tag: '听写全对' },
+          { studentId: 's1', tag: '默写全对' },
+          { studentId: 's2', tag: '听写全对' },
+          { studentId: 's1', tag: '进步之星' }, // library hit: seeded tag1 must be reused, not duplicated
+        ],
+      }),
+    );
+    expect(res.status).toBe(201);
+    expect(res.body.recap.studentTags).toEqual([
+      { name: '小明', tags: ['听写全对', '默写全对', '进步之星'] },
+      { name: '小红', tags: ['听写全对'] },
+    ]);
+
+    const rows = sqlite
+      .prepare(`SELECT student_id, tag_id, tag_name FROM session_tags WHERE session_id=? ORDER BY rowid`)
+      .all(res.body.sessionId) as any[];
+    expect(rows.map((r) => [r.student_id, r.tag_name])).toEqual([
+      ['s1', '听写全对'],
+      ['s1', '默写全对'],
+      ['s2', '听写全对'],
+      ['s1', '进步之星'],
+    ]);
+    // library: 2 new names minted once each, 进步之星 reused (still tag1)
+    const lib = sqlite.prepare(`SELECT id, name FROM org_tags WHERE org_id='org-1' ORDER BY rowid`).all() as any[];
+    expect(lib.map((t) => t.name).sort()).toEqual(['听写全对', '进步之星', '默写全对'].sort());
+    expect(rows.find((r) => r.tag_name === '进步之星').tag_id).toBe('tag1');
+    // both students awarded 听写全对 point at the same library row
+    const dictation = rows.filter((r) => r.tag_name === '听写全对');
+    expect(dictation[0].tag_id).toBe(dictation[1].tag_id);
+  });
+
+  it('upserts the tag library idempotently across commits', async () => {
+    const { agent } = await login();
+    const send = (csid: string) =>
+      agent
+        .post('/api/classes/c1/sessions')
+        .send(body({ clientSessionId: csid, tags: [{ studentId: 's1', tag: '课堂之星' }] }));
+    expect((await send('cs-up-1')).status).toBe(201);
+    expect((await send('cs-up-2')).status).toBe(201);
+    const c = sqlite.prepare(`SELECT COUNT(*) c FROM org_tags WHERE org_id='org-1' AND name='课堂之星'`).get() as any;
+    expect(c.c).toBe(1);
+  });
+
+  it('tag 宽松校验: salvages what it can and never fails the commit over a bad tag entry', async () => {
+    const { agent } = await login();
+    const res = await agent.post('/api/classes/c1/sessions').send(
+      body({
+        clientSessionId: 'cs-tags-dirty',
+        tags: [
+          { studentId: 'so1', tag: '外校学生' }, // foreign student → dropped, not 400
+          { studentId: 'ghost', tag: '查无此人' }, // deleted student → dropped
+          { studentId: 's1', tag: '   ' }, // blank tag → dropped
+          { studentId: 's1' }, // missing tag → dropped
+          { tag: '没有学生' }, // missing studentId → dropped
+          { studentId: 's1', tag: '  空白  归一化  ' }, // whitespace collapsed
+          { studentId: 's1', tag: '空白 归一化' }, // dup after normalisation → dropped
+          { studentId: 's1', tag: 'x'.repeat(40) }, // over-long → truncated to 20
+          { studentId: 's2', tag: 'y'.repeat(19) + ' z' }, // cut lands on a space → re-trimmed
+        ],
+      }),
+    );
+    expect(res.status).toBe(201);
+    const rows = sqlite
+      .prepare(`SELECT tag_name FROM session_tags WHERE session_id=? ORDER BY rowid`)
+      .all(res.body.sessionId) as any[];
+    expect(rows.map((r) => r.tag_name)).toEqual(['空白 归一化', 'x'.repeat(20), 'y'.repeat(19)]);
+  });
+
   it('rejects a cross-org or unknown 主讲老师 with 400 and stores nothing', async () => {
     const { agent } = await login();
     expect((await agent.post('/api/classes/c1/sessions').send(body({ teacherId: 't-out' }))).status).toBe(400);
@@ -684,12 +778,15 @@ describe('end-class commit', () => {
     b.memberships[0].mood = 'happy';
     b.events[0].source = 'stylus';
     b.checks[0].gradedBy = 'ai';
+    b.tags = [{ studentId: 's1', tag: '认真', sticker: '🌟' }]; // unknown subfield ignored, tag kept
     const res = await agent.post('/api/classes/c1/sessions').send(b);
     expect(res.status).toBe(201);
     expect(res.body.created).toBe(true);
     const row = sqlite.prepare(`SELECT * FROM class_sessions WHERE client_session_id='cs-future'`).get() as any;
     expect(row.status).toBe('ended'); // stored exactly as the known fields describe
     expect(row.lesson_number).toBe(8);
+    const tag = sqlite.prepare(`SELECT tag_name FROM session_tags WHERE session_id=?`).get(row.id) as any;
+    expect(tag.tag_name).toBe('认真');
   });
 
   it('writes back the default grouping (open-time), keeping absent students + minting new-group ids', async () => {
@@ -989,7 +1086,8 @@ describe('student status (wx)', () => {
     expect((await request(app).get('/api/wx/students/s1').set(auth(parentToken))).status).toBe(200);
     const recap = await request(app).get('/api/wx/students/s1/sessions/sess1').set(auth(parentToken));
     expect(recap.status).toBe(200);
-    expect(recap.body.mine).toMatchObject({ attended: true, personalScore: 2 });
+    expect(recap.body.mine).toMatchObject({ attended: true, personalScore: 2, tags: ['进步之星'] });
+    expect(recap.body.studentTags).toEqual([{ name: '小明', tags: ['进步之星'] }]);
   });
 
   it('invite preview count excludes archived; linking to an archived student is 400', async () => {

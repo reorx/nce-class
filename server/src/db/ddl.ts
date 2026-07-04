@@ -87,4 +87,14 @@ CREATE TABLE IF NOT EXISTS check_records (
   type TEXT NOT NULL, status TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS org_tags (
+  id TEXT PRIMARY KEY, org_id TEXT NOT NULL, name TEXT NOT NULL,
+  created_by TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_org_tag_name ON org_tags(org_id, name COLLATE NOCASE);
+CREATE TABLE IF NOT EXISTS session_tags (
+  id TEXT PRIMARY KEY, session_id TEXT NOT NULL, student_id TEXT NOT NULL,
+  tag_id TEXT NOT NULL, tag_name TEXT NOT NULL,
+  created_by TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `;

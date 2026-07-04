@@ -219,6 +219,79 @@ describe('classroom reducer', () => {
   });
 });
 
+describe('奖章 tags (addTag / removeTag)', () => {
+  const at = '2026-07-02 19:05:00';
+  const tagsOf = (s: ClassroomSession, sid: string) => s.students.find((x) => x.id === sid)!.tags;
+
+  it('boots every student with an empty tags array', () => {
+    const s = boot();
+    expect(s.students.every((x) => Array.isArray(x.tags) && x.tags.length === 0)).toBe(true);
+  });
+
+  it('adds normalised tags; re-adding a variant of the same tag is a no-op', () => {
+    let s = boot();
+    s = reducer(s, { type: 'addTag', sid: 's1', tag: '  听写全对 ' });
+    s = reducer(s, { type: 'addTag', sid: 's1', tag: '默写全对' });
+    expect(tagsOf(s, 's1')).toEqual(['听写全对', '默写全对']);
+    const before = s;
+    s = reducer(s, { type: 'addTag', sid: 's1', tag: '听写全对' });
+    expect(s).toBe(before);
+    s = reducer(s, { type: 'addTag', sid: 's1', tag: '   ' }); // blank → no-op
+    expect(s).toBe(before);
+  });
+
+  it('removes a tag (case/whitespace-insensitively), leaving others intact', () => {
+    let s = boot();
+    s = reducer(s, { type: 'addTag', sid: 's1', tag: 'Star' });
+    s = reducer(s, { type: 'addTag', sid: 's1', tag: '默写全对' });
+    s = reducer(s, { type: 'removeTag', sid: 's1', tag: ' star ' });
+    expect(tagsOf(s, 's1')).toEqual(['默写全对']);
+  });
+
+  it('never touches the score ledger (不联动加分, undo 不影响奖章)', () => {
+    let s = boot();
+    s = reducer(s, { type: 'addTag', sid: 's1', tag: '听写全对' });
+    expect(s.events).toHaveLength(0);
+    s = reducer(s, { type: 'scoreStudent', sid: 's1', d: 1, at });
+    s = reducer(s, { type: 'undo' });
+    expect(tagsOf(s, 's1')).toEqual(['听写全对']);
+  });
+
+  it('an old persisted session without tags still loads and accepts tag edits (persisted-shape compat)', () => {
+    const store = memStore();
+    const legacy = boot();
+    const stripped = {
+      ...legacy,
+      students: legacy.students.map((x) => {
+        const { tags: _tags, ...rest } = x;
+        return rest;
+      }),
+    };
+    store.setItem('nce.classroom.c1', JSON.stringify(stripped));
+    let s = loadSession('c1', store)!;
+    expect(s).not.toBeNull();
+    s = reducer(s, { type: 'removeTag', sid: 's1', tag: '不存在' }); // must not throw
+    s = reducer(s, { type: 'addTag', sid: 's1', tag: '听写全对' });
+    expect(tagsOf(s, 's1')).toEqual(['听写全对']);
+    // and the commit payload from that old-shape session still builds
+    const p = buildCommitPayload(s, '2026-07-02 21:00:00');
+    expect(p.tags).toEqual([{ studentId: 's1', tag: '听写全对' }]);
+  });
+
+  it('flattens per-student tags into the commit payload', () => {
+    let s = boot();
+    s = reducer(s, { type: 'addTag', sid: 's1', tag: '听写全对' });
+    s = reducer(s, { type: 'addTag', sid: 's1', tag: '默写全对' });
+    s = reducer(s, { type: 'addTag', sid: 's2', tag: '听写全对' });
+    const p = buildCommitPayload(s, '2026-07-02 21:00:00');
+    expect(p.tags).toEqual([
+      { studentId: 's1', tag: '听写全对' },
+      { studentId: 's1', tag: '默写全对' },
+      { studentId: 's2', tag: '听写全对' },
+    ]);
+  });
+});
+
 describe('课堂日志 (status log + 任意单条撤销)', () => {
   const at = '2026-07-02 19:05:00';
   const at2 = '2026-07-02 19:06:00';

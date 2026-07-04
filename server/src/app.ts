@@ -35,6 +35,7 @@ import {
   upsertJoinRequest,
   upsertWechatAccount,
   type CommitInput,
+  type CommitTag,
   type GroupInput,
 } from './db/mutations.js';
 import { storageClient } from './storage/index.js';
@@ -141,6 +142,17 @@ const q = {
     `SELECT COALESCE(SUM(delta),0) s FROM score_events WHERE session_id=? AND target_type='student' AND target_id=?`,
   ),
   checksOfStudent: sqlite.prepare(`SELECT type, status FROM check_records WHERE session_id=? AND student_id=?`),
+  // 奖章 tag library + per-session awards (rowid keeps insertion order — all
+  // rows of one commit share the same created_at).
+  tagsOfOrg: sqlite.prepare(`SELECT id, name FROM org_tags WHERE org_id=? ORDER BY name COLLATE NOCASE`),
+  tagsOfSession: sqlite.prepare(
+    `SELECT st.name name, sm.tag_name tag
+     FROM session_tags sm JOIN students st ON st.id = sm.student_id
+     WHERE sm.session_id=? ORDER BY st.created_at, st.id, sm.rowid`,
+  ),
+  tagsOfStudentSession: sqlite.prepare(
+    `SELECT tag_name FROM session_tags WHERE session_id=? AND student_id=? ORDER BY rowid`,
+  ),
   // wx (miniapp) session + invite/queue flows
   wxAccountById: sqlite.prepare(`SELECT * FROM wechat_accounts WHERE id=?`),
   wxTeacherOfAccount: sqlite.prepare(
@@ -294,6 +306,16 @@ function buildRecap(s: any) {
     .map((r) => ({ name: r.name, net: r.net }));
   const warned = deltas.filter((r) => r.mind < 0).map((r) => ({ name: r.name }));
   const att = q.sessionAttendance.get(s.id) as any;
+  // 奖章, grouped per student (name-keyed like stars/warned — the class-level
+  // view tolerates the duplicate-name simplification; wx personal views query
+  // by student_id instead).
+  const tagsByName = new Map<string, string[]>();
+  for (const r of q.tagsOfSession.all(s.id) as any[]) {
+    const arr = tagsByName.get(r.name) ?? [];
+    arr.push(r.tag);
+    tagsByName.set(r.name, arr);
+  }
+  const studentTags = [...tagsByName].map(([name, tags]) => ({ name, tags }));
   return {
     date: md(s.date),
     weekday: weekdayCN(s.date),
@@ -305,6 +327,7 @@ function buildRecap(s: any) {
     groups,
     stars,
     warned,
+    studentTags,
   };
 }
 
@@ -329,6 +352,9 @@ function classInOrg(classId: string, orgId: string): any | null {
 // Ranges are bounded so a crafted body can't store '2026-13-99 99:99:99'.
 const TIME_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01]) ([01]\d|2[0-3]):[0-5]\d:[0-5]\d$/;
 
+// 奖章 tag name cap — mirrored by the web picker's maxLength.
+const MAX_TAG_LEN = 20;
+
 /** Coerce to a non-negative integer, or a fallback when not a finite number. */
 const intOr = (v: unknown, fallback: number | null): number | null =>
   Number.isFinite(v) ? Math.trunc(v as number) : fallback;
@@ -351,6 +377,13 @@ const intOr = (v: unknown, fallback: number | null): number | null =>
  *     keep it that way; no schema-strict body validation here).
  * Guarded by the 向后/向前兼容 tests in tests/api.test.ts — if one fails,
  * fix the contract change, not the test.
+ *
+ * Validation strictness is two-tier by design: the structural fields above
+ * (memberships/events/checks) hard-400 on foreign ids because an error there
+ * means a client bug worth surfacing. Decorative post-release fields (tags/
+ * 奖章) instead salvage-or-drop each entry — a single dirty cosmetic row must
+ * never strand a whole lesson's scores. Follow the lenient tier for future
+ * cosmetic additions; do NOT "align" it with the strict tier.
  */
 function buildCommitInput(body: any, classId: string, teacher: any): { input: CommitInput } | { error: string } {
   const clientSessionId = str(body?.clientSessionId);
@@ -461,10 +494,30 @@ function buildCommitInput(body: any, classId: string, teacher: any): { input: Co
     checks.push({ studentId, type, status });
   }
 
+  // 奖章 tags — lenient tier (see the compat note): normalise, dedupe per
+  // student (case-insensitive), drop what can't be salvaged, never 400.
+  const tagRaw = Array.isArray(body?.tags) ? body.tags : [];
+  const tags: CommitTag[] = [];
+  const seenTags = new Set<string>();
+  for (const t of tagRaw) {
+    const studentId = str(t?.studentId);
+    if (!studentId || classifyStudent(studentId) !== 'own') continue;
+    // Mirrors web lib/tags.ts normalizeTagName: collapse whitespace, cut by
+    // code point (never mid-emoji), re-trim (the cut can expose a trailing space).
+    const collapsed = str(t?.tag)?.replace(/\s+/g, ' ');
+    const tag = collapsed ? [...collapsed].slice(0, MAX_TAG_LEN).join('').trim() : null;
+    if (!tag) continue;
+    const key = `${studentId} ${tag.toLowerCase()}`;
+    if (seenTags.has(key)) continue;
+    seenTags.add(key);
+    tags.push({ studentId, tag });
+  }
+
   return {
     input: {
       classId,
       teacherId,
+      orgId: teacher.org_id,
       clientSessionId,
       date: startedAt.slice(0, 10), // decision 9
       lessonNumber: intOr(body?.lessonNumber, null),
@@ -477,6 +530,7 @@ function buildCommitInput(body: any, classId: string, teacher: any): { input: Co
       memberships,
       events,
       checks,
+      tags,
     },
   };
 }
@@ -791,6 +845,8 @@ export function createApp() {
         personalScore: (q.personalScoreOfStudent.get(s.id, st.id) as any)?.s ?? 0,
         homework: checks.get('homework') ?? '没交',
         recitation: checks.get('recitation') ?? '未检查',
+        // 奖章 — by student_id, NOT via recap.studentTags (name-keyed, dup-unsafe)
+        tags: (q.tagsOfStudentSession.all(s.id, st.id) as any[]).map((r) => r.tag_name),
       };
     }
     res.json({
@@ -829,6 +885,12 @@ export function createApp() {
   app.get('/api/teachers', (_req, res) => {
     const rows = q.teachersOfOrg.all(res.locals.teacher.org_id) as any[];
     res.json(rows.map((t) => ({ id: t.id, name: t.name, username: t.username, role: t.role })));
+  });
+
+  // ---- org 奖章 tag 库 (课堂打 tag 的下拉数据源; 写入只走 end-class commit 的 upsert) ----
+  app.get('/api/tags', (_req, res) => {
+    const rows = q.tagsOfOrg.all(res.locals.teacher.org_id) as any[];
+    res.json(rows.map((t) => ({ id: t.id, name: t.name })));
   });
 
   app.post('/api/teachers', (req, res) => {

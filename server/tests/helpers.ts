@@ -24,6 +24,8 @@ export async function setupTestApp(): Promise<{ app: Express; sqlite: DB; reseed
 }
 
 const TABLES = [
+  'session_tags',
+  'org_tags',
   'check_records',
   'score_events',
   'session_memberships',
@@ -151,6 +153,14 @@ function seed(sqlite: DB) {
      ('ck1','sess1','s1','homework','完成'),
      ('ck2','sess1','s1','recitation','已背完'),
      ('ck3','sess1','s2','recitation','背完部分')`,
+  );
+
+  // 奖章 tags: one library entry awarded to s1 in sess1, so recap/deletion/wx
+  // paths all exercise session_tags without a commit round-trip.
+  run(`INSERT INTO org_tags (id, org_id, name, created_by) VALUES ('tag1','org-1','进步之星','t-wangli')`);
+  run(
+    `INSERT INTO session_tags (id, session_id, student_id, tag_id, tag_name, created_by)
+     VALUES ('stg1','sess1','s1','tag1','进步之星','t-wangli')`,
   );
 
   // mock wechat accounts (mirror the dev seed): a bound teacher, a bound

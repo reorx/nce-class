@@ -139,6 +139,18 @@ export function RecapCard({
               ))}
             </div>
           )}
+          {recap.studentTags.length > 0 && (
+            <>
+              <div style={{ fontWeight: 900, fontSize: 14, color: '#8f6b16', margin: '14px 0 10px' }}>🏅 奖章</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {recap.studentTags.map((s) => (
+                  <span key={s.name} style={chip('#fdf3da', '#e8d193', '#8f6b16')}>
+                    {s.name} · {s.tags.join('、')}
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
           <div style={{ fontWeight: 900, fontSize: 14, color: '#b5645c', margin: '14px 0 10px' }}>💬 老师提醒</div>
           {recap.warned.length === 0 ? (
             <div style={{ fontWeight: 700, fontSize: 12, color: '#b5ab8e' }}>本节无人被提醒，全班表现棒极了 ✓</div>

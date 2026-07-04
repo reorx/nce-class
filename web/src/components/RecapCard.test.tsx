@@ -18,6 +18,7 @@ const recap: Recap = {
   ],
   stars: [{ name: '王小明', net: 4 }],
   warned: [{ name: '张伟' }],
+  studentTags: [],
 };
 
 describe('RecapCard', () => {
@@ -30,6 +31,23 @@ describe('RecapCard', () => {
     expect(html).toContain('王小明 +4');
     expect(html).not.toContain('到课 ✓');
     expect(html).not.toContain('背书 ·');
+  });
+
+  it('奖章：有奖章时按学生渲染 chip，无奖章时整块隐藏', () => {
+    const withTags: Recap = {
+      ...recap,
+      studentTags: [
+        { name: '王小明', tags: ['听写全对', '默写全对'] },
+        { name: '张伟', tags: ['进步之星'] },
+      ],
+    };
+    const html = renderToStaticMarkup(<RecapCard recap={withTags} className="三年级A班" year="2026" />);
+    expect(html).toContain('🏅 奖章');
+    expect(html).toContain('王小明 · 听写全对、默写全对');
+    expect(html).toContain('张伟 · 进步之星');
+
+    const empty = renderToStaticMarkup(<RecapCard recap={recap} className="三年级A班" year="2026" />);
+    expect(empty).not.toContain('🏅 奖章');
   });
 
   it('个人模式：显示个人卡（姓名/小组/个人分/背书作业状态）', () => {

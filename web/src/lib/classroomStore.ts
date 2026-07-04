@@ -14,6 +14,7 @@
 import type { CommitPayload } from './api';
 import type { Homework, Recitation, SEvent, SGroup, SStudent } from './session';
 import type { SessionConfig } from './setup';
+import { normalizeTagName, tagKey } from './tags';
 
 export interface ClassroomStudent extends SStudent {
   attendance: 'present' | 'absent';
@@ -72,6 +73,7 @@ export function buildClassroomSession(
     name: s.name,
     r: null,
     h: null,
+    tags: [],
     attendance: 'present',
   }));
   // Pre-class absent students are still registered; they render under their
@@ -82,6 +84,7 @@ export function buildClassroomSession(
     name: a.name,
     r: null,
     h: null,
+    tags: [],
     attendance: 'absent',
   }));
   const defaultGrouping: DefaultGroup[] = cfg.groups.map((g, i) => ({
@@ -122,6 +125,8 @@ export type CAction =
   | { type: 'undoEvent'; eventId: number }
   | { type: 'setRecite'; sid: string; v: Recitation; at: string }
   | { type: 'setHomework'; sid: string; v: Homework; at: string }
+  | { type: 'addTag'; sid: string; tag: string }
+  | { type: 'removeTag'; sid: string; tag: string }
   | { type: 'toggleAttendance'; sid: string; at: string }
   | { type: 'moveStudent'; sid: string; gid: string }
   | {
@@ -174,6 +179,20 @@ export function reducer(s: ClassroomSession, a: CAction): ClassroomSession {
         a.v,
         a.at,
       );
+    }
+    case 'addTag': {
+      // 奖章：直接字段修改（同 r/h），不进 events（不联动加分、不受 undo 影响）。
+      // 重复打同一 tag（含大小写/空白变体）= 纯 no-op；`tags ?? []` 兼容旧存档。
+      const tag = normalizeTagName(a.tag);
+      if (!tag) return s;
+      const st = s.students.find((x) => x.id === a.sid);
+      if (!st || (st.tags ?? []).some((t) => tagKey(t) === tagKey(tag))) return s;
+      return mapStudent(s, a.sid, (x) => ({ ...x, tags: [...(x.tags ?? []), tag] }));
+    }
+    case 'removeTag': {
+      const st = s.students.find((x) => x.id === a.sid);
+      if (!st || !(st.tags ?? []).some((t) => tagKey(t) === tagKey(a.tag))) return s;
+      return mapStudent(s, a.sid, (x) => ({ ...x, tags: (x.tags ?? []).filter((t) => tagKey(t) !== tagKey(a.tag)) }));
     }
     case 'toggleAttendance': {
       const st = s.students.find((x) => x.id === a.sid);
@@ -416,6 +435,8 @@ export function buildCommitPayload(s: ClassroomSession, endedAt: string): Commit
     if (st.r) checks.push({ studentId: st.id, type: 'recitation', status: st.r });
     if (st.h) checks.push({ studentId: st.id, type: 'homework', status: st.h });
   }
+  const tags: CommitPayload['tags'] = [];
+  for (const st of s.students) for (const tag of st.tags ?? []) tags.push({ studentId: st.id, tag });
   return {
     clientSessionId: s.clientSessionId,
     lessonNumber,
@@ -429,6 +450,7 @@ export function buildCommitPayload(s: ClassroomSession, endedAt: string): Commit
     memberships,
     events,
     checks,
+    tags,
   };
 }
 
