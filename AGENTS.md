@@ -23,12 +23,13 @@ web/      React + Vite + TS · 老师端桌面 Web（管理页 IBM Plex；课堂
   src/lib/recapCard.ts (+ .test.ts)    战报纯派生：podium 领奖台排列（冠军居中）/groupBars 柱高/fmtDurationCn/dateLabel/背书作业 tone（与小程序 recapView 口径一致）
   src/components/{TopBar,Modal,Toast}.tsx  TopBar 退出登录；通用 Modal + Toast
   src/pages/Setup.tsx                  课前配置：本节课信息 + 上节课回顾 + 默认分组微调（拖拽/增组/缺席暂存）→ 开始课堂（写本地 store，不发后端）
-  src/pages/Classroom.tsx              课堂主界面：看板/背书/作业/出勤/调组/班级信息 六视图 + 学生/小组浮窗 + recap。班级信息视图（dock 左侧独立按钮）左=班级/本节课信息、右=班级资源 markdown（可编辑保存；进视图时现场 GET classDetail，不进本地 session 快照）。学生浮窗按视图分化（上课=加减分/背书=背书状态/作业=作业状态，点选即提交并自动关窗，状态弹窗含显式「未检查」项且高亮当前状态）。本地优先：从 store 恢复/URL 参数 boot/否则跳 setup；每次改动落 localStorage；结束课堂预览→确认→一次性 commit；「退出不保存」放弃本地 session
+  src/pages/Classroom.tsx              课堂主界面：看板/背书/作业/出勤/调组/班级信息/日志 七视图 + 学生/小组浮窗 + recap。班级信息视图（dock 左侧独立按钮）左=班级/本节课信息、右=班级资源 markdown（可编辑保存；进视图时现场 GET classDetail，不进本地 session 快照）。日志视图（dock 独立按钮）合并时间线最新在上：加减分条目带「撤销」（任意单条，undoEvent 删事件→个人分与组分原子回退）、背书/作业/出勤变更仅记录。学生浮窗按视图分化（上课=加减分/背书=背书状态/作业=作业状态，点选即提交并自动关窗，状态弹窗含显式「未检查」项且高亮当前状态）。本地优先：从 store 恢复/URL 参数 boot/否则跳 setup；每次改动落 localStorage；结束课堂预览→确认→一次性 commit；「退出不保存」放弃本地 session
   src/lib/api.ts                       fetch 客户端（get/post/put/del + ApiError 401；login/logout/createClass/addStudent/deleteStudent/saveGrouping/getSessionRecap/commitSession）
   src/lib/grouping.ts (+ .test.ts)     分组方案可编辑模型（toModel/moveStudent/addGroup/removeGroup/renameGroup/toPayload）
   src/lib/session.ts (+ .test.ts)      课堂事件流计分派生（sScore/gScore/recap，学生 id 为 string）+ Lesson 3 demo scenario（仅 session.test.ts 夹具）
   src/lib/setup.ts (+ .test.ts)        课前配置分组模型（buildSetup/moveStudent/addGroup/sums）+ 开始课堂 config 快照（buildSessionConfig 携带缺席名单含原组 / configFromDetail）
-  src/lib/classroomStore.ts (+ .test.ts) 课堂本地状态：ClassroomSession 模型 + reducer（加减分/背书作业/出勤/调组/撤销）+ localStorage 持久化 + buildClassroomSession/buildCommitPayload/nowSql
+  src/lib/classroomStore.ts (+ .test.ts) 课堂本地状态：ClassroomSession 模型 + reducer（加减分/背书作业/出勤/调组/撤销 undo 尾部 + undoEvent 任意单条）+ localStorage 持久化 + buildClassroomSession/buildCommitPayload/nowSql；可选 log 数组存背书/作业/出勤变更（StatusLogEntry，与 events 共用 nid 发号成全序，点同状态 no-op 不记，仅本地永不进 commit payload）
+  src/lib/classroomLog.ts (+ .test.ts) 课堂日志派生 buildLogLines：events（可撤销，带组同步说明）+ log（仅记录）合并按 id 倒序成时间线
 miniapp/  Taro 4 + React + TS（webpack5，prebundle 关闭）· 学生端小程序（weapp 正式产物 / h5 开发调试，appid=touristappid 游客模式）
   config/index.ts                      双端编译配置；h5 devServer :10086 代理 /api、/uploads → :5177
   src/app.config.ts                    pages: index（分流：teacher→老师端 / 有孩子→recap 首页+多孩 chips / pending→等待页 / 欢迎页）/ join（?invite= 落地：预览+四项表单）/ recap（?sid=&student=）/ bind（老师绑定）/ teacher/classes（角标列表）/ teacher/class（生成邀请+队列关联）

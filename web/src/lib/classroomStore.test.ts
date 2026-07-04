@@ -113,23 +113,23 @@ describe('classroom reducer', () => {
 
   it('sets recitation / homework labels explicitly (re-selecting keeps, null clears)', () => {
     let s = boot();
-    s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完' });
+    s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完', at });
     expect(s.students.find((x) => x.id === 's1')!.r).toBe('已背完');
-    s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完' });
+    s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完', at });
     expect(s.students.find((x) => x.id === 's1')!.r).toBe('已背完');
-    s = reducer(s, { type: 'setRecite', sid: 's1', v: null });
+    s = reducer(s, { type: 'setRecite', sid: 's1', v: null, at });
     expect(s.students.find((x) => x.id === 's1')!.r).toBe(null);
-    s = reducer(s, { type: 'setHomework', sid: 's2', v: '完成' });
+    s = reducer(s, { type: 'setHomework', sid: 's2', v: '完成', at });
     expect(s.students.find((x) => x.id === 's2')!.h).toBe('完成');
-    s = reducer(s, { type: 'setHomework', sid: 's2', v: null });
+    s = reducer(s, { type: 'setHomework', sid: 's2', v: null, at });
     expect(s.students.find((x) => x.id === 's2')!.h).toBe(null);
   });
 
   it('toggles attendance', () => {
     let s = boot();
-    s = reducer(s, { type: 'toggleAttendance', sid: 's1' });
+    s = reducer(s, { type: 'toggleAttendance', sid: 's1', at });
     expect(s.students.find((x) => x.id === 's1')!.attendance).toBe('absent');
-    s = reducer(s, { type: 'toggleAttendance', sid: 's1' });
+    s = reducer(s, { type: 'toggleAttendance', sid: 's1', at });
     expect(s.students.find((x) => x.id === 's1')!.attendance).toBe('present');
   });
 
@@ -216,6 +216,77 @@ describe('classroom reducer', () => {
     expect(gScore(s.events, 'g1')).toBe(1); // history preserved
     expect(gScore(s.events, 'g2')).toBe(1);
     expect(sScore(s.events, 's1')).toBe(2);
+  });
+});
+
+describe('课堂日志 (status log + 任意单条撤销)', () => {
+  const at = '2026-07-02 19:05:00';
+  const at2 = '2026-07-02 19:06:00';
+
+  it('logs recite / homework / attendance changes, sharing the nid sequence with score events', () => {
+    let s = boot();
+    s = reducer(s, { type: 'scoreStudent', sid: 's1', d: 1, at }); // takes id 1
+    s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完', at: at2 });
+    s = reducer(s, { type: 'toggleAttendance', sid: 's2', at: at2 });
+    expect(s.log).toEqual([
+      { id: 2, at: at2, kind: 'recite', sid: 's1', to: '已背完' },
+      { id: 3, at: at2, kind: 'attendance', sid: 's2', to: 'absent' },
+    ]);
+    expect(s.events[0].id).toBe(1);
+    expect(s.nid).toBe(4); // 一个计数器给两个数组发号 → 合并时间线有稳定全序
+  });
+
+  it('re-selecting the same status is a pure no-op (no state change, no log entry)', () => {
+    let s = boot();
+    s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完', at });
+    const before = s;
+    s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完', at: at2 });
+    expect(s).toBe(before);
+    expect(s.log).toHaveLength(1);
+  });
+
+  it('logs clearing a status back to 未检查 as to=null', () => {
+    let s = boot();
+    s = reducer(s, { type: 'setHomework', sid: 's2', v: '完成', at });
+    s = reducer(s, { type: 'setHomework', sid: 's2', v: null, at: at2 });
+    expect(s.log!.map((e) => e.to)).toEqual(['完成', null]);
+  });
+
+  it('undoEvent removes exactly that event — personal & group score回退 atomically, others untouched', () => {
+    let s = boot();
+    s = reducer(s, { type: 'scoreStudent', sid: 's1', d: 1, at }); // id 1 → s1 & g1
+    s = reducer(s, { type: 'scoreGroup', gid: 'g1', d: 1, at }); // id 2
+    s = reducer(s, { type: 'scoreStudent', sid: 's1', d: -1, at }); // id 3
+    s = reducer(s, { type: 'undoEvent', eventId: 1 });
+    expect(s.events.map((e) => e.id)).toEqual([2, 3]);
+    expect(sScore(s.events, 's1')).toBe(-1); // 个人分回退了 id1 的 +1
+    expect(gScore(s.events, 'g1')).toBe(0); // 组分同一事件同时回退（原子性）
+  });
+
+  it('undoEvent with an unknown id is a no-op', () => {
+    let s = boot();
+    s = reducer(s, { type: 'scoreStudent', sid: 's1', d: 1, at });
+    const before = s;
+    s = reducer(s, { type: 'undoEvent', eventId: 99 });
+    expect(s).toBe(before);
+  });
+
+  it('an old persisted session without log still loads, and logging starts fresh (persisted-shape compat)', () => {
+    const store = memStore();
+    const legacy = { ...boot() } as Record<string, unknown>;
+    delete legacy.log;
+    store.setItem('nce.classroom.c1', JSON.stringify(legacy));
+    let s = loadSession('c1', store)!;
+    expect(s).not.toBeNull();
+    s = reducer(s, { type: 'setRecite', sid: 's1', v: '没背', at });
+    expect(s.log).toHaveLength(1);
+  });
+
+  it('the status log never enters the commit payload (仅本地)', () => {
+    let s = boot();
+    s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完', at });
+    const p = buildCommitPayload(s, '2026-07-02 21:00:00');
+    expect('log' in p).toBe(false);
   });
 });
 
@@ -312,8 +383,8 @@ describe('buildCommitPayload', () => {
     let s = boot();
     s = reducer(s, { type: 'scoreStudent', sid: 's1', d: 1, at: '2026-07-02 19:05:00' });
     s = reducer(s, { type: 'scoreGroup', gid: 'g2', d: 1, at: '2026-07-02 19:06:00' });
-    s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完' });
-    s = reducer(s, { type: 'setHomework', sid: 's2', v: '没交' });
+    s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完', at: '2026-07-02 19:07:00' });
+    s = reducer(s, { type: 'setHomework', sid: 's2', v: '没交', at: '2026-07-02 19:08:00' });
     const p = buildCommitPayload(s, '2026-07-02 20:58:00');
 
     expect(p.clientSessionId).toBe('cs-test');

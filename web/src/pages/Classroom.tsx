@@ -21,6 +21,7 @@ import {
   type ClassroomSession,
   type ClassroomStudent,
 } from '../lib/classroomStore';
+import { buildLogLines, type LogLine } from '../lib/classroomLog';
 import { configFromDetail, lessonLabel as fmtLessonLabel } from '../lib/setup';
 import {
   GRAY,
@@ -42,7 +43,7 @@ import {
 // that swaps between five views; scoring is an event stream (see lib/session).
 // The whole lesson runs in local state (lib/classroomStore), persisted to
 // LocalStorage after every change, and is POSTed once at 结束课堂.
-type View = 'board' | 'recite' | 'homework' | 'attendance' | 'regroup' | 'info';
+type View = 'board' | 'recite' | 'homework' | 'attendance' | 'regroup' | 'info' | 'log';
 
 const FONT = "'Nunito','PingFang SC','Microsoft YaHei',system-ui,sans-serif";
 const NUM = "'Baloo 2','Nunito','PingFang SC',sans-serif";
@@ -157,9 +158,10 @@ export function Classroom() {
   const addStudentScore = (sid: string, d: 1 | -1) => dispatch({ type: 'scoreStudent', sid, d, at: nowSql() });
   const addGroupScore = (gid: string, d: 1 | -1) => dispatch({ type: 'scoreGroup', gid, d, at: nowSql() });
   const undo = () => dispatch({ type: 'undo' });
-  const setRecite = (sid: string, v: Recitation) => dispatch({ type: 'setRecite', sid, v });
-  const setHomework = (sid: string, v: Homework) => dispatch({ type: 'setHomework', sid, v });
-  const toggleAbsent = (sid: string) => dispatch({ type: 'toggleAttendance', sid });
+  const undoEvent = (eventId: number) => dispatch({ type: 'undoEvent', eventId });
+  const setRecite = (sid: string, v: Recitation) => dispatch({ type: 'setRecite', sid, v, at: nowSql() });
+  const setHomework = (sid: string, v: Homework) => dispatch({ type: 'setHomework', sid, v, at: nowSql() });
+  const toggleAbsent = (sid: string) => dispatch({ type: 'toggleAttendance', sid, at: nowSql() });
   const moveStudent = (sid: string, gid: string) => dispatch({ type: 'moveStudent', sid, gid });
   const changeGroupEmoji = (gid: string, emoji: string) => dispatch({ type: 'setGroupEmoji', gid, emoji });
   const renameGroup = (gid: string, name: string) => dispatch({ type: 'renameGroup', gid, name });
@@ -580,7 +582,9 @@ export function Classroom() {
 
         {view === 'info' && <ClassInfoView classId={id} session={session} />}
 
-        {!isBoard && view !== 'info' && (
+        {view === 'log' && <LogView session={session} onUndo={undoEvent} />}
+
+        {(view === 'recite' || view === 'homework' || view === 'attendance') && (
           <SegmentView
             view={view}
             students={students}
@@ -599,6 +603,9 @@ export function Classroom() {
         </button>
         <button onClick={() => goView('info')} style={attnStyle(view === 'info')}>
           <span style={{ fontSize: 17 }}>📚</span>班级信息
+        </button>
+        <button onClick={() => goView('log')} style={attnStyle(view === 'log')}>
+          <span style={{ fontSize: 17 }}>📜</span>日志
         </button>
         <div style={{ display: 'flex', gap: 6, background: '#eef2ea', padding: 6, borderRadius: 18 }}>
           {(
@@ -1176,6 +1183,153 @@ function ClassInfoView({ classId, session }: { classId: string; session: Classro
             )}
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// ---- 课堂日志 view: score events + status changes in one timeline ----------
+// Score lines are undoable per-entry (deleting the event回退 personal & group
+// score atomically); status lines are record-only. Newest first.
+function LogView({ session, onUndo }: { session: ClassroomSession; onUndo: (eventId: number) => void }) {
+  const lines = buildLogLines(session);
+  return (
+    <div
+      style={{
+        flex: 1,
+        minHeight: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        background: '#ffffff',
+        borderRadius: 26,
+        boxShadow: '0 10px 28px rgba(60,90,55,.08)',
+        overflow: 'hidden',
+        marginBottom: 6,
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          padding: '18px 24px',
+          borderBottom: '2px solid #f0f3ed',
+        }}
+      >
+        <span style={{ fontSize: 26 }}>📜</span>
+        <span style={{ fontWeight: 900, fontSize: 22, color: '#2c3340' }}>课堂日志</span>
+        <span style={{ fontWeight: 700, fontSize: 14, color: '#a7b0bb' }}>
+          加减分可在这里撤销 · 个人分与小组分同步回退
+        </span>
+        <div
+          style={{
+            marginLeft: 'auto',
+            padding: '8px 18px',
+            borderRadius: 14,
+            background: '#eef2ea',
+            color: '#5b6672',
+            fontWeight: 800,
+            fontSize: 16,
+          }}
+        >
+          共 {lines.length} 条
+        </div>
+      </div>
+      <div style={{ flex: 1, minHeight: 0, padding: '6px 24px 18px', overflow: 'auto' }}>
+        {lines.length === 0 && (
+          <div
+            style={{
+              height: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 15,
+              fontWeight: 700,
+              color: '#a7b0bb',
+            }}
+          >
+            还没有课堂事件 · 加减分、背书 / 作业检查、出勤操作都会记录在这里
+          </div>
+        )}
+        {lines.map((l) => (
+          <LogRow key={l.id} line={l} onUndo={onUndo} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LogRow({ line: l, onUndo }: { line: LogLine; onUndo: (eventId: number) => void }) {
+  const chip =
+    l.tone === 'plus' ? { bg: '#e4f8ea', fg: '#1e9e4a' } : l.tone === 'minus' ? { bg: '#ffe4e4', fg: '#e0454a' } : null;
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        padding: '11px 10px',
+        margin: '0 -10px',
+        borderBottom: '1px solid #f2f5ef',
+      }}
+    >
+      <span
+        style={{
+          fontFamily: NUM,
+          fontVariantNumeric: 'tabular-nums',
+          fontSize: 14,
+          fontWeight: 700,
+          color: '#a7b0bb',
+          width: 72,
+          flexShrink: 0,
+        }}
+      >
+        {l.at.slice(11)}
+      </span>
+      <span style={{ fontSize: 18, flexShrink: 0 }}>{l.icon}</span>
+      <span style={{ fontWeight: 800, fontSize: 16, color: '#2c3340', whiteSpace: 'nowrap' }}>{l.who}</span>
+      {chip ? (
+        <span
+          style={{
+            padding: '3px 11px',
+            borderRadius: 10,
+            background: chip.bg,
+            color: chip.fg,
+            fontFamily: NUM,
+            fontWeight: 800,
+            fontSize: 15,
+            lineHeight: 1.3,
+            flexShrink: 0,
+          }}
+        >
+          {l.action}
+        </span>
+      ) : (
+        <span style={{ fontWeight: 700, fontSize: 15, color: '#5b6672' }}>{l.action}</span>
+      )}
+      {l.detail && <span style={{ fontSize: 13, fontWeight: 700, color: '#a7b0bb' }}>{l.detail}</span>}
+      {l.eventId != null && (
+        <button
+          onClick={() => onUndo(l.eventId!)}
+          style={{
+            marginLeft: 'auto',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 5,
+            padding: '6px 14px',
+            borderRadius: 11,
+            border: '2px solid #dfe6da',
+            background: '#fff',
+            color: '#5b6672',
+            fontWeight: 700,
+            fontSize: 13,
+            fontFamily: 'inherit',
+            cursor: 'pointer',
+            flexShrink: 0,
+          }}
+        >
+          ↩ 撤销
+        </button>
       )}
     </div>
   );

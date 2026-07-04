@@ -30,6 +30,16 @@ export interface DefaultGroup {
   memberIds: string[];
 }
 
+/** 课堂日志的状态变更条目（背书/作业/出勤）。加减分不在这里——它们由
+ *  events 派生进日志，撤销即删事件。仅本地展示，永不进 commit payload。 */
+export interface StatusLogEntry {
+  id: number; // drawn from the same nid sequence as score events → one total order
+  at: string; // 'YYYY-MM-DD HH:mm:ss'
+  kind: 'recite' | 'homework' | 'attendance';
+  sid: string;
+  to: string | null; // new value; null = cleared back to 未检查
+}
+
 export interface ClassroomSession {
   clientSessionId: string; // idempotency key; stable across retries (decision 10)
   classId: string;
@@ -44,6 +54,7 @@ export interface ClassroomSession {
   groups: SGroup[];
   students: ClassroomStudent[];
   events: SEvent[];
+  log?: StatusLogEntry[]; // optional (persisted-shape compat): old存档 without it starts empty
   nid: number; // next local event id
 }
 
@@ -97,6 +108,7 @@ export function buildClassroomSession(
     groups,
     students: [...present, ...absent],
     events: [],
+    log: [],
     nid: 1,
   };
 }
@@ -107,9 +119,10 @@ export type CAction =
   | { type: 'scoreStudent'; sid: string; d: 1 | -1; at: string }
   | { type: 'scoreGroup'; gid: string; d: 1 | -1; at: string }
   | { type: 'undo' }
-  | { type: 'setRecite'; sid: string; v: Recitation }
-  | { type: 'setHomework'; sid: string; v: Homework }
-  | { type: 'toggleAttendance'; sid: string }
+  | { type: 'undoEvent'; eventId: number }
+  | { type: 'setRecite'; sid: string; v: Recitation; at: string }
+  | { type: 'setHomework'; sid: string; v: Homework; at: string }
+  | { type: 'toggleAttendance'; sid: string; at: string }
   | { type: 'moveStudent'; sid: string; gid: string }
   | {
       type: 'setLessonInfo';
@@ -134,12 +147,46 @@ export function reducer(s: ClassroomSession, a: CAction): ClassroomSession {
       return pushEvent(s, 'group', a.gid, a.gid, a.d, a.at);
     case 'undo':
       return s.events.length ? { ...s, events: s.events.slice(0, -1) } : s;
-    case 'setRecite':
-      return mapStudent(s, a.sid, (x) => ({ ...x, r: a.v }));
-    case 'setHomework':
-      return mapStudent(s, a.sid, (x) => ({ ...x, h: a.v }));
-    case 'toggleAttendance':
-      return mapStudent(s, a.sid, (x) => ({ ...x, attendance: x.attendance === 'absent' ? 'present' : 'absent' }));
+    case 'undoEvent':
+      // 任意单条撤销（日志视图）：删除该事件即可 —— 个人分与组分都从同一条
+      // 事件派生，天然原子回退，其余事件不受影响。
+      return s.events.some((e) => e.id === a.eventId)
+        ? { ...s, events: s.events.filter((e) => e.id !== a.eventId) }
+        : s;
+    case 'setRecite': {
+      const st = s.students.find((x) => x.id === a.sid);
+      if (!st || st.r === a.v) return s; // 点同一状态 = 纯 no-op，不记日志
+      return pushLog(
+        mapStudent(s, a.sid, (x) => ({ ...x, r: a.v })),
+        'recite',
+        a.sid,
+        a.v,
+        a.at,
+      );
+    }
+    case 'setHomework': {
+      const st = s.students.find((x) => x.id === a.sid);
+      if (!st || st.h === a.v) return s;
+      return pushLog(
+        mapStudent(s, a.sid, (x) => ({ ...x, h: a.v })),
+        'homework',
+        a.sid,
+        a.v,
+        a.at,
+      );
+    }
+    case 'toggleAttendance': {
+      const st = s.students.find((x) => x.id === a.sid);
+      if (!st) return s;
+      const to = st.attendance === 'absent' ? 'present' : 'absent';
+      return pushLog(
+        mapStudent(s, a.sid, (x) => ({ ...x, attendance: to })),
+        'attendance',
+        a.sid,
+        to,
+        a.at,
+      );
+    }
     case 'moveStudent':
       return mapStudent(s, a.sid, (x) => ({ ...x, g: a.gid }));
     case 'setLessonInfo':
@@ -194,6 +241,17 @@ function pushEvent(
 
 function mapStudent(s: ClassroomSession, sid: string, fn: (x: ClassroomStudent) => ClassroomStudent): ClassroomSession {
   return { ...s, students: s.students.map((x) => (x.id === sid ? fn(x) : x)) };
+}
+
+function pushLog(
+  s: ClassroomSession,
+  kind: StatusLogEntry['kind'],
+  sid: string,
+  to: string | null,
+  at: string,
+): ClassroomSession {
+  // `s.log ?? []`: sessions persisted by older builds have no log field.
+  return { ...s, log: [...(s.log ?? []), { id: s.nid, at, kind, sid, to }], nid: s.nid + 1 };
 }
 
 // ---- persistence (LocalStorage; swap for IndexedDB here if data grows) -----
