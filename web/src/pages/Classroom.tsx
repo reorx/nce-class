@@ -28,6 +28,7 @@ import {
   GROUP_COLORS,
   HOMEWORK_MAP,
   RECITE_MAP,
+  byScoreDesc,
   gScore,
   sScore,
   stars as recapStars,
@@ -321,7 +322,9 @@ export function Classroom() {
             <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 18, paddingBottom: 6 }}>
               {groups.map((g) => {
                 const c = colorOf(g.id);
-                const inGroup = students.filter((s) => s.g === g.id && s.attendance === 'present');
+                const present = students.filter((s) => s.g === g.id && s.attendance === 'present');
+                // 上课视图按个人分动态排序（高分在上）；调组视图保持花名册顺序方便拖拽
+                const inGroup = view === 'board' ? byScoreDesc(present, events) : present;
                 const absentNames = students
                   .filter((s) => s.g === g.id && s.attendance === 'absent')
                   .map((s) => s.name);

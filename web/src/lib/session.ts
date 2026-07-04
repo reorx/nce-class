@@ -87,6 +87,14 @@ export function gScore(events: SEvent[], gid: string): number {
     .reduce((a, e) => a + e.d, 0);
 }
 
+/** Board view ordering: members by personal score desc; ties keep roster order. */
+export function byScoreDesc(students: SStudent[], events: SEvent[]): SStudent[] {
+  return students
+    .map((s, i) => ({ s, i, sc: sScore(events, s.id) }))
+    .sort((a, b) => b.sc - a.sc || a.i - b.i)
+    .map((x) => x.s);
+}
+
 /** Recap "亮眼" list: personal net score ≥ 2 this session (§6, default threshold). */
 export function stars(students: SStudent[], events: SEvent[]): SStudent[] {
   return students.filter((s) => sScore(events, s.id) >= 2);
