@@ -89,6 +89,17 @@ export function createClass(
   return id;
 }
 
+/** Update a class's basic info (name / level / 负责老师). */
+export function updateClassInfo(
+  sqlite: DB,
+  classId: string,
+  p: { name: string; level: string | null; teacherId: string },
+): void {
+  sqlite
+    .prepare(`UPDATE classes SET name=?, level=?, teacher_id=? WHERE id=?`)
+    .run(p.name, p.level, p.teacherId, classId);
+}
+
 /** Add a teacher-created student to a class. Returns the new student id. */
 export function addStudent(sqlite: DB, p: { classId: string; name: string }): string {
   const id = `s-${nanoid(10)}`;

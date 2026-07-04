@@ -30,6 +30,7 @@ import {
   saveGrouping,
   setClassNotes,
   setStudentStatus,
+  updateClassInfo,
   updateSessionStartedAt,
   upsertJoinRequest,
   upsertWechatAccount,
@@ -262,6 +263,7 @@ function classDetailPayload(id: string) {
     name: c.name,
     level: c.level,
     notes: c.notes ?? null,
+    teacherId: c.teacher_id ?? null,
     teacherName: teacher?.name ?? '—',
     studentCount: students.filter((s) => s.status !== 'archived').length,
     groupCount: groups.length,
@@ -858,6 +860,20 @@ export function createApp() {
     const level = str(req.body?.level);
     const id = createClass(sqlite, { orgId: teacher.org_id, name, level, teacherId: teacher.id });
     res.status(201).json(classDetailPayload(id));
+  });
+
+  // ---- class basic info (name / level / 负责老师, full replace) ----
+  app.put('/api/classes/:id', (req, res) => {
+    const teacher = res.locals.teacher;
+    if (!classInOrg(req.params.id, teacher.org_id)) return res.status(404).json({ error: 'class not found' });
+    const name = str(req.body?.name);
+    if (!name) return res.status(400).json({ error: '班级名称必填' });
+    const teacherId = str(req.body?.teacherId);
+    if (!teacherId) return res.status(400).json({ error: '负责老师必填' });
+    const t = q.teacherById.get(teacherId) as any;
+    if (!t || t.org_id !== teacher.org_id) return res.status(400).json({ error: '负责老师不存在或不属于本校' });
+    updateClassInfo(sqlite, req.params.id, { name, level: str(req.body?.level), teacherId });
+    res.json(classDetailPayload(req.params.id));
   });
 
   // ---- students (write) ----

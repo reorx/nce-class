@@ -4,7 +4,15 @@ import { Markdown } from '../components/Markdown';
 import { Modal } from '../components/Modal';
 import { TopBar } from '../components/TopBar';
 import { useToast } from '../components/Toast';
-import { api, type ClassDetail as Detail, type JoinRequestItem, type Me, type Session, type Student } from '../lib/api';
+import {
+  api,
+  type ClassDetail as Detail,
+  type JoinRequestItem,
+  type Me,
+  type Session,
+  type Student,
+  type TeacherItem,
+} from '../lib/api';
 import { applyStartTime, startTimeOf } from '../lib/classroomStore';
 import {
   addGroup,
@@ -70,6 +78,7 @@ export function ClassDetail({ me }: { me: Me | null }) {
                   {d.level}
                 </span>
               )}
+              {d && <EditClassInfo d={d} me={me} reload={reload} />}
             </div>
             <div style={{ marginTop: 8, fontSize: 13.5, color: '#7a828f', whiteSpace: 'nowrap' }}>
               {d?.studentCount ?? 0} 名学生 · {d?.groupCount ?? 0} 个分组 · 负责老师 {d?.teacherName ?? ''}
@@ -173,6 +182,112 @@ const ghostBtn: CSSProperties = {
   fontSize: 14,
   cursor: 'pointer',
 };
+
+// ===== CLASS INFO EDIT (名称/级别/负责老师) =================================
+function EditClassInfo({ d, me, reload }: { d: Detail; me: Me | null; reload: () => Promise<void> | void }) {
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [teachers, setTeachers] = useState<TeacherItem[]>([]);
+  const [name, setName] = useState('');
+  const [level, setLevel] = useState('');
+  const [teacherId, setTeacherId] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  function openModal() {
+    setName(d.name);
+    setLevel(d.level ?? '');
+    // legacy rows may have no 负责老师 — default the pick to the logged-in teacher
+    setTeacherId(d.teacherId ?? me?.id ?? '');
+    setOpen(true);
+    api
+      .teachers()
+      .then(setTeachers)
+      .catch(() => toast('老师列表加载失败', 'error'));
+  }
+
+  async function save() {
+    if (!name.trim() || !teacherId || busy) return;
+    setBusy(true);
+    try {
+      await api.updateClassInfo(d.id, { name: name.trim(), level: level.trim() || null, teacherId });
+      await reload();
+      toast('班级信息已更新');
+      setOpen(false);
+    } catch {
+      toast('保存失败，请重试', 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <button
+        onClick={openModal}
+        title="编辑班级信息"
+        style={{
+          height: 28,
+          padding: '0 11px',
+          background: '#fff',
+          color: '#7a828f',
+          border: '1px solid #e2e5ea',
+          borderRadius: 8,
+          fontWeight: 600,
+          fontSize: 12.5,
+          cursor: 'pointer',
+        }}
+      >
+        ✎ 编辑
+      </button>
+      <Modal open={open} onClose={() => setOpen(false)} title="编辑班级信息">
+        <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#5b6472', marginBottom: 6 }}>
+          班级名称
+        </label>
+        <input
+          value={name}
+          autoFocus
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && save()}
+          placeholder="如 三年级A班"
+          style={fieldStyle}
+        />
+        <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#5b6472', margin: '14px 0 6px' }}>
+          级别 <span style={{ fontWeight: 400, color: '#9aa1ac' }}>（选填，如 新概念二册）</span>
+        </label>
+        <input
+          value={level}
+          onChange={(e) => setLevel(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && save()}
+          placeholder="留空则不显示"
+          style={fieldStyle}
+        />
+        <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#5b6472', margin: '14px 0 6px' }}>
+          负责老师
+        </label>
+        <select
+          value={teacherId}
+          onChange={(e) => setTeacherId(e.target.value)}
+          style={{ ...fieldStyle, cursor: 'pointer' }}
+        >
+          {!teachers.some((t) => t.id === teacherId) && <option value={teacherId}>{d.teacherName}</option>}
+          {teachers.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
+          ))}
+        </select>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
+          <button style={ghostBtn} onClick={() => setOpen(false)} disabled={busy}>
+            取消
+          </button>
+          <button style={{ ...primaryBtn, opacity: name.trim() && teacherId && !busy ? 1 : 0.55 }} onClick={save}>
+            {busy ? '保存中…' : '保存'}
+          </button>
+        </div>
+      </Modal>
+    </>
+  );
+}
 
 // ===== NOTES TAB (班级资源, free-form markdown) =============================
 function NotesTab({ d, reload }: { d: Detail; reload: () => Promise<void> | void }) {

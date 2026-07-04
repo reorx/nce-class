@@ -92,6 +92,7 @@ export interface ClassDetail {
   name: string;
   level: string | null;
   notes: string | null; // 班级资源 — free-form markdown
+  teacherId: string | null; // 负责老师; null on legacy rows
   teacherName: string;
   studentCount: number;
   groupCount: number;
@@ -245,6 +246,8 @@ export const api = {
   classes: () => get<ClassListItem[]>('/api/classes'),
   classDetail: (id: string) => get<ClassDetail>(`/api/classes/${id}`),
   createClass: (name: string, level: string | null) => req<ClassDetail>('POST', '/api/classes', { name, level }),
+  updateClassInfo: (classId: string, p: { name: string; level: string | null; teacherId: string }) =>
+    req<ClassDetail>('PUT', `/api/classes/${classId}`, p),
   addStudent: (classId: string, name: string) => req<Student>('POST', `/api/classes/${classId}/students`, { name }),
   deleteStudent: (id: string) => req<{ ok: true }>('DELETE', `/api/students/${id}`),
   setStudentStatus: (id: string, status: StudentStatus) =>
