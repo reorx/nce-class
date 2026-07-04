@@ -1378,19 +1378,28 @@ function LessonInfoDialog({
   const [title, setTitle] = useState(lessonTitle);
   const [duration, setDuration] = useState(String(durationMin));
   const [start, setStart] = useState(() => startTimeOf(startedAt));
+  const [startErr, setStartErr] = useState('');
   const [tid, setTid] = useState(teacherId);
-  const save = () =>
+  const save = () => {
+    // undefined keeps the session's current 开始时间 (cleared / invalid input)
+    const nextStart = applyStartTime(startedAt, start) ?? undefined;
+    // 'YYYY-MM-DD HH:mm:ss' compares lexicographically — a future start would
+    // freeze the countdown at full duration and commit endedAt < startedAt
+    if (nextStart && nextStart > nowSql()) {
+      setStartErr('开始时间不能晚于当前时间');
+      return;
+    }
     onSave({
       lessonNumber: no.trim(),
       lessonTitle: title.trim(),
       durationMin: Math.max(1, Number(duration) || 120),
-      // undefined keeps the session's current 开始时间 (cleared / invalid input)
-      startedAt: applyStartTime(startedAt, start) ?? undefined,
+      startedAt: nextStart,
       // undefined keeps the session's current 主讲老师 (e.g. teachers 拉取失败)
       teacherId: tid || undefined,
       teacherName:
         teachers.find((t) => t.id === tid)?.name ?? (tid === teacherId ? teacherName || undefined : undefined),
     });
+  };
   const onKey = (e: React.KeyboardEvent) => e.key === 'Enter' && save();
   return (
     <Overlay z={55} onClose={onClose}>
@@ -1449,11 +1458,17 @@ function LessonInfoDialog({
           <input
             type="time"
             value={start}
-            onChange={(e) => setStart(e.target.value)}
+            onChange={(e) => {
+              setStart(e.target.value);
+              setStartErr('');
+            }}
             onKeyDown={onKey}
             style={{ flex: 1, minWidth: 0, width: '100%', ...inputBase, fontVariantNumeric: 'tabular-nums' }}
           />
         </InfoField>
+        {startErr && (
+          <div style={{ color: '#ff5a5f', fontSize: 13, fontWeight: 700, margin: '-10px 0 16px' }}>{startErr}</div>
+        )}
 
         <label style={fieldLabel}>课堂时长</label>
         <InfoField last>
