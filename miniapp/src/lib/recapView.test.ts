@@ -14,8 +14,9 @@ describe('medals', () => {
 });
 
 describe('status tones（PRD §8 配色口径）', () => {
-  it('作业：完成=绿，其余=灰', () => {
+  it('作业：完成=绿，需补=黄，其余=灰', () => {
     expect(homeworkTone('完成')).toBe('good');
+    expect(homeworkTone('需补')).toBe('part');
     expect(homeworkTone('没交')).toBe('muted');
   });
   it('背书：已背完/背完部分/没背/未检查 → 绿/黄/红/灰', () => {

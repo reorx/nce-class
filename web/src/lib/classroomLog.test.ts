@@ -65,7 +65,7 @@ describe('buildLogLines', () => {
     let s = boot();
     s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完', at: at(5) });
     s = reducer(s, { type: 'setHomework', sid: 's2', v: '完成', at: at(6) });
-    s = reducer(s, { type: 'setHomework', sid: 's2', v: null, at: at(7) });
+    s = reducer(s, { type: 'setHomework', sid: 's2', v: '没交', at: at(7) });
     s = reducer(s, { type: 'toggleAttendance', sid: 's5', at: at(8) }); // → absent
     s = reducer(s, { type: 'toggleAttendance', sid: 's5', at: at(9) }); // → present
     const lines = buildLogLines(s);
@@ -73,7 +73,7 @@ describe('buildLogLines', () => {
     expect(lines.map((l) => [l.who, l.action])).toEqual([
       ['丽丽', '恢复到勤'],
       ['丽丽', '标记未到'],
-      ['小红', '作业 → 未检查'],
+      ['小红', '作业 → 没交'],
       ['小红', '作业 → 完成'],
       ['小明', '背书 → 已背完'],
     ]);

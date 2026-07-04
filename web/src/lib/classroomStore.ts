@@ -38,7 +38,7 @@ export interface StatusLogEntry {
   at: string; // 'YYYY-MM-DD HH:mm:ss'
   kind: 'recite' | 'homework' | 'attendance';
   sid: string;
-  to: string | null; // new value; null = cleared back to 未检查
+  to: string | null; // new value; null = recite cleared back to 未检查（作业无 null 态，旧存档里才有）
 }
 
 export interface ClassroomSession {
@@ -72,7 +72,7 @@ export function buildClassroomSession(
     g: s.g,
     name: s.name,
     r: null,
-    h: null,
+    h: '没交', // 作业默认「没交」（无未批改态；与 server「缺记录=没交」口径一致）
     tags: [],
     attendance: 'present',
   }));
@@ -83,7 +83,7 @@ export function buildClassroomSession(
     g: a.originalGroupId ?? '',
     name: a.name,
     r: null,
-    h: null,
+    h: '没交',
     tags: [],
     attendance: 'absent',
   }));
@@ -305,7 +305,8 @@ export function loadSession(classId: string, store: KVStore | null = defaultStor
       Array.isArray(s.groups) &&
       Array.isArray(s.defaultGrouping) // guard the §7.2 writeback shape too (M2)
     ) {
-      return s;
+      // 旧存档兼容：未批改（h:null）已并入默认「没交」——归一化后新代码不再见 null。
+      return { ...s, students: s.students.map((x) => (x.h == null ? { ...x, h: '没交' } : x)) };
     }
     return null;
   } catch {
@@ -433,7 +434,8 @@ export function buildCommitPayload(s: ClassroomSession, endedAt: string): Commit
   const checks: CommitPayload['checks'] = [];
   for (const st of s.students) {
     if (st.r) checks.push({ studentId: st.id, type: 'recitation', status: st.r });
-    if (st.h) checks.push({ studentId: st.id, type: 'homework', status: st.h });
+    // 默认「没交」不发：server 读侧把「缺记录」fallback 成 没交，语义等价且行数不膨胀。
+    if (st.h && st.h !== '没交') checks.push({ studentId: st.id, type: 'homework', status: st.h });
   }
   const tags: CommitPayload['tags'] = [];
   for (const st of s.students) for (const tag of st.tags ?? []) tags.push({ studentId: st.id, tag });

@@ -13,7 +13,9 @@
 // ---------------------------------------------------------------------------
 
 export type Recitation = '已背完' | '背完部分' | '没背' | null;
-export type Homework = '完成' | '没交' | null;
+// 作业没有「未批改」态：默认人人「没交」，交了改「完成」，交了但要补做改「需补」。
+// （server 读侧本就把「缺记录」fallback 成 没交 —— 见 profile / wx recap mine。）
+export type Homework = '没交' | '完成' | '需补';
 
 export interface SStudent {
   id: string; // real student id (needed to POST the session to the backend)
@@ -69,6 +71,7 @@ export const RECITE_MAP: Record<string, { dot: string; soft: string; fg: string 
 
 export const HOMEWORK_MAP: Record<string, { dot: string; soft: string; fg: string }> = {
   完成: { dot: '#34c759', soft: '#e4f8ea', fg: '#1e9e4a' },
+  需补: { dot: '#ffb020', soft: '#fff3d6', fg: '#c08600' },
   没交: { dot: '#c9cfd6', soft: '#eef1f4', fg: '#98a2b0' },
 };
 
@@ -133,14 +136,14 @@ export function initialSession(): SessionState {
     students: [
       { id: '1', g: 'g1', name: '小明', r: '已背完', h: '完成' },
       { id: '2', g: 'g1', name: '小红', r: '背完部分', h: '完成' },
-      { id: '3', g: 'g1', name: '小刚', r: null, h: null },
+      { id: '3', g: 'g1', name: '小刚', r: null, h: '没交' },
       { id: '4', g: 'g1', name: '乐乐', r: '没背', h: '没交' },
       { id: '5', g: 'g2', name: '丽丽', r: '已背完', h: '完成' },
       { id: '6', g: 'g2', name: '大壮', r: null, h: '完成' },
       { id: '7', g: 'g2', name: '欣欣', r: '已背完', h: '完成' },
-      { id: '8', g: 'g2', name: '明明', r: '背完部分', h: null },
+      { id: '8', g: 'g2', name: '明明', r: '背完部分', h: '没交' },
       { id: '9', g: 'g3', name: '军军', r: '已背完', h: '完成' },
-      { id: '10', g: 'g3', name: '悦悦', r: null, h: null },
+      { id: '10', g: 'g3', name: '悦悦', r: null, h: '没交' },
       { id: '11', g: 'g3', name: '婷婷', r: '没背', h: '没交' },
       { id: '12', g: 'g3', name: '浩浩', r: '已背完', h: '完成' },
     ],

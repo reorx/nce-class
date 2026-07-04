@@ -72,6 +72,12 @@ describe('buildClassroomSession', () => {
     expect(s.lessonNumber).toBe('4');
   });
 
+  it('boots everyone at 背书未检查 (null) and 作业默认「没交」(未批改桶已移除)', () => {
+    const s = boot();
+    expect(s.students.every((x) => x.r === null)).toBe(true);
+    expect(s.students.every((x) => x.h === '没交')).toBe(true);
+  });
+
   it('freezes a default grouping that keeps absent students in their original group (decision 6)', () => {
     const s = boot();
     const g1 = s.defaultGrouping.find((g) => g.clientId === 'g1')!;
@@ -111,7 +117,7 @@ describe('classroom reducer', () => {
     expect(sScore(s.events, 's1')).toBe(1);
   });
 
-  it('sets recitation / homework labels explicitly (re-selecting keeps, null clears)', () => {
+  it('sets recitation / homework labels explicitly (re-selecting keeps, null clears recite)', () => {
     let s = boot();
     s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完', at });
     expect(s.students.find((x) => x.id === 's1')!.r).toBe('已背完');
@@ -121,8 +127,10 @@ describe('classroom reducer', () => {
     expect(s.students.find((x) => x.id === 's1')!.r).toBe(null);
     s = reducer(s, { type: 'setHomework', sid: 's2', v: '完成', at });
     expect(s.students.find((x) => x.id === 's2')!.h).toBe('完成');
-    s = reducer(s, { type: 'setHomework', sid: 's2', v: null, at });
-    expect(s.students.find((x) => x.id === 's2')!.h).toBe(null);
+    s = reducer(s, { type: 'setHomework', sid: 's2', v: '需补', at });
+    expect(s.students.find((x) => x.id === 's2')!.h).toBe('需补');
+    s = reducer(s, { type: 'setHomework', sid: 's2', v: '没交', at });
+    expect(s.students.find((x) => x.id === 's2')!.h).toBe('没交');
   });
 
   it('toggles attendance', () => {
@@ -318,11 +326,13 @@ describe('课堂日志 (status log + 任意单条撤销)', () => {
     expect(s.log).toHaveLength(1);
   });
 
-  it('logs clearing a status back to 未检查 as to=null', () => {
+  it('logs clearing recite back to 未检查 as to=null; 作业回到默认「没交」也记录', () => {
     let s = boot();
+    s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完', at });
+    s = reducer(s, { type: 'setRecite', sid: 's1', v: null, at: at2 });
     s = reducer(s, { type: 'setHomework', sid: 's2', v: '完成', at });
-    s = reducer(s, { type: 'setHomework', sid: 's2', v: null, at: at2 });
-    expect(s.log!.map((e) => e.to)).toEqual(['完成', null]);
+    s = reducer(s, { type: 'setHomework', sid: 's2', v: '没交', at: at2 });
+    expect(s.log!.map((e) => e.to)).toEqual(['已背完', null, '完成', '没交']);
   });
 
   it('undoEvent removes exactly that event — personal & group score回退 atomically, others untouched', () => {
@@ -378,6 +388,16 @@ describe('persistence (LocalStorage round-trip)', () => {
     expect(loadSession('cX', store)).toBeNull();
     store.setItem('nce.classroom.cX', '{not json');
     expect(loadSession('cX', store)).toBeNull();
+  });
+
+  it('normalizes 旧存档的 h:null（未批改）为默认「没交」on load', () => {
+    const store = memStore();
+    const legacy = JSON.parse(JSON.stringify(boot()));
+    for (const st of legacy.students) st.h = null; // 未批改时代的存档 shape
+    store.setItem('nce.classroom.c1', JSON.stringify(legacy));
+    const loaded = loadSession('c1', store)!;
+    expect(loaded.students.length).toBeGreaterThan(0);
+    expect(loaded.students.every((x) => x.h === '没交')).toBe(true);
   });
 });
 
@@ -457,7 +477,7 @@ describe('buildCommitPayload', () => {
     s = reducer(s, { type: 'scoreStudent', sid: 's1', d: 1, at: '2026-07-02 19:05:00' });
     s = reducer(s, { type: 'scoreGroup', gid: 'g2', d: 1, at: '2026-07-02 19:06:00' });
     s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完', at: '2026-07-02 19:07:00' });
-    s = reducer(s, { type: 'setHomework', sid: 's2', v: '没交', at: '2026-07-02 19:08:00' });
+    s = reducer(s, { type: 'setHomework', sid: 's2', v: '需补', at: '2026-07-02 19:08:00' });
     const p = buildCommitPayload(s, '2026-07-02 20:58:00');
 
     expect(p.clientSessionId).toBe('cs-test');
@@ -498,10 +518,19 @@ describe('buildCommitPayload', () => {
     });
     expect(p.events[1]).toMatchObject({ targetType: 'group', targetId: 'g2', clientGroupId: 'g2', delta: 1 });
 
-    // only checked/marked students appear in checks
+    // only meaningful checks are sent: recite 非 null；作业非默认「没交」
+    // （不发没交 = server 读侧「缺记录=没交」fallback，语义等价、payload 不膨胀）
     expect(p.checks).toContainEqual({ studentId: 's1', type: 'recitation', status: '已背完' });
-    expect(p.checks).toContainEqual({ studentId: 's2', type: 'homework', status: '没交' });
+    expect(p.checks).toContainEqual({ studentId: 's2', type: 'homework', status: '需补' });
     expect(p.checks).toHaveLength(2);
+  });
+
+  it('omits homework checks for the default「没交」— including students moved back to it', () => {
+    let s = boot();
+    s = reducer(s, { type: 'setHomework', sid: 's1', v: '完成', at: '2026-07-02 19:05:00' });
+    s = reducer(s, { type: 'setHomework', sid: 's1', v: '没交', at: '2026-07-02 19:06:00' });
+    const p = buildCommitPayload(s, '2026-07-02 20:58:00');
+    expect(p.checks).toHaveLength(0); // 改回默认 = 等同没动过
   });
 
   it('emits a null lessonNumber when the lesson field was left blank', () => {

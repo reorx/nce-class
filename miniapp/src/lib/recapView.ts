@@ -15,7 +15,9 @@ export function medals(scores: number[]): string[] {
 export type StatusTone = 'good' | 'part' | 'bad' | 'muted';
 
 export function homeworkTone(status: string): StatusTone {
-  return status === '完成' ? 'good' : 'muted';
+  if (status === '完成') return 'good';
+  if (status === '需补') return 'part';
+  return 'muted';
 }
 
 export function recitationTone(status: string): StatusTone {

@@ -11,7 +11,7 @@ export interface RecapPersonal {
   groupEmoji: string | null;
   personalScore: number;
   recitation: string; // '已背完' | '背完部分' | '没背' | '未检查'
-  homework: string; // '完成' | '没交'
+  homework: string; // '完成' | '需补' | '没交'
 }
 
 /** 领奖台排列：第一名居中，其余从中心向两侧交替（输入按名次降序）。 */
@@ -74,7 +74,9 @@ export function fmtSigned(n: number): string {
 export type StatusTone = 'good' | 'part' | 'bad' | 'muted';
 
 export function homeworkTone(status: string): StatusTone {
-  return status === '完成' ? 'good' : 'muted';
+  if (status === '完成') return 'good';
+  if (status === '需补') return 'part';
+  return 'muted';
 }
 
 export function recitationTone(status: string): StatusTone {

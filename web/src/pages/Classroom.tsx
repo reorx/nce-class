@@ -24,7 +24,9 @@ import {
   type ClassroomStudent,
 } from '../lib/classroomStore';
 import { buildLogLines, type LogLine } from '../lib/classroomLog';
-import { configFromDetail, lessonLabel as fmtLessonLabel } from '../lib/setup';
+import { allSelected, dragTargets, someSelected, toggleAll, toggleOne } from '../lib/multiSelect';
+import { lessonLabel as fmtLessonLabel } from '../lib/lesson';
+import { configFromDetail } from '../lib/setup';
 import { displayZoom } from '../lib/zoom';
 import {
   GRAY,
@@ -206,10 +208,7 @@ export function Classroom() {
   const timerStr = fmtTimer(Math.abs(remainingSec));
 
   const className = session.className ?? '班级';
-  const lessonLabel = fmtLessonLabel({
-    lessonNumber: session.lessonNumber ?? '',
-    lessonTitle: session.lessonTitle ?? '',
-  });
+  const lessonLabel = fmtLessonLabel(session.lessonNumber, session.lessonTitle);
   const isBoard = view === 'board' || view === 'regroup';
 
   // ---- end class: commit the whole session once, then to 上课记录 ----------
@@ -224,11 +223,11 @@ export function Classroom() {
     saveCommitBackup({ session, payload });
     api
       .commitSession(id, payload)
-      .then(() => {
+      .then((result) => {
         clearCommitBackup(payload.clientSessionId);
         clearSession(id);
-        toast('本节课已保存 · 已生成课堂回顾', 'success');
-        nav(`/classes/${id}?tab=sessions`);
+        toast('本节课已保存 · 请布置作业', 'success');
+        nav(`/classes/${id}/sessions/${result.sessionId}`);
       })
       .catch((e) => {
         setSubmitting(false);
@@ -613,13 +612,20 @@ export function Classroom() {
         {view === 'log' && <LogView session={session} onUndo={undoEvent} />}
 
         {(view === 'recite' || view === 'homework' || view === 'attendance') && (
+          // key=view：切视图整体重挂载，多选集/拖拽 ref/高亮一并归零
           <SegmentView
+            key={view}
             view={view}
             students={students}
             groups={groups}
             colorOf={colorOf}
             onBadge={(sid) => (view === 'attendance' ? toggleAbsent(sid) : setOpenId(sid))}
-            onMove={(sid, v) => (view === 'recite' ? setRecite(sid, v as Recitation) : setHomework(sid, v as Homework))}
+            onMove={(sids, v) =>
+              // 多选拖拽 = 逐个 dispatch：每人一条日志，同状态者由 reducer no-op 兜底
+              sids.forEach((sid) =>
+                view === 'recite' ? setRecite(sid, v as Recitation) : setHomework(sid, v as Homework),
+              )
+            }
           />
         )}
       </div>
@@ -896,7 +902,8 @@ function StudentBoardCard({
   onClick?: () => void;
 }) {
   const r = s.r ? RECITE_MAP[s.r] : GRAY;
-  const h = s.h ? HOMEWORK_MAP[s.h] : GRAY;
+  const h = HOMEWORK_MAP[s.h] ?? GRAY; // h 无 null 态；?? 兜住意外脏值
+
   const scoreBg = score > 0 ? '#e4f8ea' : score < 0 ? '#ffe4e4' : '#eef1f4';
   const scoreFg = score > 0 ? '#1e9e4a' : score < 0 ? '#e0454a' : '#98a2b0';
   return (
@@ -1033,7 +1040,7 @@ function ClassInfoView({ classId, session }: { classId: string; session: Classro
       ]
     : [];
   const lessonFacts: [string, string][] = [
-    ['课次', fmtLessonLabel({ lessonNumber: session.lessonNumber ?? '', lessonTitle: session.lessonTitle ?? '' })],
+    ['课次', fmtLessonLabel(session.lessonNumber, session.lessonTitle)],
     ['主讲老师', session.teacherName || '—'],
     ['开始时间', startedHm],
     ['计划时长', `${session.plannedDurationMin} 分钟`],
@@ -1381,12 +1388,16 @@ function SegmentView({
   groups: SGroup[];
   colorOf: (gid: string) => (typeof GROUP_COLORS)[number];
   onBadge: (sid: string) => void;
-  onMove?: (sid: string, value: Recitation | Homework) => void;
+  onMove?: (sids: string[], value: Recitation | Homework) => void;
 }) {
   const groupById = new Map(groups.map((g) => [g.id, g]));
-  const dragSid = useRef<string | null>(null);
+  const dragSids = useRef<string[]>([]);
   const [overSeg, setOverSeg] = useState<string | null>(null);
+  // 多选批量改状态（lib/multiSelect）：选中集非空即多选模式——点学生卡=选中/
+  // 取消，拖任一选中者=整批一起改状态。切视图时随 key=view 重挂载清空。
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const canDrag = onMove != null && (view === 'recite' || view === 'homework');
+  const selecting = canDrag && selected.size > 0;
   const total = students.length;
   const bucket = (pred: (s: ClassroomStudent) => boolean) => students.filter(pred);
 
@@ -1412,14 +1423,16 @@ function SegmentView({
       { title: '没背', dot: '#c9cfd6', soft: '#eef1f4', students: bucket((s) => s.r === '没背'), value: '没背' },
     ];
   } else if (view === 'homework') {
-    const done = students.filter((s) => s.h !== null).length;
+    // 没有「未批改」态：默认人人「没交」，交了拖去「完成」，交了但要补做拖去「需补」。
+    const done = students.filter((s) => s.h === '完成').length;
+    const redo = students.filter((s) => s.h === '需补').length;
     icon = '📝';
     title = '作业检查';
-    progress = `已批改 ${done} / ${total}`;
+    progress = `完成 ${done} · 需补 ${redo}`;
     segs = [
-      { title: '未批改', dot: '#c9cfd6', soft: '#f4f6f8', students: bucket((s) => s.h === null), value: null },
+      { title: '没交', dot: '#c9cfd6', soft: '#f4f6f8', students: bucket((s) => s.h === '没交'), value: '没交' },
       { title: '完成', dot: '#34c759', soft: '#eaf9ef', students: bucket((s) => s.h === '完成'), value: '完成' },
-      { title: '没交', dot: '#c9cfd6', soft: '#eef1f4', students: bucket((s) => s.h === '没交'), value: '没交' },
+      { title: '需补', dot: '#ffb020', soft: '#fff6e0', students: bucket((s) => s.h === '需补'), value: '需补' },
     ];
   } else {
     const present = students.filter((s) => s.attendance === 'present');
@@ -1459,7 +1472,27 @@ function SegmentView({
         <span style={{ fontSize: 26 }}>{icon}</span>
         <span style={{ fontWeight: 900, fontSize: 22, color: '#2c3340' }}>{title}</span>
         {canDrag && (
-          <span style={{ fontWeight: 700, fontSize: 14, color: '#a7b0bb' }}>✋ 拖拽学生卡到目标状态栏可直接改状态</span>
+          <span style={{ fontWeight: 700, fontSize: 14, color: '#a7b0bb' }}>
+            {selecting ? '☑️ 点学生卡选中/取消 · 拖任一选中学生批量改状态' : '✋ 拖拽学生卡到目标状态栏可直接改状态'}
+          </span>
+        )}
+        {selecting && (
+          <button
+            onClick={() => setSelected(new Set())}
+            style={{
+              padding: '6px 14px',
+              borderRadius: 12,
+              border: 'none',
+              background: '#eef2ea',
+              color: '#5b6672',
+              fontWeight: 800,
+              fontSize: 14,
+              fontFamily: 'inherit',
+              cursor: 'pointer',
+            }}
+          >
+            ✕ 取消选择（{selected.size}）
+          </button>
         )}
         <div
           style={{
@@ -1509,8 +1542,13 @@ function SegmentView({
                 ? (e) => {
                     e.preventDefault();
                     setOverSeg(null);
-                    if (dragSid.current != null) onMove!(dragSid.current, seg.value ?? null);
-                    dragSid.current = null;
+                    const sids = dragSids.current;
+                    dragSids.current = [];
+                    if (!sids.length) return;
+                    onMove!(sids, seg.value ?? null);
+                    // 拖的是选中集 → 落下即完成批量改状态，清空选择退出多选；
+                    // 单拖未选中者不碰选中集。
+                    if (sids.some((x) => selected.has(x))) setSelected(new Set());
                   }
                 : undefined
             }
@@ -1540,6 +1578,33 @@ function SegmentView({
               >
                 {seg.students.length}
               </span>
+              {canDrag &&
+                seg.students.length > 0 &&
+                (() => {
+                  const ids = seg.students.map((x) => x.id);
+                  const all = allSelected(selected, ids);
+                  return (
+                    <label
+                      style={{
+                        marginLeft: 'auto',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 7,
+                        cursor: 'pointer',
+                        color: '#8a94a0',
+                        fontWeight: 700,
+                        fontSize: 14,
+                      }}
+                    >
+                      全选
+                      <SegCheckbox
+                        checked={all}
+                        indeterminate={!all && someSelected(selected, ids)}
+                        onChange={() => setSelected(toggleAll(selected, ids))}
+                      />
+                    </label>
+                  );
+                })()}
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
               {seg.empty && (
@@ -1550,20 +1615,22 @@ function SegmentView({
               {seg.students.map((s) => {
                 const g = groupById.get(s.g);
                 const c = colorOf(s.g);
+                const isSel = selecting && selected.has(s.id);
                 return (
                   <div
                     key={s.id}
-                    onClick={() => onBadge(s.id)}
+                    onClick={() => (selecting ? setSelected(toggleOne(selected, s.id)) : onBadge(s.id))}
                     draggable={canDrag}
-                    onDragStart={canDrag ? () => (dragSid.current = s.id) : undefined}
+                    onDragStart={canDrag ? () => (dragSids.current = dragTargets(selected, s.id)) : undefined}
                     style={{
+                      position: 'relative',
                       display: 'flex',
                       alignItems: 'center',
                       gap: 10,
                       padding: '8px 15px 8px 8px',
                       borderRadius: 16,
                       background: seg.soft,
-                      border: '2px solid transparent',
+                      border: `2px solid ${isSel ? seg.dot : 'transparent'}`,
                       cursor: canDrag ? 'grab' : 'pointer',
                       transition: 'transform .12s,border-color .12s',
                     }}
@@ -1572,7 +1639,7 @@ function SegmentView({
                       e.currentTarget.style.transform = 'translateY(-2px)';
                     }}
                     onMouseLeave={(e) => {
-                      e.currentTarget.style.borderColor = 'transparent';
+                      e.currentTarget.style.borderColor = isSel ? seg.dot : 'transparent';
                       e.currentTarget.style.transform = 'none';
                     }}
                   >
@@ -1583,6 +1650,28 @@ function SegmentView({
                       </span>
                     </div>
                     <span style={{ fontWeight: 800, fontSize: 17, color: '#2c3340' }}>{s.name}</span>
+                    {isSel && (
+                      <span
+                        style={{
+                          position: 'absolute',
+                          top: -7,
+                          right: -7,
+                          width: 22,
+                          height: 22,
+                          borderRadius: '50%',
+                          background: '#2fb457',
+                          color: '#fff',
+                          fontWeight: 900,
+                          fontSize: 13,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          boxShadow: '0 2px 6px rgba(0,0,0,.2)',
+                        }}
+                      >
+                        ✓
+                      </span>
+                    )}
                   </div>
                 );
               })}
@@ -1631,6 +1720,31 @@ function SegmentView({
   );
 }
 
+// 栏头全选 checkbox：原生 input 才有 indeterminate（部分选中）三态。
+function SegCheckbox({
+  checked,
+  indeterminate,
+  onChange,
+}: {
+  checked: boolean;
+  indeterminate: boolean;
+  onChange: () => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = indeterminate;
+  }, [indeterminate]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      checked={checked}
+      onChange={onChange}
+      style={{ width: 20, height: 20, accentColor: '#2fb457', cursor: 'pointer' }}
+    />
+  );
+}
+
 // ===== student popup =======================================================
 // Focused per view: 'score' (board) shows only ±1, 'recite'/'homework' show
 // only that status picker. Every action commits immediately and the caller
@@ -1646,9 +1760,9 @@ const RECITE_OPTIONS: { v: Recitation; label: string }[] = [
 ];
 
 const HOMEWORK_OPTIONS: { v: Homework; label: string }[] = [
-  { v: '完成', label: '完成' },
   { v: '没交', label: '没交' },
-  { v: null, label: '未检查' },
+  { v: '完成', label: '完成' },
+  { v: '需补', label: '需补' },
 ];
 
 function StudentPopup({
@@ -1740,7 +1854,7 @@ function StudentPopup({
             title="📝 作业检查"
             options={HOMEWORK_OPTIONS}
             current={st.h}
-            colorFor={(v) => (v ? HOMEWORK_MAP[v] : GRAY)}
+            colorFor={(v) => HOMEWORK_MAP[v]}
             onPick={onHomework}
           />
         )}

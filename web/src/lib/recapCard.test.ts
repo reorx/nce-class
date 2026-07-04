@@ -79,8 +79,9 @@ describe('formatting', () => {
 });
 
 describe('check-status tones', () => {
-  it('homework: 完成 is good, anything else muted', () => {
+  it('homework: 完成 good, 需补 part, anything else muted', () => {
     expect(homeworkTone('完成')).toBe('good');
+    expect(homeworkTone('需补')).toBe('part');
     expect(homeworkTone('没交')).toBe('muted');
   });
   it('recitation maps all four states', () => {
