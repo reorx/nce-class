@@ -8,7 +8,6 @@ import {
   type ClassDetail as Detail,
   type JoinRequestItem,
   type Me,
-  type Recap,
   type Session,
   type Student,
 } from '../lib/api';
@@ -1102,26 +1101,9 @@ const fmtLesson = (no: number | null, title: string | null) =>
   [no != null && `第${no}课`, title].filter(Boolean).join(' · ');
 
 function SessionsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | void }) {
-  const [recap, setRecap] = useState<Recap | null>(null);
-  const [recapOpen, setRecapOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Session | null>(null);
   const [busy, setBusy] = useState(false);
   const toast = useToast();
-
-  async function openRecap(s: Session) {
-    setRecapOpen(true);
-    setRecap(null);
-    setLoading(true);
-    try {
-      setRecap(await api.getSessionRecap(s.id));
-    } catch {
-      toast('回顾加载失败', 'error');
-      setRecapOpen(false);
-    } finally {
-      setLoading(false);
-    }
-  }
 
   async function confirmDelete() {
     if (!pendingDelete || busy) return;
@@ -1213,8 +1195,9 @@ function SessionsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | v
               </div>
               <div style={{ width: 58, fontSize: 13, color: '#5b6472' }}>{s.groupCount} 组</div>
               <div style={{ width: 148, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                <button
-                  onClick={() => openRecap(s)}
+                <Link
+                  to={`/classes/${d.id}/sessions/${s.id}/recap`}
+                  target="_blank"
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -1228,10 +1211,11 @@ function SessionsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | v
                     fontWeight: 600,
                     fontSize: 12.5,
                     cursor: 'pointer',
+                    textDecoration: 'none',
                   }}
                 >
                   查看 recap
-                </button>
+                </Link>
                 <button
                   onClick={() => setPendingDelete(s)}
                   title="删除这条上课记录"
@@ -1258,14 +1242,6 @@ function SessionsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | v
         仅展示本班历次课堂 · recap 家长可在专属链接查看个性化版本
       </div>
 
-      <Modal open={recapOpen} onClose={() => setRecapOpen(false)} title="课堂回顾" width={460}>
-        {loading || !recap ? (
-          <div style={{ padding: '30px 0', textAlign: 'center', color: '#9aa1ac', fontSize: 13.5 }}>加载中…</div>
-        ) : (
-          <RecapBody recap={recap} />
-        )}
-      </Modal>
-
       <Modal open={!!pendingDelete} onClose={() => setPendingDelete(null)} title="删除上课记录">
         <div style={{ fontSize: 14, color: '#3c4451', lineHeight: 1.7 }}>
           确定删除 <b>{pendingDelete?.date}</b>「
@@ -1288,107 +1264,3 @@ function SessionsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | v
   );
 }
 
-function RecapBody({ recap }: { recap: Recap }) {
-  const max = Math.max(1, ...recap.groups.map((g) => g.score));
-  return (
-    <div>
-      <div style={{ fontSize: 13, color: '#7a828f', marginBottom: 4 }}>
-        {fmtLesson(recap.lessonNumber, recap.lessonTitle)}
-      </div>
-      <div style={{ display: 'flex', gap: 14, fontSize: 12.5, color: '#8a929e', marginBottom: 18 }}>
-        <span className="mono">
-          {recap.date} · {recap.weekday}
-        </span>
-        <span>时长 {fmtDur(recap.actualDurationMin)}</span>
-        <span>
-          出勤 {recap.attendancePresent}/{recap.attendanceTotal}
-        </span>
-      </div>
-
-      <div style={{ fontWeight: 700, fontSize: 13.5, color: '#1e2430', marginBottom: 10 }}>小组排名</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 9, marginBottom: 20 }}>
-        {recap.groups.map((g, i) => (
-          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ width: 22, fontSize: 16 }}>{g.emoji}</span>
-            <span style={{ width: 62, fontSize: 13, fontWeight: 600, color: '#3c4451' }}>{g.name}</span>
-            <div style={{ flex: 1, height: 14, background: '#f0f2f5', borderRadius: 7, overflow: 'hidden' }}>
-              <div
-                style={{
-                  width: `${(Math.max(0, g.score) / max) * 100}%`,
-                  height: '100%',
-                  background: i === 0 ? GREEN : '#bcd9c6',
-                  borderRadius: 7,
-                  transition: 'width .3s',
-                }}
-              />
-            </div>
-            <span
-              className="mono"
-              style={{ width: 30, textAlign: 'right', fontWeight: 700, fontSize: 13.5, color: '#1e2430' }}
-            >
-              {g.score}
-            </span>
-          </div>
-        ))}
-      </div>
-
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-        <RecapList
-          title="🌟 表现亮眼"
-          empty="本节无人 +2 及以上"
-          items={recap.stars.map((s) => s.name)}
-          tone="#2c7a48"
-          bg="#eef7f0"
-        />
-        <RecapList
-          title="⚠️ 被提醒"
-          empty="本节无人被扣分"
-          items={recap.warned.map((w) => w.name)}
-          tone="#c0392b"
-          bg="#fbeeee"
-        />
-      </div>
-    </div>
-  );
-}
-
-function RecapList({
-  title,
-  empty,
-  items,
-  tone,
-  bg,
-}: {
-  title: string;
-  empty: string;
-  items: string[];
-  tone: string;
-  bg: string;
-}) {
-  return (
-    <div style={{ flex: 1, minWidth: 180, background: bg, borderRadius: 11, padding: '12px 13px' }}>
-      <div style={{ fontWeight: 700, fontSize: 12.5, color: tone, marginBottom: 8 }}>{title}</div>
-      {items.length === 0 ? (
-        <div style={{ fontSize: 12, color: '#9aa1ac' }}>{empty}</div>
-      ) : (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {items.map((n, i) => (
-            <span
-              key={i}
-              style={{
-                fontSize: 12.5,
-                fontWeight: 600,
-                color: '#3c4451',
-                background: '#fff',
-                padding: '3px 9px',
-                borderRadius: 7,
-              }}
-            >
-              {n}
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}

@@ -17,7 +17,10 @@ server/   Express + TS · Drizzle ORM + SQLite (better-sqlite3)
   tests/                               vitest + supertest 集成测试（临时 DB harness + wxLogin 助手；覆盖登录/增删/分组/建班/recap/跨组织隔离/wx 会话与绑定/邀请注册/队列关联/binding 守卫/存储 switch）
 web/      React + Vite + TS · 老师端桌面 Web（管理页 IBM Plex；课堂界面 Nunito/Baloo 2）
   src/App.tsx                          顶层 auth guard（GET /api/me → 401 跳 /login）+ ToastProvider
-  src/pages/{ClassList,ClassDetail,Teachers,Login}.tsx  ClassList 建班 modal；ClassDetail 学生增删/分组 DnD/recap 浮窗
+  src/pages/{ClassList,ClassDetail,Teachers,Login}.tsx  ClassList 建班 modal；ClassDetail 学生增删/分组 DnD/上课记录（查看 recap 新标签页打开预览页）
+  src/pages/RecapPreview.tsx           Recap 预览页 `/classes/:id/sessions/:sid/recap`：左=移动端课堂战报预览（手机边框）、右=下载图片/复制图片（html-to-image 截 RecapCard 本体，pixelRatio 2）/推送全班（placeholder toast）
+  src/components/RecapCard.tsx         课堂战报卡片（还原设计稿「Recap 页面.dc.html」）：头部/各组得分领奖台/今日之星+老师提醒；传 personal 显示个人卡（到课/个人分/背书作业状态），不传即全班版
+  src/lib/recapCard.ts (+ .test.ts)    战报纯派生：podium 领奖台排列（冠军居中）/groupBars 柱高/fmtDurationCn/dateLabel/背书作业 tone（与小程序 recapView 口径一致）
   src/components/{TopBar,Modal,Toast}.tsx  TopBar 退出登录；通用 Modal + Toast
   src/pages/Setup.tsx                  课前配置：本节课信息 + 上节课回顾 + 默认分组微调（拖拽/增组/缺席暂存）→ 开始课堂（写本地 store，不发后端）
   src/pages/Classroom.tsx              课堂主界面：看板/背书/作业/出勤/调组 五视图 + 学生/小组浮窗 + recap。学生浮窗按视图分化（上课=加减分/背书=背书状态/作业=作业状态，点选即提交并自动关窗，状态弹窗含显式「未检查」项且高亮当前状态）。本地优先：从 store 恢复/URL 参数 boot/否则跳 setup；每次改动落 localStorage；结束课堂预览→确认→一次性 commit；「退出不保存」放弃本地 session
@@ -49,7 +52,7 @@ pnpm dev         # server :5177 + web :5173（vite 代理 /api、/uploads）
 
 **登录墙**：管理页均需登录，先访问 `/login` 用 seed 老师登录（如 `wangli` / `demo1234`，全体老师同密码）。会话是 httpOnly 签名 cookie `nce_session`（7 天）。
 
-已实现页面：登录 `/login`；班级列表 `/`；班级详情 `/classes/c1?tab=students|groups|invite|sessions`（学生增删、分组 DnD 保存、上课记录 recap 浮窗）；课前配置 `/classes/c1/setup`；课堂主界面 `/classes/c1/classroom`（直连判定顺序：①本地 store 命中该班进行中课堂→恢复 ②URL 带 `?lesson=4&title=...&duration=120`→用真实默认分组 boot 全新 session ③否则重定向 `/setup`；Lesson 3 固定 demo 不再有页面入口）。
+已实现页面：登录 `/login`；班级列表 `/`；班级详情 `/classes/c1?tab=students|groups|invite|sessions`（学生增删、分组 DnD 保存、上课记录 recap 新标签页预览）；课前配置 `/classes/c1/setup`；课堂主界面 `/classes/c1/classroom`（直连判定顺序：①本地 store 命中该班进行中课堂→恢复 ②URL 带 `?lesson=4&title=...&duration=120`→用真实默认分组 boot 全新 session ③否则重定向 `/setup`；Lesson 3 固定 demo 不再有页面入口）。
 API（除 `/api/health`、`/api/auth/login` 外全部经认证中间件，写入用 `req` 上的当前老师 + orgId 过滤）：
 - 认证：`POST /api/auth/login`、`POST /api/auth/logout`、`GET /api/me`（无会话 401）、`POST /api/auth/verify-password`（登录墙内重验当前老师密码，错误 403 不影响会话；课堂「放弃本节课」弹窗用）。
 - 读：`GET /api/classes`、`GET /api/classes/:id`（含 `lastRecap`）、`GET /api/sessions/:id/recap`（组分排名 + 🌟亮眼(净≥2)/⚠️被提醒(任一−1) + 出勤）。
