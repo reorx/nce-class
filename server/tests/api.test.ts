@@ -324,6 +324,253 @@ describe('class notes', () => {
   });
 });
 
+describe('class textbook (教材册数)', () => {
+  it('persists 1-4 through create and update, echoing in the detail', async () => {
+    const { agent } = await login();
+    const created = await agent.post('/api/classes').send({ name: '四年级C班', textbook: 2 });
+    expect(created.status).toBe(201);
+    expect(created.body.textbook).toBe(2);
+
+    const res = await agent.put('/api/classes/c1').send({ name: '三年级A班', teacherId: 't-wangli', textbook: 3 });
+    expect(res.status).toBe(200);
+    expect(res.body.textbook).toBe(3);
+    expect((sqlite.prepare(`SELECT textbook FROM classes WHERE id='c1'`).get() as any).textbook).toBe(3);
+  });
+
+  it('defaults to null when omitted and clears back to null', async () => {
+    const { agent } = await login();
+    expect((await agent.get('/api/classes/c1')).body.textbook).toBeNull();
+    expect((await agent.post('/api/classes').send({ name: '新班' })).body.textbook).toBeNull();
+
+    await agent.put('/api/classes/c1').send({ name: '三年级A班', teacherId: 't-wangli', textbook: 2 });
+    const res = await agent.put('/api/classes/c1').send({ name: '三年级A班', teacherId: 't-wangli', textbook: null });
+    expect(res.status).toBe(200);
+    expect(res.body.textbook).toBeNull();
+  });
+
+  it('rejects an out-of-range or non-integer 册数 with 400, leaving the class untouched', async () => {
+    const { agent } = await login();
+    for (const bad of [0, 5, 1.5, '2']) {
+      expect(
+        (await agent.put('/api/classes/c1').send({ name: 'X', teacherId: 't-wangli', textbook: bad })).status,
+      ).toBe(400);
+      expect((await agent.post('/api/classes').send({ name: 'Y', textbook: bad })).status).toBe(400);
+    }
+    const row = sqlite.prepare(`SELECT name, textbook FROM classes WHERE id='c1'`).get() as any;
+    expect(row).toEqual({ name: '三年级A班', textbook: null });
+  });
+});
+
+describe('class homework template', () => {
+  it('saves the template and echoes it in the class detail', async () => {
+    const { agent } = await login();
+    const tpl = '- L{lesson_number} 三英一汉，听写三遍\n- 练字三面\n- 背L{lesson_number}';
+    const res = await agent.put('/api/classes/c1/homework-template').send({ template: tpl });
+    expect(res.status).toBe(200);
+    expect(res.body.homeworkTemplate).toBe(tpl);
+
+    expect((sqlite.prepare(`SELECT homework_template FROM classes WHERE id='c1'`).get() as any).homework_template).toBe(
+      tpl,
+    );
+    expect((await agent.get('/api/classes/c1')).body.homeworkTemplate).toBe(tpl);
+  });
+
+  it('defaults to null and clears back to null on blank input', async () => {
+    const { agent } = await login();
+    expect((await agent.get('/api/classes/c1')).body.homeworkTemplate).toBeNull();
+
+    await agent.put('/api/classes/c1/homework-template').send({ template: '- 背课文' });
+    const res = await agent.put('/api/classes/c1/homework-template').send({ template: '   ' });
+    expect(res.status).toBe(200);
+    expect(res.body.homeworkTemplate).toBeNull();
+    expect(
+      (sqlite.prepare(`SELECT homework_template FROM classes WHERE id='c1'`).get() as any).homework_template,
+    ).toBeNull();
+  });
+
+  it('rejects non-string bodies, unknown and cross-org classes', async () => {
+    const { agent } = await login();
+    expect((await agent.put('/api/classes/c1/homework-template').send({ template: 42 })).status).toBe(400);
+    expect((await agent.put('/api/classes/c1/homework-template').send({})).status).toBe(400);
+    expect((await agent.put('/api/classes/nope/homework-template').send({ template: 'x' })).status).toBe(404);
+
+    const out = (await login('waiguo')).agent;
+    expect((await out.put('/api/classes/c1/homework-template').send({ template: 'x' })).status).toBe(404);
+    expect(
+      (sqlite.prepare(`SELECT homework_template FROM classes WHERE id='c1'`).get() as any).homework_template,
+    ).toBeNull();
+  });
+});
+
+describe('org-wide session list (GET /api/sessions)', () => {
+  it('lists every session of the org with class context, newest first, org-isolated', async () => {
+    const { agent } = await login();
+    // a later second session on c1, plus one on the org-2 class that must not leak
+    sqlite
+      .prepare(
+        `INSERT INTO class_sessions (id, class_id, teacher_id, date, lesson_number, lesson_title, status, planned_duration_min, started_at, ended_at)
+         VALUES ('sess2','c1','t-wangli','2026-06-28',8,'The best and the worst','ended',120,'2026-06-28 09:00:00','2026-06-28 11:05:00')`,
+      )
+      .run();
+    sqlite
+      .prepare(
+        `INSERT INTO class_sessions (id, class_id, teacher_id, date, status, planned_duration_min)
+         VALUES ('sess-out','c-out','t-out','2026-06-27','ended',120)`,
+      )
+      .run();
+    const res = await agent.get('/api/sessions');
+    expect(res.status).toBe(200);
+    expect(res.body.map((s: any) => s.id)).toEqual(['sess2', 'sess1']);
+    // rows share the 上课记录 summary shape, plus the owning class for cross-class display
+    expect(res.body[1]).toMatchObject({
+      id: 'sess1',
+      date: '06-26',
+      year: '2026',
+      weekday: '周五',
+      lessonNumber: 7,
+      lessonTitle: 'Too late',
+      teacherName: '王莉',
+      startedAt: '2026-06-26 19:00:00',
+      endedAt: '2026-06-26 20:58:00',
+      groupCount: 2,
+      classId: 'c1',
+      className: '三年级A班',
+    });
+  });
+
+  it('breaks same-day ties by start time, latest first', async () => {
+    const { agent } = await login();
+    sqlite
+      .prepare(
+        `INSERT INTO class_sessions (id, class_id, teacher_id, date, lesson_number, status, planned_duration_min, started_at, ended_at)
+         VALUES ('sess-am','c1','t-wangli','2026-06-26',6,'ended',120,'2026-06-26 09:00:00','2026-06-26 11:00:00')`,
+      )
+      .run();
+    const res = await agent.get('/api/sessions');
+    expect(res.body.map((s: any) => s.id)).toEqual(['sess1', 'sess-am']);
+  });
+
+  it('blocks unauthenticated access with 401', async () => {
+    expect((await request(app).get('/api/sessions')).status).toBe(401);
+  });
+});
+
+describe('session detail (GET /api/sessions/:id)', () => {
+  it('returns the session summary with class context, homework fields and embedded recap', async () => {
+    const { agent } = await login();
+    const res = await agent.get('/api/sessions/sess1');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      id: 'sess1',
+      date: '06-26',
+      year: '2026',
+      lessonNumber: 7,
+      lessonTitle: 'Too late',
+      teacherName: '王莉',
+      groupCount: 2,
+      classId: 'c1',
+      className: '三年级A班',
+      classTextbook: null,
+      homeworkTemplate: null,
+      homeworkContent: null,
+      reviewBook: null,
+      reviewLesson: null,
+      hasHomework: false,
+    });
+    // the embedded recap is byte-identical to the standalone recap endpoint
+    const recap = (await agent.get('/api/sessions/sess1/recap')).body;
+    expect(res.body.recap).toEqual(recap);
+  });
+
+  it('carries the class textbook and template for the 作业布置 tab defaults', async () => {
+    const { agent } = await login();
+    await agent.put('/api/classes/c1').send({ name: '三年级A班', teacherId: 't-wangli', textbook: 2 });
+    await agent.put('/api/classes/c1/homework-template').send({ template: '- 背L{lesson_number}' });
+    const res = await agent.get('/api/sessions/sess1');
+    expect(res.body.classTextbook).toBe(2);
+    expect(res.body.homeworkTemplate).toBe('- 背L{lesson_number}');
+  });
+
+  it('401 unauthenticated, 404 unknown and cross-org sessions', async () => {
+    expect((await request(app).get('/api/sessions/sess1')).status).toBe(401);
+    const { agent } = await login();
+    expect((await agent.get('/api/sessions/nope')).status).toBe(404);
+    const out = (await login('waiguo')).agent;
+    expect((await out.get('/api/sessions/sess1')).status).toBe(404);
+  });
+});
+
+describe('session homework (完成布置)', () => {
+  it('saves content + 课文复习 selection and echoes the fresh session detail', async () => {
+    const { agent } = await login();
+    const content = '- L7 三英一汉，听写三遍\n- 练字三面';
+    const res = await agent.put('/api/sessions/sess1/homework').send({ content, reviewBook: 2, reviewLesson: 7 });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      id: 'sess1',
+      homeworkContent: content,
+      reviewBook: 2,
+      reviewLesson: 7,
+      hasHomework: true,
+    });
+
+    const row = sqlite
+      .prepare(`SELECT homework_content, review_book, review_lesson FROM class_sessions WHERE id='sess1'`)
+      .get() as any;
+    expect(row).toEqual({ homework_content: content, review_book: 2, review_lesson: 7 });
+    // 上课记录 badge source
+    const d = (await agent.get('/api/classes/c1')).body;
+    expect(d.sessions.find((s: any) => s.id === 'sess1').hasHomework).toBe(true);
+  });
+
+  it('clears blank content to null (课文复习 selection may stand alone)', async () => {
+    const { agent } = await login();
+    const res = await agent
+      .put('/api/sessions/sess1/homework')
+      .send({ content: '   ', reviewBook: 1, reviewLesson: 144 });
+    expect(res.status).toBe(200);
+    expect(res.body.homeworkContent).toBeNull();
+    expect(res.body.hasHomework).toBe(false);
+    expect(res.body.reviewBook).toBe(1);
+    expect(res.body.reviewLesson).toBe(144);
+  });
+
+  it('rejects an out-of-range 册数/课数 or a lesson without a book with 400, leaving the row untouched', async () => {
+    const { agent } = await login();
+    expect((await agent.put('/api/sessions/sess1/homework').send({ content: 42 })).status).toBe(400);
+    expect((await agent.put('/api/sessions/sess1/homework').send({ content: 'x', reviewBook: 5 })).status).toBe(400);
+    expect((await agent.put('/api/sessions/sess1/homework').send({ content: 'x', reviewLesson: 3 })).status).toBe(400);
+    expect(
+      (await agent.put('/api/sessions/sess1/homework').send({ content: 'x', reviewBook: 4, reviewLesson: 49 })).status,
+    ).toBe(400);
+    expect(
+      (await agent.put('/api/sessions/sess1/homework').send({ content: 'x', reviewBook: 2, reviewLesson: 0 })).status,
+    ).toBe(400);
+    const row = sqlite
+      .prepare(`SELECT homework_content, review_book, review_lesson FROM class_sessions WHERE id='sess1'`)
+      .get() as any;
+    expect(row).toEqual({ homework_content: null, review_book: null, review_lesson: null });
+  });
+
+  it('does not disturb the ledger-derived recap', async () => {
+    const { agent } = await login();
+    const before = (await agent.get('/api/sessions/sess1/recap')).body;
+    await agent.put('/api/sessions/sess1/homework').send({ content: '作业', reviewBook: 2, reviewLesson: 7 });
+    expect((await agent.get('/api/sessions/sess1/recap')).body).toEqual(before);
+  });
+
+  it('401 unauthenticated, 404 unknown and cross-org sessions', async () => {
+    expect((await request(app).put('/api/sessions/sess1/homework').send({ content: 'x' })).status).toBe(401);
+    const { agent } = await login();
+    expect((await agent.put('/api/sessions/nope/homework').send({ content: 'x' })).status).toBe(404);
+    const out = (await login('waiguo')).agent;
+    expect((await out.put('/api/sessions/sess1/homework').send({ content: 'x' })).status).toBe(404);
+    expect(
+      (sqlite.prepare(`SELECT homework_content FROM class_sessions WHERE id='sess1'`).get() as any).homework_content,
+    ).toBeNull();
+  });
+});
+
 describe('session recap', () => {
   it('derives group ranking, 亮眼/被提醒, and attendance from the ledger', async () => {
     const { agent } = await login();

@@ -63,6 +63,13 @@ export interface Session {
   startedAt: string | null; // 'YYYY-MM-DD HH:mm:ss'; null on legacy rows
   endedAt: string | null;
   groupCount: number;
+  hasHomework: boolean; // 作业已布置 (homework_content non-null)
+}
+
+/** One row of the org-wide 课堂 list (GET /api/sessions): a session plus its owning class. */
+export interface SessionListItem extends Session {
+  classId: string;
+  className: string;
 }
 
 export interface RecapGroup {
@@ -105,6 +112,8 @@ export interface ClassDetail {
   name: string;
   level: string | null;
   notes: string | null; // 班级资源 — free-form markdown
+  textbook: number | null; // 教材册数 1-4 (structured)
+  homeworkTemplate: string | null; // 作业模板 with {lesson_number}/{date}/{class_name} vars
   teacherId: string | null; // 负责老师; null on legacy rows
   teacherName: string;
   studentCount: number;
@@ -114,6 +123,18 @@ export interface ClassDetail {
   groups: Group[];
   sessions: Session[];
   lastRecap: LastRecap | null;
+}
+
+/** GET /api/sessions/:id — session summary + owning-class context + 作业布置 + embedded recap. */
+export interface SessionDetail extends Session {
+  classId: string;
+  className: string;
+  classTextbook: number | null;
+  homeworkTemplate: string | null;
+  homeworkContent: string | null;
+  reviewBook: number | null; // 课文复习: 第几册
+  reviewLesson: number | null; // 课文复习: 第几课
+  recap: Recap;
 }
 
 // ---- student growth profile (§7.4, read-only) ------------------------------
@@ -260,13 +281,17 @@ export const api = {
     req<TeacherItem>('POST', '/api/teachers', { name, username, password }),
   classes: () => get<ClassListItem[]>('/api/classes'),
   classDetail: (id: string) => get<ClassDetail>(`/api/classes/${id}`),
-  createClass: (name: string, level: string | null) => req<ClassDetail>('POST', '/api/classes', { name, level }),
-  updateClassInfo: (classId: string, p: { name: string; level: string | null; teacherId: string }) =>
-    req<ClassDetail>('PUT', `/api/classes/${classId}`, p),
+  createClass: (name: string, level: string | null, textbook: number | null) =>
+    req<ClassDetail>('POST', '/api/classes', { name, level, textbook }),
+  updateClassInfo: (
+    classId: string,
+    p: { name: string; level: string | null; teacherId: string; textbook: number | null },
+  ) => req<ClassDetail>('PUT', `/api/classes/${classId}`, p),
   addStudent: (classId: string, name: string) => req<Student>('POST', `/api/classes/${classId}/students`, { name }),
   deleteStudent: (id: string) => req<{ ok: true }>('DELETE', `/api/students/${id}`),
   setStudentStatus: (id: string, status: StudentStatus) =>
     req<{ id: string; name: string; status: StudentStatus }>('PUT', `/api/students/${id}/status`, { status }),
+  listSessions: () => get<SessionListItem[]>('/api/sessions'),
   deleteSession: (id: string) => req<{ ok: true }>('DELETE', `/api/sessions/${id}`),
   updateSessionStartedAt: (id: string, startedAt: string) =>
     req<{ ok: true }>('PUT', `/api/sessions/${id}`, { startedAt }),
@@ -274,7 +299,13 @@ export const api = {
     req<ClassDetail>('PUT', `/api/classes/${classId}/groups`, { groups }),
   updateClassNotes: (classId: string, notes: string) =>
     req<ClassDetail>('PUT', `/api/classes/${classId}/notes`, { notes }),
-  getSessionRecap: (sessionId: string) => get<Recap>(`/api/sessions/${sessionId}/recap`),
+  updateHomeworkTemplate: (classId: string, template: string) =>
+    req<ClassDetail>('PUT', `/api/classes/${classId}/homework-template`, { template }),
+  sessionDetail: (sessionId: string) => get<SessionDetail>(`/api/sessions/${sessionId}`),
+  saveSessionHomework: (
+    sessionId: string,
+    p: { content: string; reviewBook: number | null; reviewLesson: number | null },
+  ) => req<SessionDetail>('PUT', `/api/sessions/${sessionId}/homework`, p),
   getStudentProfile: (studentId: string) => get<StudentProfile>(`/api/students/${studentId}/profile`),
   getJoinRequests: (classId: string) => get<JoinRequestItem[]>(`/api/classes/${classId}/join-requests`),
   commitSession: (classId: string, payload: CommitPayload) =>

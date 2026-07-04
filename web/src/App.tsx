@@ -6,7 +6,8 @@ import { ClassDetail } from './pages/ClassDetail';
 import { ClassList } from './pages/ClassList';
 import { Classroom } from './pages/Classroom';
 import { Login } from './pages/Login';
-import { RecapPreview } from './pages/RecapPreview';
+import { SessionDetail } from './pages/SessionDetail';
+import { Sessions } from './pages/Sessions';
 import { Setup } from './pages/Setup';
 import { StudentProfile } from './pages/StudentProfile';
 import { Teachers } from './pages/Teachers';
@@ -54,9 +55,10 @@ export function App() {
         <Route path="/" element={guard(<ClassList me={me} />)} />
         <Route path="/classes/:id" element={guard(<ClassDetail me={me} />)} />
         <Route path="/classes/:id/students/:sid" element={guard(<StudentProfile me={me} />)} />
-        <Route path="/classes/:id/sessions/:sid/recap" element={guard(<RecapPreview />)} />
+        <Route path="/classes/:id/sessions/:sid" element={guard(<SessionDetail me={me} />)} />
         <Route path="/classes/:id/setup" element={guard(<Setup />)} />
         <Route path="/classes/:id/classroom" element={guard(<Classroom />)} />
+        <Route path="/sessions" element={guard(<Sessions me={me} />)} />
         <Route path="/teachers" element={guard(<Teachers me={me} />)} />
       </Routes>
     </ToastProvider>

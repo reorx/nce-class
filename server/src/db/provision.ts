@@ -20,6 +20,23 @@ export function migrate(sqlite: DB): void {
   if (!classCols.some((c) => c.name === 'notes')) {
     sqlite.exec(`ALTER TABLE classes ADD COLUMN notes TEXT`);
   }
+  // 作业机制: 教材册数 + 作业模板 on classes, 作业布置 fields on class_sessions.
+  if (!classCols.some((c) => c.name === 'textbook')) {
+    sqlite.exec(`ALTER TABLE classes ADD COLUMN textbook INTEGER`);
+  }
+  if (!classCols.some((c) => c.name === 'homework_template')) {
+    sqlite.exec(`ALTER TABLE classes ADD COLUMN homework_template TEXT`);
+  }
+  const sessionCols = sqlite.prepare(`PRAGMA table_info(class_sessions)`).all() as { name: string }[];
+  if (!sessionCols.some((c) => c.name === 'homework_content')) {
+    sqlite.exec(`ALTER TABLE class_sessions ADD COLUMN homework_content TEXT`);
+  }
+  if (!sessionCols.some((c) => c.name === 'review_book')) {
+    sqlite.exec(`ALTER TABLE class_sessions ADD COLUMN review_book INTEGER`);
+  }
+  if (!sessionCols.some((c) => c.name === 'review_lesson')) {
+    sqlite.exec(`ALTER TABLE class_sessions ADD COLUMN review_lesson INTEGER`);
+  }
 }
 
 /** Provision a real account on a clean database: org (by name, created if missing) + teacher + password credential. */

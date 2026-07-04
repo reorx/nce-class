@@ -5,6 +5,7 @@ import { TopBar } from '../components/TopBar';
 import { useToast } from '../components/Toast';
 import { api, type ClassListItem, type Me } from '../lib/api';
 import { loadSession } from '../lib/classroomStore';
+import { BOOK_LABELS, BOOKS } from '../lib/homework';
 import { GREEN, GREEN_DARK, PAL } from '../lib/theme';
 
 const ORANGE = '#f0862a';
@@ -42,6 +43,7 @@ export function ClassList({ me }: { me: Me | null }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState('');
   const [level, setLevel] = useState<string>(LEVELS[1]);
+  const [textbook, setTextbook] = useState<number | null>(2);
   const [busy, setBusy] = useState(false);
   const toast = useToast();
   const nav = useNavigate();
@@ -61,7 +63,7 @@ export function ClassList({ me }: { me: Me | null }) {
     if (!nm || busy) return;
     setBusy(true);
     try {
-      const created = await api.createClass(nm, level || null);
+      const created = await api.createClass(nm, level || null, textbook);
       await reload();
       toast(`已创建「${nm}」`);
       setCreateOpen(false);
@@ -172,12 +174,15 @@ export function ClassList({ me }: { me: Me | null }) {
         />
         <label style={{ ...labelStyle, marginTop: 15 }}>课程级别</label>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {LEVELS.map((lv) => {
+          {LEVELS.map((lv, i) => {
             const on = level === lv;
             return (
               <button
                 key={lv}
-                onClick={() => setLevel(lv)}
+                onClick={() => {
+                  setLevel(lv);
+                  setTextbook(i + 1); // 级别与教材册数联动，仍可在下方单独改
+                }}
                 style={{
                   padding: '8px 13px',
                   borderRadius: 8,
@@ -190,6 +195,32 @@ export function ClassList({ me }: { me: Me | null }) {
                 }}
               >
                 {lv}
+              </button>
+            );
+          })}
+        </div>
+        <label style={{ ...labelStyle, marginTop: 15 }}>
+          教材册数 <span style={{ fontWeight: 400, color: '#9aa1ac' }}>（课文复习默认按此册）</span>
+        </label>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {BOOKS.map((b) => {
+            const on = textbook === b;
+            return (
+              <button
+                key={b}
+                onClick={() => setTextbook(on ? null : b)}
+                style={{
+                  padding: '8px 13px',
+                  borderRadius: 8,
+                  border: `1px solid ${on ? GREEN : '#e2e5ea'}`,
+                  background: on ? '#eef7f0' : '#fff',
+                  color: on ? '#2c7a48' : '#5b6472',
+                  fontWeight: 600,
+                  fontSize: 13,
+                  cursor: 'pointer',
+                }}
+              >
+                {BOOK_LABELS[b]}
               </button>
             );
           })}

@@ -239,6 +239,8 @@ function seedC1() {
         '每节课前 10 分钟听写上节课单词，**周五**统一检查练习册。',
       ].join('\n'),
       teacherId: cls.teacher,
+      textbook: 2,
+      homeworkTemplate: ['- L{lesson_number} 三英一汉，听写三遍', '- 练字三面', '- 背L{lesson_number}'].join('\n'),
       createdAt: ts(),
     })
     .run();

@@ -191,9 +191,3 @@ export function buildSessionConfig(state: SetupState, info: SessionInfo): Sessio
 export function configFromDetail(detail: Detail, info: SessionInfo): SessionConfig {
   return buildSessionConfig(buildSetup(detail), info);
 }
-
-/** Header label for a session: "第4课 · A private conversation" (parts optional). */
-export function lessonLabel(cfg: Pick<SessionConfig, 'lessonNumber' | 'lessonTitle'>): string {
-  const parts = [cfg.lessonNumber && `第${cfg.lessonNumber}课`, cfg.lessonTitle].filter(Boolean);
-  return parts.join(' · ') || '本节课';
-}

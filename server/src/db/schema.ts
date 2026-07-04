@@ -53,8 +53,10 @@ export const classes = sqliteTable('classes', {
     .notNull()
     .references(() => organizations.id),
   name: text('name').notNull(),
-  level: text('level'), // 新概念二册 etc. (optional grade / book)
+  level: text('level'), // 新概念二册 etc. (optional grade / book, free text)
   notes: text('notes'), // 班级资源 — free-form markdown kept by the teachers
+  textbook: integer('textbook'), // 教材册数 1-4 (structured, for 课文复习 defaults)
+  homeworkTemplate: text('homework_template'), // 作业模板 — {lesson_number}/{date}/{class_name} vars
   teacherId: text('teacher_id').references(() => teachers.id), // 负责老师
   createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
 });
@@ -177,6 +179,11 @@ export const classSessions = sqliteTable('class_sessions', {
   // client's local session id, so a retried submit returns the existing row
   // instead of double-inserting. Null for legacy/seeded sessions.
   clientSessionId: text('client_session_id').unique(),
+  // 作业布置 — authored on the session detail page AFTER the commit (own PUT,
+  // never part of the commit payload/compat contract).
+  homeworkContent: text('homework_content'),
+  reviewBook: integer('review_book'), // 课文复习: 第几册 (1-4)
+  reviewLesson: integer('review_lesson'), // 课文复习: 第几课
 });
 
 // ---- SessionGroup — snapshot of the default grouping at start; adjustable mid-class ----

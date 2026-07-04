@@ -86,24 +86,24 @@ export function createTeacher(
 /** Create a class in the given org owned by the given teacher. Returns its id. */
 export function createClass(
   sqlite: DB,
-  p: { orgId: string; name: string; level: string | null; teacherId: string },
+  p: { orgId: string; name: string; level: string | null; teacherId: string; textbook: number | null },
 ): string {
   const id = `c-${nanoid(10)}`;
   sqlite
-    .prepare(`INSERT INTO classes (id, org_id, name, level, teacher_id) VALUES (?,?,?,?,?)`)
-    .run(id, p.orgId, p.name, p.level, p.teacherId);
+    .prepare(`INSERT INTO classes (id, org_id, name, level, teacher_id, textbook) VALUES (?,?,?,?,?,?)`)
+    .run(id, p.orgId, p.name, p.level, p.teacherId, p.textbook);
   return id;
 }
 
-/** Update a class's basic info (name / level / 负责老师). */
+/** Update a class's basic info (name / level / 负责老师 / 教材册数). */
 export function updateClassInfo(
   sqlite: DB,
   classId: string,
-  p: { name: string; level: string | null; teacherId: string },
+  p: { name: string; level: string | null; teacherId: string; textbook: number | null },
 ): void {
   sqlite
-    .prepare(`UPDATE classes SET name=?, level=?, teacher_id=? WHERE id=?`)
-    .run(p.name, p.level, p.teacherId, classId);
+    .prepare(`UPDATE classes SET name=?, level=?, teacher_id=?, textbook=? WHERE id=?`)
+    .run(p.name, p.level, p.teacherId, p.textbook, classId);
 }
 
 /** Add a teacher-created student to a class. Returns the new student id. */
@@ -227,6 +227,26 @@ export function dismissJoinRequest(sqlite: DB, p: { requestId: string; teacherId
 /** Replace the class 班级资源 markdown (null clears it). */
 export function setClassNotes(sqlite: DB, classId: string, notes: string | null): void {
   sqlite.prepare(`UPDATE classes SET notes=? WHERE id=?`).run(notes, classId);
+}
+
+/** Replace the class 作业模板 (null clears it). */
+export function setHomeworkTemplate(sqlite: DB, classId: string, template: string | null): void {
+  sqlite.prepare(`UPDATE classes SET homework_template=? WHERE id=?`).run(template, classId);
+}
+
+/**
+ * Set one session's 作业布置 (content + 课文复习 selection). Authored on the
+ * session detail page after the end-class commit — its own PUT, never part of
+ * the commit payload, so the protobuf-compat contract is untouched.
+ */
+export function setSessionHomework(
+  sqlite: DB,
+  sessionId: string,
+  p: { content: string | null; reviewBook: number | null; reviewLesson: number | null },
+): void {
+  sqlite
+    .prepare(`UPDATE class_sessions SET homework_content=?, review_book=?, review_lesson=? WHERE id=?`)
+    .run(p.content, p.reviewBook, p.reviewLesson, sessionId);
 }
 
 /**

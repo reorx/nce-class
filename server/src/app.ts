@@ -29,6 +29,8 @@ import {
   linkJoinRequest,
   saveGrouping,
   setClassNotes,
+  setHomeworkTemplate,
+  setSessionHomework,
   setStudentStatus,
   updateClassInfo,
   updateSessionStartedAt,
@@ -88,9 +90,16 @@ const q = {
   sessionsOfClass: sqlite.prepare(
     `SELECT * FROM class_sessions WHERE class_id=? ORDER BY date DESC, lesson_number DESC`,
   ),
+  // Org-wide 上课记录 (管理页「课堂」). started_at breaks same-day ties across
+  // classes; NULL started_at (legacy rows) sorts last within its day.
+  sessionsOfOrg: sqlite.prepare(
+    `SELECT cs.*, c.name class_name FROM class_sessions cs JOIN classes c ON c.id = cs.class_id
+     WHERE c.org_id=? ORDER BY cs.date DESC, cs.started_at DESC, cs.lesson_number DESC`,
+  ),
   sessionById: sqlite.prepare(`SELECT * FROM class_sessions WHERE id=?`),
   sessionByClientId: sqlite.prepare(`SELECT * FROM class_sessions WHERE client_session_id=?`),
   sessionGroupCounts: sqlite.prepare(`SELECT session_id, COUNT(*) c FROM session_groups GROUP BY session_id`),
+  sessionGroupCountOf: sqlite.prepare(`SELECT COUNT(*) c FROM session_groups WHERE session_id=?`),
   lastEndedSession: sqlite.prepare(
     `SELECT * FROM class_sessions WHERE class_id=? AND status='ended'
      ORDER BY date DESC, lesson_number DESC LIMIT 1`,
@@ -228,6 +237,27 @@ function classListPayload() {
   });
 }
 
+/** One 上课记录 row (shared by classDetailPayload's list and the session detail). */
+function sessionSummary(s: any, groupCount: number) {
+  const actual = actualMin(s);
+  return {
+    id: s.id,
+    date: md(s.date),
+    year: s.date.slice(0, 4),
+    weekday: weekdayCN(s.date),
+    lessonNumber: s.lesson_number,
+    lessonTitle: s.lesson_title,
+    teacherName: (s.teacher_id ? (q.teacherById.get(s.teacher_id) as any)?.name : null) ?? null,
+    plannedDurationMin: s.planned_duration_min,
+    actualDurationMin: actual,
+    durationLabel: fmtDuration(actual),
+    startedAt: s.started_at ?? null,
+    endedAt: s.ended_at ?? null,
+    groupCount,
+    hasHomework: s.homework_content != null,
+  };
+}
+
 function classDetailPayload(id: string) {
   const c = q.classById.get(id) as any;
   if (!c) return null;
@@ -252,29 +282,14 @@ function classDetailPayload(id: string) {
     memberIds: students.filter((s) => s.groupId === g.id && s.status === 'active').map((s) => s.id),
   }));
   const sgCounts = new Map((q.sessionGroupCounts.all() as any[]).map((r) => [r.session_id, r.c]));
-  const sessions = (q.sessionsOfClass.all(id) as any[]).map((s) => {
-    const actual = actualMin(s);
-    return {
-      id: s.id,
-      date: md(s.date),
-      year: s.date.slice(0, 4),
-      weekday: weekdayCN(s.date),
-      lessonNumber: s.lesson_number,
-      lessonTitle: s.lesson_title,
-      teacherName: (s.teacher_id ? (q.teacherById.get(s.teacher_id) as any)?.name : null) ?? null,
-      plannedDurationMin: s.planned_duration_min,
-      actualDurationMin: actual,
-      durationLabel: fmtDuration(actual),
-      startedAt: s.started_at ?? null,
-      endedAt: s.ended_at ?? null,
-      groupCount: sgCounts.get(s.id) ?? 0,
-    };
-  });
+  const sessions = (q.sessionsOfClass.all(id) as any[]).map((s) => sessionSummary(s, sgCounts.get(s.id) ?? 0));
   return {
     id: c.id,
     name: c.name,
     level: c.level,
     notes: c.notes ?? null,
+    textbook: c.textbook ?? null,
+    homeworkTemplate: c.homework_template ?? null,
     teacherId: c.teacher_id ?? null,
     teacherName: teacher?.name ?? '—',
     studentCount: students.filter((s) => s.status !== 'archived').length,
@@ -331,6 +346,21 @@ function buildRecap(s: any) {
   };
 }
 
+/** Session detail page payload: summary + owning-class context + 作业布置 + embedded recap. */
+function sessionDetailPayload(s: any, c: any) {
+  return {
+    ...sessionSummary(s, (q.sessionGroupCountOf.get(s.id) as any).c),
+    classId: c.id,
+    className: c.name,
+    classTextbook: c.textbook ?? null,
+    homeworkTemplate: c.homework_template ?? null,
+    homeworkContent: s.homework_content ?? null,
+    reviewBook: s.review_book ?? null,
+    reviewLesson: s.review_lesson ?? null,
+    recap: buildRecap(s),
+  };
+}
+
 /** Derived recap of the most recent ended session, for the 课前配置 side rail. */
 function lastRecapPayload(classId: string) {
   const s = q.lastEndedSession.get(classId) as any;
@@ -354,6 +384,13 @@ const TIME_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01]) ([01]\d|2[0-3]):[0
 
 // 奖章 tag name cap — mirrored by the web picker's maxLength.
 const MAX_TAG_LEN = 20;
+
+// 教材册数 → 每册课数（课文复习校验）。镜像 web/src/lib/homework.ts —— 改一处都要改两处。
+const BOOK_LESSON_COUNTS: Record<number, number> = { 1: 144, 2: 96, 3: 60, 4: 48 };
+
+/** Parse an optional 册数 body value: absent/null → null, 1-4 int → itself, else 'invalid'. */
+const bookOr = (v: unknown): number | null | 'invalid' =>
+  v == null ? null : Number.isInteger(v) && BOOK_LESSON_COUNTS[v as number] ? (v as number) : 'invalid';
 
 /** Coerce to a non-negative integer, or a fallback when not a finite number. */
 const intOr = (v: unknown, fallback: number | null): number | null =>
@@ -920,7 +957,9 @@ export function createApp() {
     const name = str(req.body?.name);
     if (!name) return res.status(400).json({ error: '班级名称必填' });
     const level = str(req.body?.level);
-    const id = createClass(sqlite, { orgId: teacher.org_id, name, level, teacherId: teacher.id });
+    const textbook = bookOr(req.body?.textbook);
+    if (textbook === 'invalid') return res.status(400).json({ error: '教材册数必须是 1-4' });
+    const id = createClass(sqlite, { orgId: teacher.org_id, name, level, teacherId: teacher.id, textbook });
     res.status(201).json(classDetailPayload(id));
   });
 
@@ -934,7 +973,9 @@ export function createApp() {
     if (!teacherId) return res.status(400).json({ error: '负责老师必填' });
     const t = q.teacherById.get(teacherId) as any;
     if (!t || t.org_id !== teacher.org_id) return res.status(400).json({ error: '负责老师不存在或不属于本校' });
-    updateClassInfo(sqlite, req.params.id, { name, level: str(req.body?.level), teacherId });
+    const textbook = bookOr(req.body?.textbook);
+    if (textbook === 'invalid') return res.status(400).json({ error: '教材册数必须是 1-4' });
+    updateClassInfo(sqlite, req.params.id, { name, level: str(req.body?.level), teacherId, textbook });
     res.json(classDetailPayload(req.params.id));
   });
 
@@ -1082,6 +1123,16 @@ export function createApp() {
     res.json(classDetailPayload(req.params.id));
   });
 
+  // ---- class homework template (作业模板; blank replaces with null) ----
+  app.put('/api/classes/:id/homework-template', (req, res) => {
+    const teacher = res.locals.teacher;
+    if (!classInOrg(req.params.id, teacher.org_id)) return res.status(404).json({ error: 'class not found' });
+    const raw = req.body?.template;
+    if (typeof raw !== 'string') return res.status(400).json({ error: 'template 必须是字符串' });
+    setHomeworkTemplate(sqlite, req.params.id, raw.trim() ? raw : null);
+    res.json(classDetailPayload(req.params.id));
+  });
+
   // ---- end-class commit (offline-first one-shot; the only session write) ----
   app.post('/api/classes/:id/sessions', (req, res) => {
     const teacher = res.locals.teacher;
@@ -1112,6 +1163,17 @@ export function createApp() {
     res.json((q.pendingRequestsOfClass.all(req.params.id) as any[]).map(joinRequestItem));
   });
 
+  // ---- org-wide session list (管理页「课堂」; class/date filtering happens client-side) ----
+  app.get('/api/sessions', (_req, res) => {
+    const sgCounts = new Map((q.sessionGroupCounts.all() as any[]).map((r) => [r.session_id, r.c]));
+    const rows = (q.sessionsOfOrg.all(res.locals.teacher.org_id) as any[]).map((s) => ({
+      ...sessionSummary(s, sgCounts.get(s.id) ?? 0),
+      classId: s.class_id,
+      className: s.class_name,
+    }));
+    res.json(rows);
+  });
+
   // ---- session deletion (rolls back one committed session; grouping writeback stays) ----
   app.delete('/api/sessions/:id', (req, res) => {
     const teacher = res.locals.teacher;
@@ -1133,6 +1195,40 @@ export function createApp() {
     if (s.ended_at && startedAt >= s.ended_at) return res.status(400).json({ error: '开始时间必须早于结束时间' });
     updateSessionStartedAt(sqlite, req.params.id, startedAt);
     res.json({ ok: true });
+  });
+
+  // ---- session detail (summary + class context + 作业布置 + embedded recap) ----
+  app.get('/api/sessions/:id', (req, res) => {
+    const teacher = res.locals.teacher;
+    const s = q.sessionById.get(req.params.id) as any;
+    const c = s ? classInOrg(s.class_id, teacher.org_id) : null;
+    if (!s || !c) return res.status(404).json({ error: 'session not found' });
+    res.json(sessionDetailPayload(s, c));
+  });
+
+  // ---- session homework (完成布置: content + 课文复习; post-commit edit) ----
+  app.put('/api/sessions/:id/homework', (req, res) => {
+    const teacher = res.locals.teacher;
+    const s = q.sessionById.get(req.params.id) as any;
+    const c = s ? classInOrg(s.class_id, teacher.org_id) : null;
+    if (!s || !c) return res.status(404).json({ error: 'session not found' });
+
+    const rawContent = req.body?.content;
+    if (rawContent != null && typeof rawContent !== 'string')
+      return res.status(400).json({ error: 'content 必须是字符串' });
+    const content = typeof rawContent === 'string' && rawContent.trim() ? rawContent : null;
+    const reviewBook = bookOr(req.body?.reviewBook);
+    if (reviewBook === 'invalid') return res.status(400).json({ error: '课文复习册数必须是 1-4' });
+    let reviewLesson: number | null = null;
+    if (req.body?.reviewLesson != null) {
+      if (reviewBook == null) return res.status(400).json({ error: '课文复习需要先选择册数' });
+      const n = req.body.reviewLesson;
+      if (!Number.isInteger(n) || n < 1 || n > BOOK_LESSON_COUNTS[reviewBook])
+        return res.status(400).json({ error: `课文复习课数必须在 1-${BOOK_LESSON_COUNTS[reviewBook]} 之间` });
+      reviewLesson = n;
+    }
+    setSessionHomework(sqlite, s.id, { content, reviewBook, reviewLesson });
+    res.json(sessionDetailPayload(q.sessionById.get(s.id) as any, c));
   });
 
   // ---- recap (read) ----

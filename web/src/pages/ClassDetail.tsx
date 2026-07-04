@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { HomeworkTemplateEditor } from '../components/HomeworkTemplateEditor';
 import { Markdown } from '../components/Markdown';
 import { Modal } from '../components/Modal';
+import { SessionsTable } from '../components/SessionsTable';
 import { TopBar } from '../components/TopBar';
 import { useToast } from '../components/Toast';
 import {
@@ -9,11 +11,10 @@ import {
   type ClassDetail as Detail,
   type JoinRequestItem,
   type Me,
-  type Session,
   type Student,
   type TeacherItem,
 } from '../lib/api';
-import { applyStartTime, startTimeOf } from '../lib/classroomStore';
+import { BOOK_LABELS, BOOKS } from '../lib/homework';
 import {
   addGroup,
   moveStudent,
@@ -25,8 +26,8 @@ import {
 } from '../lib/grouping';
 import { avatarStyle, GREEN, initial, sourceTag, statusTag } from '../lib/theme';
 
-type Tab = 'students' | 'groups' | 'notes' | 'invite' | 'sessions';
-const TABS: Tab[] = ['students', 'groups', 'notes', 'invite', 'sessions'];
+type Tab = 'students' | 'groups' | 'notes' | 'homework' | 'invite' | 'sessions';
+const TABS: Tab[] = ['students', 'groups', 'notes', 'homework', 'invite', 'sessions'];
 
 export function ClassDetail({ me }: { me: Me | null }) {
   const { id = '' } = useParams();
@@ -119,8 +120,23 @@ export function ClassDetail({ me }: { me: Me | null }) {
         {d && tab === 'students' && <StudentsTab d={d} reload={reload} />}
         {d && tab === 'groups' && <GroupsTab d={d} reload={reload} />}
         {d && tab === 'notes' && <NotesTab d={d} reload={reload} />}
+        {d && tab === 'homework' && (
+          <HomeworkTemplateEditor
+            template={d.homeworkTemplate}
+            onSave={async (v) => {
+              await api.updateHomeworkTemplate(d.id, v);
+              await reload();
+            }}
+          />
+        )}
         {d && tab === 'invite' && <InviteTab d={d} />}
-        {d && tab === 'sessions' && <SessionsTab d={d} reload={reload} />}
+        {d && tab === 'sessions' && (
+          <SessionsTable
+            sessions={d.sessions.map((s) => ({ ...s, classId: d.id }))}
+            reload={reload}
+            footnote="点击课名进入课堂详情（作业布置 / Recap）"
+          />
+        )}
       </div>
     </div>
   );
@@ -134,7 +150,14 @@ function TabCount({ n }: { n?: number }) {
   );
 }
 const tabLabel = (t: Tab) =>
-  ({ students: '学生', groups: '分组方案', notes: '班级资源', invite: '邀请家长', sessions: '上课记录' })[t];
+  ({
+    students: '学生',
+    groups: '分组方案',
+    notes: '班级资源',
+    homework: '作业模板',
+    invite: '邀请家长',
+    sessions: '上课记录',
+  })[t];
 const tabStyle = (active: boolean): CSSProperties => ({
   display: 'flex',
   alignItems: 'center',
@@ -190,12 +213,14 @@ function EditClassInfo({ d, me, reload }: { d: Detail; me: Me | null; reload: ()
   const [teachers, setTeachers] = useState<TeacherItem[]>([]);
   const [name, setName] = useState('');
   const [level, setLevel] = useState('');
+  const [textbook, setTextbook] = useState('');
   const [teacherId, setTeacherId] = useState('');
   const [busy, setBusy] = useState(false);
 
   function openModal() {
     setName(d.name);
     setLevel(d.level ?? '');
+    setTextbook(d.textbook != null ? String(d.textbook) : '');
     // legacy rows may have no 负责老师 — default the pick to the logged-in teacher
     setTeacherId(d.teacherId ?? me?.id ?? '');
     setOpen(true);
@@ -209,7 +234,12 @@ function EditClassInfo({ d, me, reload }: { d: Detail; me: Me | null; reload: ()
     if (!name.trim() || !teacherId || busy) return;
     setBusy(true);
     try {
-      await api.updateClassInfo(d.id, { name: name.trim(), level: level.trim() || null, teacherId });
+      await api.updateClassInfo(d.id, {
+        name: name.trim(),
+        level: level.trim() || null,
+        teacherId,
+        textbook: textbook ? Number(textbook) : null,
+      });
       await reload();
       toast('班级信息已更新');
       setOpen(false);
@@ -261,6 +291,21 @@ function EditClassInfo({ d, me, reload }: { d: Detail; me: Me | null; reload: ()
           placeholder="留空则不显示"
           style={fieldStyle}
         />
+        <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#5b6472', margin: '14px 0 6px' }}>
+          教材册数 <span style={{ fontWeight: 400, color: '#9aa1ac' }}>（课文复习默认按此册）</span>
+        </label>
+        <select
+          value={textbook}
+          onChange={(e) => setTextbook(e.target.value)}
+          style={{ ...fieldStyle, cursor: 'pointer' }}
+        >
+          <option value="">未设置</option>
+          {BOOKS.map((b) => (
+            <option key={b} value={b}>
+              {BOOK_LABELS[b]}
+            </option>
+          ))}
+        </select>
         <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#5b6472', margin: '14px 0 6px' }}>
           负责老师
         </label>
@@ -1287,256 +1332,3 @@ function InviteTab({ d }: { d: Detail }) {
   );
 }
 
-// ===== SESSIONS TAB ========================================================
-const fmtDur = (m: number) => `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m`;
-
-/** "第4课 · A private conversation", either part optional (no literal "null"). */
-const fmtLesson = (no: number | null, title: string | null) =>
-  [no != null && `第${no}课`, title].filter(Boolean).join(' · ');
-
-function SessionsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | void }) {
-  const [pendingDelete, setPendingDelete] = useState<Session | null>(null);
-  const [editing, setEditing] = useState<Session | null>(null);
-  const [editTime, setEditTime] = useState('');
-  const [editErr, setEditErr] = useState('');
-  const [busy, setBusy] = useState(false);
-  const toast = useToast();
-
-  function openEdit(s: Session) {
-    setEditing(s);
-    setEditTime(s.startedAt ? startTimeOf(s.startedAt) : '');
-    setEditErr('');
-  }
-
-  async function confirmEdit() {
-    if (!editing?.startedAt || busy) return;
-    const next = applyStartTime(editing.startedAt, editTime);
-    if (!next) {
-      setEditErr('请输入有效的开始时间');
-      return;
-    }
-    if (editing.endedAt && next >= editing.endedAt) {
-      setEditErr('开始时间必须早于结束时间');
-      return;
-    }
-    setBusy(true);
-    try {
-      await api.updateSessionStartedAt(editing.id, next);
-      await reload();
-      toast('已更新开始时间');
-      setEditing(null);
-    } catch {
-      toast('保存失败，请重试', 'error');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function confirmDelete() {
-    if (!pendingDelete || busy) return;
-    setBusy(true);
-    try {
-      await api.deleteSession(pendingDelete.id);
-      await reload();
-      toast('已删除该条上课记录');
-      setPendingDelete(null);
-    } catch {
-      toast('删除失败，请重试', 'error');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div>
-      <div style={{ background: '#fff', border: '1px solid #e7e9ee', borderRadius: 13, overflow: 'hidden' }}>
-        <div
-          className="mono"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 14,
-            padding: '11px 18px',
-            background: '#fafbfc',
-            borderBottom: '1px solid #eef0f3',
-            fontSize: 10.5,
-            letterSpacing: '.7px',
-            color: '#a6adb8',
-          }}
-        >
-          <span style={{ width: 96 }}>DATE</span>
-          <span style={{ flex: 1 }}>LESSON</span>
-          <span style={{ width: 118 }}>DURATION</span>
-          <span style={{ width: 58 }}>GROUPS</span>
-          <span style={{ width: 210, textAlign: 'right' }}>RECAP</span>
-        </div>
-        {d.sessions.map((s) => {
-          const early = s.actualDurationMin < s.plannedDurationMin;
-          const over = s.actualDurationMin > s.plannedDurationMin;
-          const note = early
-            ? `计划 ${fmtDur(s.plannedDurationMin)} · 提前 ${s.plannedDurationMin - s.actualDurationMin} 分`
-            : over
-              ? `计划 ${fmtDur(s.plannedDurationMin)} · 超时 ${s.actualDurationMin - s.plannedDurationMin} 分`
-              : `计划 ${fmtDur(s.plannedDurationMin)}`;
-          return (
-            <div
-              key={s.id}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 14,
-                padding: '14px 18px',
-                borderBottom: '1px solid #f1f3f6',
-              }}
-            >
-              <div style={{ width: 96 }}>
-                <div className="mono" style={{ fontWeight: 600, fontSize: 14, color: '#1e2430' }}>
-                  {s.date}
-                </div>
-                <div style={{ fontSize: 11, color: '#a6adb8', marginTop: 2 }}>
-                  {s.year} · {s.weekday}
-                </div>
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div
-                  style={{
-                    fontWeight: 600,
-                    fontSize: 14.5,
-                    color: '#1e2430',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                  }}
-                >
-                  {fmtLesson(s.lessonNumber, s.lessonTitle)}
-                </div>
-                {s.teacherName && (
-                  <div style={{ fontSize: 11, color: '#a6adb8', marginTop: 2 }}>主讲 {s.teacherName}</div>
-                )}
-              </div>
-              <div style={{ width: 118 }}>
-                <div className="mono" style={{ fontWeight: 600, fontSize: 13.5, color: '#3c4451' }}>
-                  {s.durationLabel}
-                </div>
-                <div style={{ fontSize: 11, color: early ? '#c58a1e' : '#a6adb8', marginTop: 2 }}>{note}</div>
-              </div>
-              <div style={{ width: 58, fontSize: 13, color: '#5b6472' }}>{s.groupCount} 组</div>
-              <div style={{ width: 210, display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
-                <Link
-                  to={`/classes/${d.id}/sessions/${s.id}/recap`}
-                  target="_blank"
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    height: 34,
-                    padding: '0 13px',
-                    background: '#fff',
-                    color: '#3c4451',
-                    border: '1px solid #e2e5ea',
-                    borderRadius: 8,
-                    fontWeight: 600,
-                    fontSize: 12.5,
-                    cursor: 'pointer',
-                    textDecoration: 'none',
-                  }}
-                >
-                  查看 recap
-                </Link>
-                {s.startedAt && (
-                  <button
-                    onClick={() => openEdit(s)}
-                    title="修改这节课的开始时间"
-                    style={{
-                      height: 34,
-                      padding: '0 10px',
-                      background: 'transparent',
-                      color: '#a6adb8',
-                      border: '1px solid transparent',
-                      borderRadius: 8,
-                      fontWeight: 600,
-                      fontSize: 12.5,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    改时间
-                  </button>
-                )}
-                <button
-                  onClick={() => setPendingDelete(s)}
-                  title="删除这条上课记录"
-                  style={{
-                    height: 34,
-                    padding: '0 10px',
-                    background: 'transparent',
-                    color: '#a6adb8',
-                    border: '1px solid transparent',
-                    borderRadius: 8,
-                    fontWeight: 600,
-                    fontSize: 12.5,
-                    cursor: 'pointer',
-                  }}
-                >
-                  删除
-                </button>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      <div style={{ marginTop: 12, fontSize: 12, color: '#a6adb8', textAlign: 'center' }}>
-        仅展示本班历次课堂 · recap 家长可在专属链接查看个性化版本
-      </div>
-
-      <Modal open={!!editing} onClose={() => setEditing(null)} title="修改开始时间">
-        <div style={{ fontSize: 14, color: '#3c4451', lineHeight: 1.7, marginBottom: 16 }}>
-          <b>{editing?.date}</b>「<b>{editing && fmtLesson(editing.lessonNumber, editing.lessonTitle)}</b>」 · 结束时间{' '}
-          <b className="mono">{editing?.endedAt ? editing.endedAt.slice(11, 16) : '—'}</b>
-          ，修改开始时间后课堂时长会重新计算。
-        </div>
-        <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#5b6472', marginBottom: 6 }}>
-          开始时间
-        </label>
-        <input
-          type="time"
-          value={editTime}
-          autoFocus
-          onChange={(e) => {
-            setEditTime(e.target.value);
-            setEditErr('');
-          }}
-          onKeyDown={(e) => e.key === 'Enter' && confirmEdit()}
-          style={fieldStyle}
-        />
-        {editErr && <div style={{ color: '#ff5a5f', fontSize: 13, fontWeight: 700, marginTop: 8 }}>{editErr}</div>}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 22 }}>
-          <button style={ghostBtn} onClick={() => setEditing(null)}>
-            取消
-          </button>
-          <button style={{ ...primaryBtn, opacity: busy ? 0.6 : 1 }} onClick={confirmEdit}>
-            {busy ? '保存中…' : '保存'}
-          </button>
-        </div>
-      </Modal>
-
-      <Modal open={!!pendingDelete} onClose={() => setPendingDelete(null)} title="删除上课记录">
-        <div style={{ fontSize: 14, color: '#3c4451', lineHeight: 1.7 }}>
-          确定删除 <b>{pendingDelete?.date}</b>「
-          <b>{pendingDelete && fmtLesson(pendingDelete.lessonNumber, pendingDelete.lessonTitle)}</b>
-          」这条上课记录吗？该节课的得分、背书作业与出勤都会一并清除，且不可恢复。
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 22 }}>
-          <button style={ghostBtn} onClick={() => setPendingDelete(null)}>
-            取消
-          </button>
-          <button
-            style={{ ...primaryBtn, background: '#d94a4a', boxShadow: 'none', opacity: busy ? 0.6 : 1 }}
-            onClick={confirmDelete}
-          >
-            {busy ? '删除中…' : '删除'}
-          </button>
-        </div>
-      </Modal>
-    </div>
-  );
-}
