@@ -168,7 +168,13 @@ export interface CommitGroup {
   orderIndex: number;
 }
 
-/** The whole session, assembled locally and POSTed once when class ends. */
+/** The whole session, assembled locally and POSTed once when class ends.
+ *
+ * ⚠️ SCHEMA COMPAT (protobuf-style — do NOT break): a classroom page loaded
+ * before a deploy still POSTs this OLD shape to the NEW server, and old
+ * localStorage sessions feed buildCommitPayload after a reload. So: never
+ * rename/remove/repurpose a field; new fields must be optional server-side
+ * with a default (mirror of buildCommitInput's compat note in server/src/app.ts). */
 export interface CommitPayload {
   clientSessionId: string; // idempotency key (stable across retries)
   lessonNumber: number | null;

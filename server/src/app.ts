@@ -337,6 +337,18 @@ const intOr = (v: unknown, fallback: number | null): number | null =>
  * belong to the class, attendance ∈ {present,absent}. The optional teacherId
  * (主讲老师, picked in 课前配置/课堂信息) must be a same-org teacher; absent →
  * the committing teacher.
+ *
+ * ⚠️ SCHEMA COMPAT (protobuf-style — do NOT break):
+ * an in-progress classroom can outlive a deploy, so a NEWER server must accept
+ * the OLD page's payload; a rejected commit here strands a whole lesson's data.
+ * When evolving this contract:
+ *   - NEVER add a required field — new fields must be optional with a default
+ *     (precedents: teacherId → committing teacher, createdAt → startedAt);
+ *   - NEVER tighten validation of, rename, or repurpose an existing field;
+ *   - unknown fields stay silently ignored (fields are picked explicitly —
+ *     keep it that way; no schema-strict body validation here).
+ * Guarded by the 向后/向前兼容 tests in tests/api.test.ts — if one fails,
+ * fix the contract change, not the test.
  */
 function buildCommitInput(body: any, classId: string, teacher: any): { input: CommitInput } | { error: string } {
   const clientSessionId = str(body?.clientSessionId);

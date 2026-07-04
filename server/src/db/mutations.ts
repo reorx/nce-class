@@ -35,6 +35,10 @@ export interface CommitCheck {
   type: string;
   status: string;
 }
+// The validated end-class commit (built by app.ts buildCommitInput — see its
+// ⚠️ SCHEMA COMPAT note: the wire payload evolves protobuf-style, so every
+// field added here after the first classroom release must stay optional on
+// the wire with a server-side default).
 export interface CommitInput {
   classId: string;
   teacherId: string;

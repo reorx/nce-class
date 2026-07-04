@@ -578,6 +578,60 @@ describe('end-class commit', () => {
     expect(c.c).toBe(0);
   });
 
+  // ---- schema 向后兼容 (protobuf-style; guards buildCommitInput's contract) --
+  // 课堂进行中服务端可能发新版：旧页面攒了一整节课的数据，提交的是旧 shape 的
+  // payload。这两条用例守住演进纪律——旧 payload 永远能入库、未知字段永远被忽略。
+  // 若某次改动让它们挂了，说明 commit 契约被破坏（加了必填字段/收紧了校验），
+  // 改服务端而不是改测试。
+
+  it('向后兼容: accepts a payload with every optional field absent (old-client shape)', async () => {
+    const { agent } = await login();
+    const res = await agent.post('/api/classes/c1/sessions').send({
+      // only fields that were required since the FIRST classroom release
+      clientSessionId: 'cs-old-shape',
+      startedAt: '2026-07-02 19:00:00',
+      endedAt: '2026-07-02 20:00:00',
+      defaultGrouping: { groups: [{ clientId: 'g1', name: '第1组', memberIds: ['s1', 's2'] }] },
+      sessionGroups: [{ clientId: 'g1', name: '第1组' }], // no emoji / orderIndex
+      memberships: [{ studentId: 's1', clientGroupId: 'g1' }], // no attendance
+      events: [{ targetType: 'student', targetId: 's1', clientGroupId: 'g1', delta: 1 }], // no createdAt
+      // no lessonNumber / lessonTitle / plannedDurationMin / teacherId / checks
+    });
+    expect(res.status).toBe(201);
+    const row = sqlite.prepare(`SELECT * FROM class_sessions WHERE client_session_id='cs-old-shape'`).get() as any;
+    // every missing optional field lands on its documented default
+    expect(row.lesson_number).toBe(null);
+    expect(row.lesson_title).toBe(null);
+    expect(row.planned_duration_min).toBe(120);
+    expect(row.teacher_id).toBe('t-wangli'); // committing teacher fallback
+    const ev = sqlite.prepare(`SELECT created_at FROM score_events WHERE session_id=?`).get(row.id) as any;
+    expect(ev.created_at).toBe('2026-07-02 19:00:00'); // createdAt falls back to startedAt
+    const mem = sqlite
+      .prepare(`SELECT attendance FROM session_memberships WHERE session_id=? AND student_id='s1'`)
+      .get(row.id) as any;
+    expect(mem.attendance).toBe('present');
+  });
+
+  it('向前兼容: silently ignores unknown fields at every level (newer-client payload)', async () => {
+    const { agent } = await login();
+    const b = body({ clientSessionId: 'cs-future' }) as any;
+    // sprinkle未来版本可能新增的字段 into every nesting level
+    b.futureTopLevel = { nested: true };
+    b.appVersion = '9.9.9';
+    b.defaultGrouping.futureFlag = 1;
+    b.defaultGrouping.groups[0].color = 'red';
+    b.sessionGroups[0].mascotUrl = 'https://x/y.png';
+    b.memberships[0].mood = 'happy';
+    b.events[0].source = 'stylus';
+    b.checks[0].gradedBy = 'ai';
+    const res = await agent.post('/api/classes/c1/sessions').send(b);
+    expect(res.status).toBe(201);
+    expect(res.body.created).toBe(true);
+    const row = sqlite.prepare(`SELECT * FROM class_sessions WHERE client_session_id='cs-future'`).get() as any;
+    expect(row.status).toBe('ended'); // stored exactly as the known fields describe
+    expect(row.lesson_number).toBe(8);
+  });
+
   it('writes back the default grouping (open-time), keeping absent students + minting new-group ids', async () => {
     const { agent } = await login();
     // 小刚 (s3) is absent yet kept in a brand-new group; 小明/小红 stay in g1.

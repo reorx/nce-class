@@ -8,11 +8,13 @@ import {
   applyStartTime,
   buildClassroomSession,
   buildCommitPayload,
+  clearCommitBackup,
   clearSession,
   loadSession,
   newClientSessionId,
   nowSql,
   reducer,
+  saveCommitBackup,
   saveSession,
   startTimeOf,
   type CAction,
@@ -187,16 +189,23 @@ export function Classroom() {
   const confirmEnd = () => {
     if (submitting) return;
     setSubmitting(true);
+    const payload = buildCommitPayload(session, nowSql());
+    // Copy to the collision-free backup slot BEFORE the POST: a failed or
+    // interrupted submit must never lose the lesson, even if a new session for
+    // this class later overwrites nce.classroom.<classId>. Cleared only after
+    // the server confirms; clientSessionId keeps any later re-POST idempotent.
+    saveCommitBackup({ session, payload });
     api
-      .commitSession(id, buildCommitPayload(session, nowSql()))
+      .commitSession(id, payload)
       .then(() => {
+        clearCommitBackup(payload.clientSessionId);
         clearSession(id);
         toast('本节课已保存 · 已生成课堂回顾', 'success');
         nav(`/classes/${id}?tab=sessions`);
       })
       .catch((e) => {
         setSubmitting(false);
-        toast(e instanceof ApiError ? e.message : '保存失败，请重试', 'error');
+        toast(`${e instanceof ApiError ? e.message : '保存失败，请重试'}（课堂数据已在本机备份，不会丢失）`, 'error');
       });
   };
 

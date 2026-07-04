@@ -197,8 +197,14 @@ function mapStudent(s: ClassroomSession, sid: string, fn: (x: ClassroomStudent) 
 }
 
 // ---- persistence (LocalStorage; swap for IndexedDB here if data grows) -----
+//
+// ⚠️ PERSISTED-SHAPE COMPAT: a page reload after a web deploy loads NEW code
+// with an OLD stored ClassroomSession (a lesson can span a release). So this
+// shape evolves protobuf-style: never rename/remove/repurpose a field; new
+// fields must be optional and every reader must tolerate their absence
+// (precedent: teacherId / startedAt handling). Same creed as CommitPayload.
 
-type KVStore = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+type KVStore = Pick<Storage, 'getItem' | 'setItem' | 'removeItem' | 'key' | 'length'>;
 const KEY = (classId: string) => `nce.classroom.${classId}`;
 
 function defaultStore(): KVStore | null {
@@ -243,6 +249,81 @@ export function clearSession(classId: string, store: KVStore | null = defaultSto
   if (!store) return;
   try {
     store.removeItem(KEY(classId));
+  } catch {
+    /* ignore */
+  }
+}
+
+// ---- commit backup (failed-submit fallback) --------------------------------
+//
+// The per-class entry `nce.classroom.<classId>` alone can't protect a FAILED
+// commit: starting a new session for the same class overwrites it and the
+// failed lesson is silently gone. So every commit attempt first copies the
+// exact payload (plus the full session, for manual restore) into
+// `nce.classroom.backup.<clientSessionId>` — a key no other session can
+// collide with — and clears it only after the server confirms the commit.
+// clientSessionId idempotency makes re-POSTing a stored payload safe anytime.
+
+export interface CommitBackup {
+  savedAt: string; // wall clock of the backup write ('YYYY-MM-DD HH:mm:ss')
+  payload: CommitPayload; // frozen exactly as POSTed → retriable as-is
+  session: ClassroomSession; // full local state → can be copied back to nce.classroom.<classId>
+}
+
+const BACKUP_PREFIX = 'nce.classroom.backup.';
+const BACKUP_CAP = 10; // keep the newest N so quota never creeps up
+
+function backupKeys(store: KVStore): string[] {
+  const keys: string[] = [];
+  for (let i = 0; i < store.length; i++) {
+    const k = store.key(i);
+    if (k && k.startsWith(BACKUP_PREFIX)) keys.push(k);
+  }
+  return keys;
+}
+
+function parseBackup(raw: string | null): CommitBackup | null {
+  if (!raw) return null;
+  try {
+    const b = JSON.parse(raw) as CommitBackup;
+    return b && b.payload?.clientSessionId && b.session ? b : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Write/refresh the backup slot for one session, pruning the oldest beyond the cap. */
+export function saveCommitBackup(
+  b: { session: ClassroomSession; payload: CommitPayload; savedAt?: string },
+  store: KVStore | null = defaultStore(),
+): void {
+  if (!store) return;
+  try {
+    const entry: CommitBackup = { savedAt: b.savedAt ?? nowSql(), payload: b.payload, session: b.session };
+    store.setItem(BACKUP_PREFIX + b.payload.clientSessionId, JSON.stringify(entry));
+    const entries = backupKeys(store).map((k) => ({ k, b: parseBackup(store.getItem(k)) }));
+    for (const e of entries) if (!e.b) store.removeItem(e.k); // corrupt JSON is unrecoverable anyway
+    const live = entries.filter((e) => e.b).sort((x, y) => y.b!.savedAt.localeCompare(x.b!.savedAt));
+    for (const e of live.slice(BACKUP_CAP)) store.removeItem(e.k);
+  } catch {
+    /* quota exceeded / private mode — the per-class entry still holds the session */
+  }
+}
+
+/** All backup entries, newest first (corrupt ones skipped). */
+export function listCommitBackups(store: KVStore | null = defaultStore()): CommitBackup[] {
+  if (!store) return [];
+  return backupKeys(store)
+    .map((k) => parseBackup(store.getItem(k)))
+    .filter((b): b is CommitBackup => b !== null)
+    .sort((x, y) => y.savedAt.localeCompare(x.savedAt));
+}
+
+/** Drop one session's backup — call ONLY after the server confirmed the commit. */
+export function clearCommitBackup(clientSessionId: string, store: KVStore | null = defaultStore()): void {
+  if (!store) return;
+  try {
+    store.removeItem(BACKUP_PREFIX + clientSessionId);
   } catch {
     /* ignore */
   }

@@ -5,10 +5,13 @@ import {
   applyStartTime,
   buildClassroomSession,
   buildCommitPayload,
+  clearCommitBackup,
   clearSession,
+  listCommitBackups,
   loadSession,
   nowSql,
   reducer,
+  saveCommitBackup,
   saveSession,
   startTimeOf,
   type ClassroomSession,
@@ -231,6 +234,76 @@ describe('persistence (LocalStorage round-trip)', () => {
     expect(loadSession('cX', store)).toBeNull();
     store.setItem('nce.classroom.cX', '{not json');
     expect(loadSession('cX', store)).toBeNull();
+  });
+});
+
+describe('commit backup (失败兜底; keyed by clientSessionId so新课覆盖不掉)', () => {
+  const backupOf = (s: ClassroomSession, endedAt: string, savedAt: string, store: Storage) =>
+    saveCommitBackup({ session: s, payload: buildCommitPayload(s, endedAt), savedAt }, store);
+
+  it('saves a retriable backup entry and clears it by clientSessionId', () => {
+    const store = memStore();
+    const s = boot();
+    backupOf(s, '2026-07-02 20:58:00', '2026-07-02 20:58:01', store);
+
+    const list = listCommitBackups(store);
+    expect(list).toHaveLength(1);
+    expect(list[0].savedAt).toBe('2026-07-02 20:58:01');
+    expect(list[0].payload.clientSessionId).toBe('cs-test');
+    expect(list[0].payload.endedAt).toBe('2026-07-02 20:58:00'); // payload frozen as-POSTed → 可原样重试
+    expect(list[0].session.classId).toBe('c1'); // full session kept → 可手工恢复回 nce.classroom.<classId>
+
+    clearCommitBackup('cs-test', store);
+    expect(listCommitBackups(store)).toHaveLength(0);
+  });
+
+  it('survives the per-class entry being overwritten by a new session for the same class', () => {
+    const store = memStore();
+    const failed = boot(); // cs-test 的课提交失败
+    saveSession(failed, store);
+    backupOf(failed, '2026-07-02 20:58:00', '2026-07-02 20:58:01', store);
+
+    // 老师随后对同一班级又开了一节新课 → 覆盖掉 nce.classroom.c1
+    const next = buildClassroomSession(config(), { ...META, clientSessionId: 'cs-next' });
+    saveSession(next, store);
+    expect(loadSession('c1', store)!.clientSessionId).toBe('cs-next');
+
+    // 失败那节课的数据仍完整地留在 backup 条目里
+    const list = listCommitBackups(store);
+    expect(list).toHaveLength(1);
+    expect(list[0].payload.clientSessionId).toBe('cs-test');
+  });
+
+  it('a retried save for the SAME session overwrites its own backup (no duplicates)', () => {
+    const store = memStore();
+    const s = boot();
+    backupOf(s, '2026-07-02 20:58:00', '2026-07-02 20:58:01', store);
+    backupOf(s, '2026-07-02 21:10:00', '2026-07-02 21:10:01', store); // 重试，endedAt 更新
+    const list = listCommitBackups(store);
+    expect(list).toHaveLength(1);
+    expect(list[0].payload.endedAt).toBe('2026-07-02 21:10:00');
+  });
+
+  it('lists newest-first and prunes the oldest beyond the cap', () => {
+    const store = memStore();
+    for (let i = 1; i <= 12; i++) {
+      const s = { ...boot(), clientSessionId: `cs-${String(i).padStart(2, '0')}` };
+      backupOf(s, '2026-07-02 20:00:00', `2026-07-0${i > 9 ? 2 : 1} ${String(10 + i)}:00:00`, store);
+    }
+    const list = listCommitBackups(store);
+    expect(list).toHaveLength(10); // cap
+    expect(list[0].payload.clientSessionId).toBe('cs-12'); // newest first
+    expect(list.map((b) => b.payload.clientSessionId)).not.toContain('cs-01'); // oldest pruned
+    expect(list.map((b) => b.payload.clientSessionId)).not.toContain('cs-02');
+  });
+
+  it('ignores corrupt backup entries instead of throwing', () => {
+    const store = memStore();
+    store.setItem('nce.classroom.backup.cs-bad', '{not json');
+    backupOf(boot(), '2026-07-02 20:58:00', '2026-07-02 20:58:01', store);
+    const list = listCommitBackups(store);
+    expect(list).toHaveLength(1);
+    expect(list[0].payload.clientSessionId).toBe('cs-test');
   });
 });
 
