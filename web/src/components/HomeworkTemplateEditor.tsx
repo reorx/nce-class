@@ -5,6 +5,9 @@ import { useToast } from './Toast';
 // session 详情页「作业布置」tab 共用；保存动作由调用方注入（都落到
 // PUT /api/classes/:id/homework-template）。
 
+// 无模板时点「编辑」预填的默认内容（原 placeholder 文案）
+const DEFAULT_TEMPLATE = '- L{lesson_number} 三英一汉，听写三遍\n- 练字三面\n- 背L{lesson_number}';
+
 export function HomeworkTemplateEditor({
   template,
   onSave,
@@ -52,7 +55,7 @@ export function HomeworkTemplateEditor({
             <button
               style={ghostBtn}
               onClick={() => {
-                setDraft(template ?? '');
+                setDraft(template ?? DEFAULT_TEMPLATE);
                 setEditing(true);
               }}
             >
@@ -65,7 +68,7 @@ export function HomeworkTemplateEditor({
         <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder={'- L{lesson_number} 三英一汉，听写三遍\n- 练字三面\n- 背L{lesson_number}'}
+          placeholder={DEFAULT_TEMPLATE}
           autoFocus
           style={textareaStyle}
         />
