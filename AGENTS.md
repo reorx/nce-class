@@ -34,7 +34,7 @@ web/      React + Vite + TS · 老师端桌面 Web（管理页 IBM Plex；课堂
   src/lib/setup.ts (+ .test.ts)        课前配置分组模型（buildSetup/moveStudent/addGroup/sums）+ 开始课堂 config 快照（buildSessionConfig 携带缺席名单含原组 / configFromDetail）
   src/lib/classroomStore.ts (+ .test.ts) 课堂本地状态：ClassroomSession 模型 + reducer（加减分/背书作业/出勤/调组/撤销 undo 尾部 + undoEvent 任意单条）+ localStorage 持久化 + buildClassroomSession/buildCommitPayload/nowSql；可选 log 数组存背书/作业/出勤变更（StatusLogEntry，与 events 共用 nid 发号成全序，点同状态 no-op 不记，仅本地永不进 commit payload）
   src/lib/classroomLog.ts (+ .test.ts) 课堂日志派生 buildLogLines：events（可撤销，带组同步说明）+ log（仅记录）合并按 id 倒序成时间线
-miniapp/  Taro 4 + React + TS（webpack5，prebundle 关闭）· 学生端小程序（weapp 正式产物 / h5 开发调试，appid=touristappid 游客模式）
+miniapp/  Taro 4 + React + TS（webpack5，prebundle 关闭）· 学生端小程序（weapp 正式产物 / h5 开发调试，正式 appid wx19490e22f3580fb0；browserslist 锁 chrome60/ios10——微信 CI 校验器不认 ES2020 语法（??/?.），勿改回 es6-module 目标）
   config/index.ts                      双端编译配置；h5 devServer :10086 代理 /api、/uploads → :5177
   src/app.config.ts                    pages: index（分流：teacher→老师端 / 有孩子→recap 首页+多孩 chips / pending→等待页 / 欢迎页）/ join（?invite= 落地：预览+四项表单）/ recap（?sid=&student=）/ bind（老师绑定）/ teacher/classes（角标列表）/ teacher/class（生成邀请+队列关联）
   src/lib/api.ts                       Taro.request 封装（Bearer token 注入 setAuthToken；h5 相对路径走代理；weapp 直连 :5177 需关域名校验）+ uploadPhoto(Taro.uploadFile 带 auth header)
@@ -53,7 +53,7 @@ pnpm dev         # server :5177 + web :5173（vite 代理 /api、/uploads）
 
 单独启动 `pnpm dev:server` / `pnpm dev:web` / `pnpm dev:miniapp`（= miniapp h5 watch，:10086，需 server 在跑）。**server dev 脚本默认带 `WX_MOCK=1`**（mock 登录 code `mock:<name>`；接真微信时设 `WX_APPID`/`WX_SECRET` 并去掉 WX_MOCK）。小程序在微信开发者工具里调试见下方「微信开发者工具（weapp 本地调试）」一节。类型检查 `pnpm --filter <pkg> exec tsc --noEmit`；单测 `pnpm --filter web test` / `pnpm --filter server test` / `pnpm --filter miniapp test`（均 vitest）。
 
-**部署**：仓库根 `Dockerfile` + `docker-compose.yml`（服务器现场 build，容器只跑 API，web 静态由宿主机 Caddy serve），发布脚本 `deploy/release.sh`（SSH 到 server.name：reset 代码 → build → 拷 webdist → db:migrate → up -d）。server 新增 `pnpm --filter server db:migrate`（幂等 DDL，server 启动时也会自动跑）与 `pnpm --filter server create-teacher -- --org ... --name ... --username ... --password ...`（干净库开真实账号）。细节见 `kb/plans/2026-07-02-nce-class-deploy.md`。
+**部署**：仓库根 `Dockerfile` + `docker-compose.yml`（服务器现场 build，容器只跑 API，web 静态由宿主机 Caddy serve），发布脚本 `deploy/release.sh`（SSH 到 server.name：reset 代码 → build → 拷 webdist → db:migrate → up -d；**加 `--miniapp`/`-m` 会在服务器部署成功后接着从本地上传 weapp**——本地构建+miniprogram-ci，自动用 nvm node24，缺密钥/本地与 origin/master 不一致会报警，传完仍需 mp 后台设体验版或提审）。server 新增 `pnpm --filter server db:migrate`（幂等 DDL，server 启动时也会自动跑）与 `pnpm --filter server create-teacher -- --org ... --name ... --username ... --password ...`（干净库开真实账号）。细节见 `kb/plans/2026-07-02-nce-class-deploy.md`。
 
 **登录墙**：管理页均需登录，先访问 `/login` 用 seed 老师登录（如 `wangli` / `demo1234`，全体老师同密码）。会话是 httpOnly 签名 cookie `nce_session`（7 天）。
 
@@ -185,9 +185,10 @@ pnpm --filter miniapp dev:weapp
 /Applications/wechatwebdevtools.app/Contents/MacOS/cli open --project /Users/reorx/Code/nce-class/miniapp
 ```
 
-- **CLI 前置条件（一次性）**：开发者工具里先扫码登录，并在 设置 → 安全设置 → 打开「服务端口」，否则 `cli open` 报 `需要在设置中打开服务端口`。CLI 其他子命令：`cli quit` 关工具、`cli preview`/`cli upload`（**游客模式不可用**，要正式 appid）。
-- **项目配置已预置**（`miniapp/project.config.json`）：`miniprogramRoot: ./dist`（所以导入的是 miniapp/ 而不是 dist/）、`appid: touristappid`（游客模式，无需注册）、`urlCheck: false`（= 详情里的「不校验合法域名」，weapp 直连本机 `http://localhost:5177`，见 `src/lib/api.ts` 的 BASE）。若请求仍被拦，检查 详情 → 本地设置 里该项没被工具按用户维度覆盖回去。
-- **模拟器里 mock 登录**：touristappid 的 `wx.login` code 过不了服务端 WX_MOCK 校验，所以 `lib/wxAuth.ts` 约定——storage 里有 `nce.mockUser` 就改发 mock code。在工具 Console 执行后点「编译」刷新：
+- **CLI 前置条件（一次性）**：开发者工具里先扫码登录，并在 设置 → 安全设置 → 打开「服务端口」，否则 `cli open` 报 `需要在设置中打开服务端口`。CLI 其他子命令：`cli quit` 关工具。**预览/上传不走工具 CLI**，用 `miniprogram-ci`（见下条）。
+- **项目配置已预置**（`miniapp/project.config.json`）：`miniprogramRoot: ./dist`（所以导入的是 miniapp/ 而不是 dist/）、`appid: wx19490e22f3580fb0`（正式 appid，2026-07-05 起）、`urlCheck: false`（= 详情里的「不校验合法域名」，weapp dev 构建直连本机 `http://localhost:5177`，正式构建指 `https://service.domain`，见 `src/lib/api.ts` 的 BASE 按 NODE_ENV 分流）。若请求仍被拦，检查 详情 → 本地设置 里该项没被工具按用户维度覆盖回去。
+- **真机预览/上传（miniprogram-ci，无需开发者工具）**：`pnpm --filter miniapp preview:weapp`（二维码落 `tmp/weapp-preview-qr.jpg`）/ `pnpm --filter miniapp upload:weapp`（传开发版本，之后在 mp 后台「版本管理」设体验版）。**两个坑**：①上传密钥在 gitignored `tmp/private.wx19490e22f3580fb0.key`（mp 后台可重新生成）；②**Homebrew node 25 跑不了 miniprogram-ci**（`getItem is not a function` / worker `close` 崩），要用 nvm 的 node 24 前缀 PATH：`PATH="$HOME/.nvm/versions/node/v24.6.0/bin:$PATH" pnpm --filter miniapp preview:weapp`。
+- **模拟器里 mock 登录**：本地 server 是 WX_MOCK，真 `wx.login` code 过不了校验，所以 `lib/wxAuth.ts` 约定——storage 里有 `nce.mockUser` 就改发 mock code。在工具 Console 执行后点「编译」刷新：
 
   ```js
   wx.setStorageSync('nce.mockUser', 'dev-teacher')  // dev-teacher | dev-parent | dev-new
@@ -197,7 +198,7 @@ pnpm --filter miniapp dev:weapp
 
   不放 `nce.mockUser` 则走真 `wx.login`（正式 appid 路径，WX_MOCK 服务端会 401——这是预期）。
 - **要人工过的点**：老师端 teacher/class 页「分享到微信群」按钮（`open-type="share"` + useShareAppMessage，模拟器会弹分享卡片，确认转发路径是 `pages/join/index?invite=<token>`）；join 页 `chooseImage` 选图上传；showModal 确认弹窗。
-- **真机预览**：`localhost` 在手机上不通——把 `src/lib/api.ts` 的 BASE 临时改成本机局域网 IP（如 `http://192.168.x.x:5177`）再编译；且真机预览/上传本身需要正式 appid（游客模式只能用模拟器）。
+- **真机预览**：`preview:weapp` 打的是正式构建（BASE=service.domain），扫码直连生产。要真机连本地 server 时才需要把 BASE 临时改成本机局域网 IP（如 `http://192.168.x.x:5177`）再编译。
 
 **课堂端到端**：登录后走 `课前配置 /classes/c1/setup → 开始课堂 → 课堂五视图 → 结束课堂（预览→确认结束）→ 落地 session 详情页 /classes/c1/sessions/<sid>（默认作业布置 tab，?tab=recap 看服务端 recap）`。或直连 `/classes/c1/classroom?lesson=4&title=A+private+conversation&duration=120` 用真实默认分组 boot（无参数且无本地 store 会跳 /setup）。**课堂调组 DnD 同样收不到 `agent-browser drag`**，用上面的 `eval` 分两次 dispatch。结束课堂后可 `sqlite3 server/data/app.db "SELECT id,date,client_session_id FROM class_sessions WHERE class_id='c1' ORDER BY date DESC LIMIT 1;"` 断言新 session 落库。清本地进行中课堂：`eval` 里 `localStorage.removeItem('nce.classroom.c1')`（或课堂里点「退出不保存」）。
 
@@ -220,6 +221,6 @@ pnpm --filter miniapp dev:weapp
 
 - **邀请与账户体系已完成**（见 `kb/plans/2026-07-02-nce-class-wechat-account-invite.md`）：wx Bearer 会话 + 老师绑定 + 小程序生成邀请/分享 + join_request 队列关联 + binding 守卫 recap + web 只读队列，h5 三角色端到端已验证；weapp（真分享卡片 useShareAppMessage）需在微信开发者工具里人工过一遍。
 - 老师端学生成长档案 §7.4（下一个 plan：纯读派生，`GET /api/students/:id/profile` + 页面；binding 守卫模式已就绪）。
-- **小程序上线链路**（进展清单见 `kb/notes/2026-07-04-miniapp-invite-launch-gaps.md`）：✅ 正式 appid（wx19490e22f3580fb0 已入 project.config.json；secret 在 gitignored tmp/，勿入库）✅ 生产 .env 已配 WX_APPID/WX_SECRET 并移除 WX_MOCK（2026-07-04，mock 登录已 401）✅ API BASE 按 NODE_ENV 环境化（dev→localhost:5177，build:weapp→https://service.domain）。剩余：mp 后台 request/uploadFile/downloadFile 域名白名单（人工）→ 开发者工具/真机人工验证 → 体验版/审核发布；wx.getPhoneNumber（需企业认证）不做，手机号手填；小程序码 scene 扫码邀请为 nice-to-have。
+- **小程序上线链路**（进展清单见 `kb/notes/2026-07-04-miniapp-invite-launch-gaps.md`）：✅ 正式 appid（wx19490e22f3580fb0 已入 project.config.json；secret 在 gitignored tmp/，勿入库）✅ 生产 .env 已配 WX_APPID/WX_SECRET 并移除 WX_MOCK（2026-07-04，mock 登录已 401）✅ API BASE 按 NODE_ENV 环境化（dev→localhost:5177，build:weapp→https://service.domain）。✅ 域名白名单已配 ✅ miniprogram-ci 预览/上传已跑通（0.1.0 已传，脚本与 node24/browserslist 坑见「微信开发者工具」节）✅ 体验版已设、真机老师绑定验证通过（2026-07-05）。**当前唯一阻塞：小程序年度认证**（个人主体 30 元/年+人脸核身，未认证禁分享——真机分享邀请卡片被提示「未完成认证」）→ 认证后真机过邀请全流程 → 审核发布；wx.getPhoneNumber（需企业认证）不做，手机号手填；小程序码 scene 扫码邀请为 nice-to-have。
 - **recap 分享到微信群 + 课后处理**（plan 已写好待实现，见 `kb/plans/2026-07-04-nce-class-recap-wechat-share.md`）：session 级分享卡片（path 只带 sid）+ 落地三态分流（teacher 全班版 / parent 选孩子走现有个性化端点 / guest 班级预览+引导加入）+ 老师端小程序「课后处理」入口（近期已上完的课 → 分享 Recap+作业到学生群，recap 页渲染作业 section）；新端点 `GET /api/wx/sessions/:sid/recap`、`GET /api/wx/teacher/classes/:id/sessions`；无 schema 变更（作业列已随 web 端作业机制落地）。
 - 老师管理页（Teachers.tsx）仅占位；计时器超时正计已做；投屏实时多端同步 M1 不做；已 dismissed/linked 队列历史界面 M1 不做。

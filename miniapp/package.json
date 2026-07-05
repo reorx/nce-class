@@ -14,11 +14,13 @@
     "build:h5": "taro build --type h5",
     "dev:weapp": "npm run build:weapp -- --watch",
     "dev:h5": "npm run build:h5 -- --watch",
+    "preview:weapp": "npm run build:weapp && miniprogram-ci preview --pp . --pkp ../tmp/private.wx19490e22f3580fb0.key --appid wx19490e22f3580fb0 --uv $npm_package_version --enable-qrcode --qrcode-format image --qrcode-output-dest ../tmp/weapp-preview-qr.jpg && echo 'QR → tmp/weapp-preview-qr.jpg'",
+    "upload:weapp": "npm run build:weapp && miniprogram-ci upload --pp . --pkp ../tmp/private.wx19490e22f3580fb0.key --appid wx19490e22f3580fb0 --uv $npm_package_version --ud \"$(git log -1 --format=%h) $(date +%F)\"",
     "test": "vitest run"
   },
   "browserslist": [
-    "defaults and fully supports es6-module",
-    "maintained node versions"
+    "chrome >= 60",
+    "ios >= 10"
   ],
   "dependencies": {
     "@babel/runtime": "^7.24.4",
@@ -46,6 +48,7 @@
     "@types/react": "^18.0.0",
     "@types/webpack-env": "^1.13.6",
     "babel-preset-taro": "4.2.0",
+    "miniprogram-ci": "^2.1.42",
     "postcss": "^8.5.6",
     "react-refresh": "^0.14.0",
     "sass": "^1.75.0",
