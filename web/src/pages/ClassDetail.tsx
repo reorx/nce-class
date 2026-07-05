@@ -721,10 +721,7 @@ function StudentCard({
               animation: 'dc-pop .14s ease',
             }}
           >
-            {/* history stays viewable for suspended/archived students (§7.4) */}
-            <button style={menuItemStyle('#3c4451')} onClick={onView}>
-              查看成长档案
-            </button>
+            {/* 成长档案改为点学生名进入 (§7.4)；此处只保留状态/删除操作 */}
             {s.status === 'active' && (
               <button style={menuItemStyle('#b06c22')} onClick={onSuspend}>
                 停课
@@ -751,6 +748,9 @@ function StudentCard({
         <div style={avatarStyle(s.id, 46, s.hasPhoto)}>{initial(s.name)}</div>
         <div style={{ minWidth: 0, paddingRight: 18 }}>
           <div
+            className="dc-name-link"
+            onClick={onView}
+            title="查看成长档案"
             style={{
               fontWeight: 600,
               fontSize: 15,
@@ -758,6 +758,9 @@ function StudentCard({
               whiteSpace: 'nowrap',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
+              cursor: 'pointer',
+              width: 'fit-content',
+              maxWidth: '100%',
             }}
           >
             {s.name}

@@ -24,6 +24,10 @@ button {
 a {
   color: inherit;
 }
+.dc-name-link:hover {
+  color: #279a49;
+  text-decoration: underline;
+}
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;

@@ -70,6 +70,8 @@ export function SessionsTable({
           {showClass && <span style={{ width: 118 }}>CLASS</span>}
           <span style={{ flex: 1 }}>LESSON</span>
           <span style={{ width: 76 }}>主讲</span>
+          <span style={{ width: 48 }}>出勤</span>
+          <span style={{ width: 48 }}>缺勤</span>
           <span style={{ width: 64 }}>作业</span>
           <span style={{ width: 64, textAlign: 'right' }}>ACTIONS</span>
         </div>
@@ -150,6 +152,19 @@ export function SessionsTable({
               }}
             >
               {s.teacherName ?? '—'}
+            </div>
+            <div className="mono" style={{ width: 48, fontSize: 13, color: '#5b6472' }}>
+              {s.attendanceTotal > 0 ? `${s.attendancePresent}人` : '—'}
+            </div>
+            <div
+              className="mono"
+              style={{
+                width: 48,
+                fontSize: 13,
+                color: s.attendanceTotal - s.attendancePresent > 0 ? '#d94a4a' : '#a6adb8',
+              }}
+            >
+              {s.attendanceTotal > 0 ? `${s.attendanceTotal - s.attendancePresent}人` : '—'}
             </div>
             <div style={{ width: 64 }}>
               {s.hasHomework ? (

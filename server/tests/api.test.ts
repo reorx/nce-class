@@ -153,6 +153,27 @@ describe('students', () => {
     expect((await agent.post('/api/classes/c1/students').send({ name: '  ' })).status).toBe(400);
   });
 
+  it('renames a student (PUT /api/students/:id) and reflects it in the class detail', async () => {
+    const { agent } = await login();
+    const res = await agent.put('/api/students/s1').send({ name: '小明明' });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: 's1', name: '小明明' });
+    expect((sqlite.prepare(`SELECT name FROM students WHERE id='s1'`).get() as any).name).toBe('小明明');
+
+    const detail = (await agent.get('/api/classes/c1')).body;
+    expect(detail.students.find((s: any) => s.id === 's1').name).toBe('小明明');
+  });
+
+  it('rejects a blank rename, unknown ids and cross-org students', async () => {
+    const { agent } = await login();
+    expect((await agent.put('/api/students/s1').send({ name: '  ' })).status).toBe(400);
+    expect((await agent.put('/api/students/nope').send({ name: '张三' })).status).toBe(404);
+
+    const out = (await login('waiguo')).agent;
+    expect((await out.put('/api/students/s1').send({ name: '张三' })).status).toBe(404);
+    expect((sqlite.prepare(`SELECT name FROM students WHERE id='s1'`).get() as any).name).toBe('小明');
+  });
+
   it('hard-deletes a student and wipes their ledger rows + memberships', async () => {
     const { agent } = await login();
     const res = await agent.delete('/api/students/s1');
@@ -435,7 +456,11 @@ describe('org-wide session list (GET /api/sessions)', () => {
       groupCount: 2,
       classId: 'c1',
       className: '三年级A班',
+      attendancePresent: 3,
+      attendanceTotal: 4,
     });
+    // sess2 has no memberships at all (legacy-shaped row) → zero counts, not null
+    expect(res.body[0]).toMatchObject({ attendancePresent: 0, attendanceTotal: 0 });
   });
 
   it('breaks same-day ties by start time, latest first', async () => {
@@ -476,10 +501,41 @@ describe('session detail (GET /api/sessions/:id)', () => {
       reviewBook: null,
       reviewLesson: null,
       hasHomework: false,
+      attendancePresent: 3,
+      attendanceTotal: 4,
     });
     // the embedded recap is byte-identical to the standalone recap endpoint
     const recap = (await agent.get('/api/sessions/sess1/recap')).body;
     expect(res.body.recap).toEqual(recap);
+  });
+
+  it('embeds the 课堂情况 overview: attendance, per-group member scores and check buckets', async () => {
+    const { agent } = await login();
+    const { overview } = (await agent.get('/api/sessions/sess1')).body;
+    // s1 小明/s2 小红/s3 小刚 present, s4 浩浩 absent (ungrouped)
+    expect(overview).toMatchObject({
+      totalStudents: 4,
+      present: ['小明', '小红', '小刚'],
+      absent: ['浩浩'],
+      classScore: 4, // sg1 nested +4 (小明+2, 小红+1, group+1); sg2 net 0
+    });
+    // groups ranked by score; absent/ungrouped s4 appears in no group card
+    expect(overview.groups).toEqual([
+      {
+        id: 'sg1',
+        name: '第1组',
+        emoji: '🦁',
+        score: 4,
+        members: [
+          { name: '小明', score: 2, absent: false },
+          { name: '小红', score: 1, absent: false },
+        ],
+      },
+      { id: 'sg2', name: '第2组', emoji: '🐯', score: 0, members: [{ name: '小刚', score: 0, absent: false }] },
+    ]);
+    // present-only check buckets: s1 done+已背完, s2 没交+背完部分, s3 没交+未检查
+    expect(overview.homework).toEqual({ done: ['小明'], redo: [], miss: ['小红', '小刚'] });
+    expect(overview.recitation).toEqual({ full: ['小明'], part: ['小红'], none: [], unchecked: ['小刚'] });
   });
 
   it('carries the class textbook and template for the 作业布置 tab defaults', async () => {
@@ -886,7 +942,8 @@ describe('session start-time update', () => {
     const { agent } = await login();
     const res = await agent.put('/api/sessions/sess1').send({ startedAt: '2026-06-26 18:30:00' });
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ok: true });
+    // responds with the full session detail payload (same shape as GET /api/sessions/:id)
+    expect(res.body).toMatchObject({ id: 'sess1', startedAt: '2026-06-26 18:30:00', classId: 'c1' });
     expect(row()).toMatchObject({ date: '2026-06-26', started_at: '2026-06-26 18:30:00' });
 
     const detail = (await agent.get('/api/classes/c1')).body;
@@ -924,6 +981,80 @@ describe('session start-time update', () => {
     const { agent } = await login();
     expect((await agent.put('/api/sessions/nope').send({ startedAt: '2026-06-26 18:30:00' })).status).toBe(404);
     expect(row()).toMatchObject({ started_at: '2026-06-26 19:00:00' });
+  });
+});
+
+describe('session info edit (课堂信息 tab: 课次/课题/主讲老师)', () => {
+  const row = () =>
+    sqlite
+      .prepare(`SELECT lesson_number, lesson_title, teacher_id, date, started_at FROM class_sessions WHERE id='sess1'`)
+      .get() as any;
+
+  it('updates 课次/课题/主讲老师/开始时间 in one PUT and echoes the detail payload', async () => {
+    const { agent } = await login();
+    await agent.post('/api/teachers').send({ name: '李芳', username: 'lifang', password: 'secret66' });
+    const tid = (sqlite.prepare(`SELECT id FROM teachers WHERE username='lifang'`).get() as any).id;
+    const res = await agent.put('/api/sessions/sess1').send({
+      lessonNumber: 9,
+      lessonTitle: 'A cold welcome',
+      teacherId: tid,
+      startedAt: '2026-06-26 18:00:00',
+    });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      id: 'sess1',
+      lessonNumber: 9,
+      lessonTitle: 'A cold welcome',
+      teacherId: tid,
+      teacherName: '李芳',
+      startedAt: '2026-06-26 18:00:00',
+    });
+    expect(row()).toMatchObject({
+      lesson_number: 9,
+      lesson_title: 'A cold welcome',
+      teacher_id: tid,
+      started_at: '2026-06-26 18:00:00',
+    });
+  });
+
+  it('is a partial update: absent keys keep their stored values', async () => {
+    const { agent } = await login();
+    expect((await agent.put('/api/sessions/sess1').send({ lessonTitle: 'New title' })).status).toBe(200);
+    expect(row()).toMatchObject({
+      lesson_number: 7, // untouched
+      lesson_title: 'New title',
+      teacher_id: 't-wangli', // untouched
+      started_at: '2026-06-26 19:00:00', // untouched
+    });
+  });
+
+  it('clears 课次/课题/主讲老师 with explicit nulls; blank title also stores null', async () => {
+    const { agent } = await login();
+    const res = await agent.put('/api/sessions/sess1').send({ lessonNumber: null, lessonTitle: '  ', teacherId: null });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ lessonNumber: null, lessonTitle: null, teacherId: null, teacherName: null });
+    expect(row()).toMatchObject({ lesson_number: null, lesson_title: null, teacher_id: null });
+  });
+
+  it('rejects a non-positive-integer 课次号 with 400', async () => {
+    const { agent } = await login();
+    for (const bad of [0, -1, 1.5, '4']) {
+      expect((await agent.put('/api/sessions/sess1').send({ lessonNumber: bad })).status).toBe(400);
+    }
+    expect(row()).toMatchObject({ lesson_number: 7 });
+  });
+
+  it('rejects a cross-org or unknown 主讲老师 with 400', async () => {
+    const { agent } = await login();
+    expect((await agent.put('/api/sessions/sess1').send({ teacherId: 't-out' })).status).toBe(400);
+    expect((await agent.put('/api/sessions/sess1').send({ teacherId: 'nope' })).status).toBe(400);
+    expect(row()).toMatchObject({ teacher_id: 't-wangli' });
+  });
+
+  it('accepts an empty body as a no-op', async () => {
+    const { agent } = await login();
+    expect((await agent.put('/api/sessions/sess1').send({})).status).toBe(200);
+    expect(row()).toMatchObject({ lesson_number: 7, lesson_title: 'Too late', teacher_id: 't-wangli' });
   });
 });
 

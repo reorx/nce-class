@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { Modal } from '../components/Modal';
+import { useToast } from '../components/Toast';
 import { TopBar } from '../components/TopBar';
 import { api, type Me, type ProfileSession, type StudentProfile as Profile } from '../lib/api';
 import { barGeometry, netColor, netLabel, type BarGeom } from '../lib/profile';
@@ -15,6 +17,7 @@ export function StudentProfile({ me }: { me: Me | null }) {
   const { id = '', sid = '' } = useParams();
   const [p, setP] = useState<Profile | null>(null);
   const [failed, setFailed] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
 
   useEffect(() => {
     setFailed(false);
@@ -51,13 +54,117 @@ export function StudentProfile({ me }: { me: Me | null }) {
         )}
         {p && (
           <>
-            <Header p={p} />
+            <Header p={p} onEdit={() => setEditOpen(true)} />
             <Tiles p={p} />
             {p.sessions.length === 0 ? <Empty /> : <Matrix sessions={p.sessions} />}
+            <EditNameModal
+              open={editOpen}
+              student={p.student}
+              onClose={() => setEditOpen(false)}
+              onSaved={(name) => {
+                setP((prev) => (prev ? { ...prev, student: { ...prev.student, name } } : prev));
+                setEditOpen(false);
+              }}
+            />
           </>
         )}
       </div>
     </div>
+  );
+}
+
+// ---- edit name modal --------------------------------------------------------
+
+const fieldStyle: CSSProperties = {
+  width: '100%',
+  height: 40,
+  padding: '0 12px',
+  border: '1px solid #e2e5ea',
+  borderRadius: 9,
+  fontSize: 14,
+  color: '#1e2430',
+  background: '#fbfcfd',
+};
+const primaryBtn: CSSProperties = {
+  height: 40,
+  padding: '0 18px',
+  background: GREEN,
+  color: '#fff',
+  border: 'none',
+  borderRadius: 9,
+  fontWeight: 600,
+  fontSize: 14,
+  cursor: 'pointer',
+};
+const ghostBtn: CSSProperties = {
+  height: 40,
+  padding: '0 18px',
+  background: '#fff',
+  color: '#5b6472',
+  border: '1px solid #e2e5ea',
+  borderRadius: 9,
+  fontWeight: 600,
+  fontSize: 14,
+  cursor: 'pointer',
+};
+
+function EditNameModal({
+  open,
+  student,
+  onClose,
+  onSaved,
+}: {
+  open: boolean;
+  student: Profile['student'];
+  onClose: () => void;
+  onSaved: (name: string) => void;
+}) {
+  const toast = useToast();
+  const [name, setName] = useState(student.name);
+  const [busy, setBusy] = useState(false);
+
+  // Reset the draft to the current name whenever the modal (re)opens.
+  useEffect(() => {
+    if (open) setName(student.name);
+  }, [open, student.name]);
+
+  async function save() {
+    const v = name.trim();
+    if (!v || busy) return;
+    setBusy(true);
+    try {
+      await api.updateStudent(student.id, v);
+      toast('学生信息已更新');
+      onSaved(v);
+    } catch {
+      toast('保存失败，请重试', 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="编辑学生">
+      <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#5b6472', marginBottom: 6 }}>
+        学生姓名
+      </label>
+      <input
+        value={name}
+        autoFocus
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && save()}
+        placeholder="如 王小明"
+        style={fieldStyle}
+      />
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
+        <button style={ghostBtn} onClick={onClose}>
+          取消
+        </button>
+        <button style={{ ...primaryBtn, opacity: name.trim() && !busy ? 1 : 0.55 }} onClick={save}>
+          {busy ? '保存中…' : '保存'}
+        </button>
+      </div>
+    </Modal>
   );
 }
 
@@ -73,7 +180,7 @@ function badge(t: { label: string; color: string; bg: string }) {
   );
 }
 
-function Header({ p }: { p: Profile }) {
+function Header({ p, onEdit }: { p: Profile; onEdit: () => void }) {
   const s = p.student;
   const sTag = statusTag(s.status);
   return (
@@ -105,6 +212,25 @@ function Header({ p }: { p: Profile }) {
           节
         </div>
       </div>
+      <button
+        onClick={onEdit}
+        title="编辑学生"
+        style={{
+          marginLeft: 'auto',
+          alignSelf: 'flex-start',
+          height: 30,
+          padding: '0 12px',
+          background: '#fff',
+          color: '#7a828f',
+          border: '1px solid #e2e5ea',
+          borderRadius: 8,
+          fontWeight: 600,
+          fontSize: 13,
+          cursor: 'pointer',
+        }}
+      >
+        ✎ 编辑
+      </button>
     </div>
   );
 }

@@ -10,6 +10,7 @@ function mkSession(over: Partial<Session>): Session {
     weekday: '周二',
     lessonNumber: 7,
     lessonTitle: 'Too late',
+    teacherId: 't-wangli',
     teacherName: '王莉',
     plannedDurationMin: 120,
     actualDurationMin: 115,
@@ -18,6 +19,8 @@ function mkSession(over: Partial<Session>): Session {
     endedAt: '2026-07-01 19:55:00',
     groupCount: 3,
     hasHomework: true,
+    attendancePresent: 12,
+    attendanceTotal: 13,
     ...over,
   };
 }

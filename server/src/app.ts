@@ -27,6 +27,7 @@ import {
   deleteStudent,
   dismissJoinRequest,
   linkJoinRequest,
+  renameStudent,
   saveGrouping,
   setAttendance,
   setClassNotes,
@@ -34,7 +35,7 @@ import {
   setSessionHomework,
   setStudentStatus,
   updateClassInfo,
-  updateSessionStartedAt,
+  updateSessionInfo,
   upsertJoinRequest,
   upsertWechatAccount,
   type CommitInput,
@@ -130,6 +131,19 @@ const q = {
     `SELECT SUM(CASE WHEN attendance='present' THEN 1 ELSE 0 END) present, COUNT(*) total
      FROM session_memberships WHERE session_id=?`,
   ),
+  // 课堂情况 overview: per-member roster (with group + attendance), per-student
+  // net score, and this session's check records. Rostered by created_at so the
+  // attendance/check chip lists read in a stable class order.
+  sessionRoster: sqlite.prepare(
+    `SELECT sm.student_id sid, sm.session_group_id gid, sm.attendance, st.name
+     FROM session_memberships sm JOIN students st ON st.id = sm.student_id
+     WHERE sm.session_id=? ORDER BY st.created_at, st.id`,
+  ),
+  sessionStudentNet: sqlite.prepare(
+    `SELECT target_id sid, COALESCE(SUM(delta),0) net
+     FROM score_events WHERE session_id=? AND target_type='student' GROUP BY target_id`,
+  ),
+  sessionChecks: sqlite.prepare(`SELECT student_id sid, type, status FROM check_records WHERE session_id=?`),
   orgById: sqlite.prepare(`SELECT * FROM organizations WHERE id=?`),
   countStudentsOfClass: sqlite.prepare(`SELECT COUNT(*) c FROM students WHERE class_id=? AND status != 'archived'`),
   endedSessionsOfClass: sqlite.prepare(
@@ -254,6 +268,7 @@ function classListPayload() {
 /** One 上课记录 row (shared by classDetailPayload's list and the session detail). */
 function sessionSummary(s: any, groupCount: number) {
   const actual = actualMin(s);
+  const att = q.sessionAttendance.get(s.id) as any;
   return {
     id: s.id,
     date: md(s.date),
@@ -261,6 +276,7 @@ function sessionSummary(s: any, groupCount: number) {
     weekday: weekdayCN(s.date),
     lessonNumber: s.lesson_number,
     lessonTitle: s.lesson_title,
+    teacherId: s.teacher_id ?? null, // 主讲老师 — form prefill on the 课堂信息 tab
     teacherName: (s.teacher_id ? (q.teacherById.get(s.teacher_id) as any)?.name : null) ?? null,
     plannedDurationMin: s.planned_duration_min,
     actualDurationMin: actual,
@@ -269,6 +285,8 @@ function sessionSummary(s: any, groupCount: number) {
     endedAt: s.ended_at ?? null,
     groupCount,
     hasHomework: s.homework_content != null,
+    attendancePresent: att?.present ?? 0, // SUM is NULL when no memberships
+    attendanceTotal: att?.total ?? 0,
   };
 }
 
@@ -359,7 +377,70 @@ function buildRecap(s: any) {
   };
 }
 
-/** Session detail page payload: summary + owning-class context + 作业布置 + embedded recap. */
+/**
+ * 课堂情况 overview derived from one ended session's ledger: attendance split,
+ * per-group member scores (ranked by group score), and homework/背书 check
+ * buckets. Absent students still appear inside their group card (score '—') but
+ * are excluded from the check buckets — 缺勤学生不计入检查. Check semantics mirror
+ * the classroom / wx read side: missing homework record = 没交, missing
+ * recitation record = 未检查 (PRD §8). Attendance is present|absent only; there
+ * is no 请假 state in the model.
+ */
+function buildOverview(s: any) {
+  const roster = q.sessionRoster.all(s.id) as any[];
+  const netByStudent = new Map((q.sessionStudentNet.all(s.id) as any[]).map((r) => [r.sid, r.net]));
+  const checkByStudent = new Map<string, { homework?: string; recitation?: string }>();
+  for (const r of q.sessionChecks.all(s.id) as any[]) {
+    const rec = checkByStudent.get(r.sid) ?? {};
+    rec[r.type as 'homework' | 'recitation'] = r.status;
+    checkByStudent.set(r.sid, rec);
+  }
+  const scoreByGid = new Map((q.sessionGroupScores.all(s.id) as any[]).map((r) => [r.gid, r.score]));
+
+  const present = roster.filter((m) => m.attendance === 'present');
+  const absent = roster.filter((m) => m.attendance !== 'present');
+
+  const homework = { done: [] as string[], redo: [] as string[], miss: [] as string[] };
+  const recitation = { full: [] as string[], part: [] as string[], none: [] as string[], unchecked: [] as string[] };
+  for (const m of present) {
+    const ck = checkByStudent.get(m.sid) ?? {};
+    const h = ck.homework ?? '没交';
+    (h === '完成' ? homework.done : h === '需补' ? homework.redo : homework.miss).push(m.name);
+    const r = ck.recitation ?? null;
+    (r === '已背完'
+      ? recitation.full
+      : r === '背完部分'
+        ? recitation.part
+        : r === '没背'
+          ? recitation.none
+          : recitation.unchecked
+    ).push(m.name);
+  }
+
+  const groups = (q.sessionGroups.all(s.id) as any[])
+    .map((g) => ({
+      id: g.id,
+      name: g.name,
+      emoji: g.emoji,
+      score: scoreByGid.get(g.id) ?? 0,
+      members: roster
+        .filter((m) => m.gid === g.id)
+        .map((m) => ({ name: m.name, score: netByStudent.get(m.sid) ?? 0, absent: m.attendance !== 'present' })),
+    }))
+    .sort((a, b) => b.score - a.score);
+
+  return {
+    totalStudents: roster.length,
+    present: present.map((m) => m.name),
+    absent: absent.map((m) => m.name),
+    classScore: groups.reduce((acc, g) => acc + g.score, 0),
+    homework,
+    recitation,
+    groups,
+  };
+}
+
+/** Session detail page payload: summary + owning-class context + 作业布置 + embedded recap + 课堂情况. */
 function sessionDetailPayload(s: any, c: any) {
   return {
     ...sessionSummary(s, (q.sessionGroupCountOf.get(s.id) as any).c),
@@ -371,6 +452,7 @@ function sessionDetailPayload(s: any, c: any) {
     reviewBook: s.review_book ?? null,
     reviewLesson: s.review_lesson ?? null,
     recap: buildRecap(s),
+    overview: buildOverview(s),
   };
 }
 
@@ -1020,6 +1102,24 @@ export function createApp() {
       .json({ id: s.id, name: s.name, source: s.source, status: s.status, hasPhoto: s.photo_url != null, score: 0 });
   });
 
+  // ---- student basic info (rename) ----
+  app.put('/api/students/:id', (req, res) => {
+    const teacher = res.locals.teacher;
+    const s = q.studentById.get(req.params.id) as any;
+    if (!s || !classInOrg(s.class_id, teacher.org_id)) return res.status(404).json({ error: 'student not found' });
+    const name = str(req.body?.name);
+    if (!name) return res.status(400).json({ error: '学生姓名必填' });
+    renameStudent(sqlite, s.id, name);
+    const updated = q.studentById.get(s.id) as any;
+    res.json({
+      id: updated.id,
+      name: updated.name,
+      source: updated.source,
+      status: updated.status,
+      hasPhoto: updated.photo_url != null,
+    });
+  });
+
   // ---- student status (在读/停课/归档; non-active leaves the default grouping) ----
   app.put('/api/students/:id/status', (req, res) => {
     const teacher = res.locals.teacher;
@@ -1211,18 +1311,44 @@ export function createApp() {
     res.json({ ok: true });
   });
 
-  // ---- session start-time edit (record fix-up; actual duration is derived on read) ----
+  // ---- session info edit (课堂信息: 课次/课题/主讲老师/开始时间 record fix-up) ----
+  // Partial update: only keys present in the body are validated and written, so
+  // the older {startedAt}-only caller (上课记录 改时间) keeps working unchanged.
   app.put('/api/sessions/:id', (req, res) => {
     const teacher = res.locals.teacher;
     const s = q.sessionById.get(req.params.id) as any;
-    if (!s || !classInOrg(s.class_id, teacher.org_id)) return res.status(404).json({ error: 'session not found' });
-    const startedAt = str(req.body?.startedAt);
-    if (!startedAt || !TIME_RE.test(startedAt))
-      return res.status(400).json({ error: 'startedAt 必须是 YYYY-MM-DD HH:mm:ss' });
-    // Same naive format on both sides, so plain string order IS chronological order.
-    if (s.ended_at && startedAt >= s.ended_at) return res.status(400).json({ error: '开始时间必须早于结束时间' });
-    updateSessionStartedAt(sqlite, req.params.id, startedAt);
-    res.json({ ok: true });
+    const c = s ? classInOrg(s.class_id, teacher.org_id) : null;
+    if (!s || !c) return res.status(404).json({ error: 'session not found' });
+    const b = req.body ?? {};
+    const patch: Parameters<typeof updateSessionInfo>[2] = {};
+    if ('startedAt' in b) {
+      const startedAt = str(b.startedAt);
+      if (!startedAt || !TIME_RE.test(startedAt))
+        return res.status(400).json({ error: 'startedAt 必须是 YYYY-MM-DD HH:mm:ss' });
+      // Same naive format on both sides, so plain string order IS chronological order.
+      if (s.ended_at && startedAt >= s.ended_at) return res.status(400).json({ error: '开始时间必须早于结束时间' });
+      patch.startedAt = startedAt;
+    }
+    if ('lessonNumber' in b) {
+      if (b.lessonNumber != null && (!Number.isInteger(b.lessonNumber) || b.lessonNumber < 1))
+        return res.status(400).json({ error: '课次号必须是正整数' });
+      patch.lessonNumber = b.lessonNumber ?? null;
+    }
+    if ('lessonTitle' in b) {
+      if (b.lessonTitle != null && typeof b.lessonTitle !== 'string')
+        return res.status(400).json({ error: '课题必须是字符串' });
+      patch.lessonTitle = typeof b.lessonTitle === 'string' && b.lessonTitle.trim() ? b.lessonTitle.trim() : null;
+    }
+    if ('teacherId' in b) {
+      if (b.teacherId == null) patch.teacherId = null;
+      else {
+        const t = q.teacherById.get(b.teacherId) as any;
+        if (!t || t.org_id !== teacher.org_id) return res.status(400).json({ error: '主讲老师不存在或不属于本校' });
+        patch.teacherId = b.teacherId;
+      }
+    }
+    updateSessionInfo(sqlite, s.id, patch);
+    res.json(sessionDetailPayload(q.sessionById.get(s.id) as any, c));
   });
 
   // ---- session detail (summary + class context + 作业布置 + embedded recap) ----

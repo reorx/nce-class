@@ -225,7 +225,8 @@ export function Classroom() {
         clearCommitBackup(payload.clientSessionId);
         clearSession(id);
         toast('本节课已保存 · 请布置作业', 'success');
-        nav(`/classes/${id}/sessions/${result.sessionId}`);
+        // land on 作业布置 (overview is now the default tab); the toast nudges homework
+        nav(`/classes/${id}/sessions/${result.sessionId}?tab=homework`);
       })
       .catch((e) => {
         setSubmitting(false);

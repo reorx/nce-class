@@ -55,6 +55,7 @@ export interface Session {
   weekday: string;
   lessonNumber: number | null;
   lessonTitle: string | null;
+  teacherId: string | null; // 主讲老师 id — 课堂信息 tab form prefill
   teacherName: string | null; // 主讲老师
   plannedDurationMin: number;
   actualDurationMin: number;
@@ -63,6 +64,8 @@ export interface Session {
   endedAt: string | null;
   groupCount: number;
   hasHomework: boolean; // 作业已布置 (homework_content non-null)
+  attendancePresent: number; // 出勤人数；缺勤 = total - present
+  attendanceTotal: number; // 0 when the session has no membership snapshot
 }
 
 /** One row of the org-wide 课堂 list (GET /api/sessions): a session plus its owning class. */
@@ -124,7 +127,33 @@ export interface ClassDetail {
   lastRecap: LastRecap | null;
 }
 
-/** GET /api/sessions/:id — session summary + owning-class context + 作业布置 + embedded recap. */
+/** One student inside a 课堂情况 group card; score is the session net, '—' shown for absentees. */
+export interface OverviewMember {
+  name: string;
+  score: number;
+  absent: boolean;
+}
+
+export interface OverviewGroup {
+  id: string;
+  name: string;
+  emoji: string | null;
+  score: number;
+  members: OverviewMember[];
+}
+
+/** 课堂情况 overview derived from the session ledger (attendance + group scores + check buckets). */
+export interface SessionOverview {
+  totalStudents: number;
+  present: string[];
+  absent: string[];
+  classScore: number;
+  homework: { done: string[]; redo: string[]; miss: string[] };
+  recitation: { full: string[]; part: string[]; none: string[]; unchecked: string[] };
+  groups: OverviewGroup[];
+}
+
+/** GET /api/sessions/:id — session summary + owning-class context + 作业布置 + embedded recap + 课堂情况. */
 export interface SessionDetail extends Session {
   classId: string;
   className: string;
@@ -134,6 +163,7 @@ export interface SessionDetail extends Session {
   reviewBook: number | null; // 课文复习: 第几册
   reviewLesson: number | null; // 课文复习: 第几课
   recap: Recap;
+  overview: SessionOverview;
 }
 
 // ---- student growth profile (§7.4, read-only) ------------------------------
@@ -317,13 +347,18 @@ export const api = {
   updateClassInfo: (classId: string, p: { name: string; teacherId: string; textbook: number | null }) =>
     req<ClassDetail>('PUT', `/api/classes/${classId}`, p),
   addStudent: (classId: string, name: string) => req<Student>('POST', `/api/classes/${classId}/students`, { name }),
+  updateStudent: (id: string, name: string) =>
+    req<{ id: string; name: string; status: StudentStatus }>('PUT', `/api/students/${id}`, { name }),
   deleteStudent: (id: string) => req<{ ok: true }>('DELETE', `/api/students/${id}`),
   setStudentStatus: (id: string, status: StudentStatus) =>
     req<{ id: string; name: string; status: StudentStatus }>('PUT', `/api/students/${id}/status`, { status }),
   listSessions: () => get<SessionListItem[]>('/api/sessions'),
   deleteSession: (id: string) => req<{ ok: true }>('DELETE', `/api/sessions/${id}`),
-  updateSessionStartedAt: (id: string, startedAt: string) =>
-    req<{ ok: true }>('PUT', `/api/sessions/${id}`, { startedAt }),
+  // Partial 课堂信息 update — only keys present in `p` are written server-side.
+  updateSessionInfo: (
+    id: string,
+    p: { lessonNumber?: number | null; lessonTitle?: string | null; teacherId?: string | null; startedAt?: string },
+  ) => req<SessionDetail>('PUT', `/api/sessions/${id}`, p),
   saveGrouping: (classId: string, groups: GroupSave[]) =>
     req<ClassDetail>('PUT', `/api/classes/${classId}/groups`, { groups }),
   updateClassNotes: (classId: string, notes: string) =>

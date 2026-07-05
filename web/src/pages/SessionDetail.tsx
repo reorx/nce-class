@@ -1,24 +1,33 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { HomeworkTemplateEditor } from '../components/HomeworkTemplateEditor';
+import { OverviewTab } from '../components/OverviewTab';
 import { RecapPanel } from '../components/RecapPanel';
 import { TopBar } from '../components/TopBar';
 import { useToast } from '../components/Toast';
-import { api, type Me, type SessionDetail as SessionData } from '../lib/api';
+import { api, type Me, type SessionDetail as SessionData, type TeacherItem } from '../lib/api';
+import { applyStartTime, startTimeOf } from '../lib/classroomStore';
 import { BOOK_LABELS, BOOKS, clampLesson, lessonOptions, renderHomeworkTemplate } from '../lib/homework';
 import { lessonLabel } from '../lib/lesson';
 import { GREEN } from '../lib/theme';
 
 // Session 详情页（结束课堂后落地，也可从上课记录点课名进入）：
-// 作业布置 tab（模板 + 生成作业内容 + 课文复习级联选择）+ Recap tab（战报预览/导出）。
+// 作业布置 tab（模板 + 生成作业内容 + 课文复习级联选择）+ Recap tab（战报预览/导出）
+// + 课堂信息 tab（课次/课题/开始时间/主讲老师 record fix-up，与课堂内弹窗同字段）。
 
-type Tab = 'homework' | 'recap';
+type Tab = 'overview' | 'homework' | 'recap' | 'info';
+const TAB_LABELS: Record<Tab, string> = {
+  overview: '课堂情况',
+  homework: '作业布置',
+  recap: 'Recap',
+  info: '课堂信息',
+};
 
 export function SessionDetail({ me }: { me: Me | null }) {
   const { id = '', sid = '' } = useParams();
   const [params, setParams] = useSearchParams();
-  const tab = (params.get('tab') as Tab) || 'homework';
-  const setTab = (t: Tab) => setParams(t === 'homework' ? {} : { tab: t }, { replace: true });
+  const tab = (params.get('tab') as Tab) || 'overview';
+  const setTab = (t: Tab) => setParams(t === 'overview' ? {} : { tab: t }, { replace: true });
   const [d, setD] = useState<SessionData | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -62,9 +71,9 @@ export function SessionDetail({ me }: { me: Me | null }) {
         </div>
 
         <div style={{ display: 'flex', gap: 2, borderBottom: '1px solid #ebedf1', marginBottom: 22 }}>
-          {(['homework', 'recap'] as Tab[]).map((t) => (
+          {(['overview', 'homework', 'recap', 'info'] as Tab[]).map((t) => (
             <button key={t} onClick={() => setTab(t)} style={tabStyle(tab === t)}>
-              {t === 'homework' ? '作业布置' : 'Recap'}
+              {TAB_LABELS[t]}
             </button>
           ))}
         </div>
@@ -77,8 +86,10 @@ export function SessionDetail({ me }: { me: Me | null }) {
         {!failed && !d && (
           <div style={{ padding: '80px 20px', textAlign: 'center', color: '#9aa1ac', fontSize: 13.5 }}>加载中…</div>
         )}
+        {d && tab === 'overview' && <OverviewTab d={d} />}
         {d && tab === 'homework' && <HomeworkTab d={d} onSaved={setD} />}
         {d && tab === 'recap' && <RecapPanel recap={d.recap} className={d.className} year={d.year} />}
+        {d && tab === 'info' && <InfoTab d={d} onSaved={setD} />}
       </div>
     </div>
   );
@@ -232,6 +243,175 @@ function HomeworkTab({ d, onSaved }: { d: SessionData; onSaved: (fresh: SessionD
     </div>
   );
 }
+
+// ===== 课堂信息 TAB =========================================================
+// Same fields as the in-classroom LessonInfoDialog (课次/课题/开始时间/主讲老师)
+// but in the management system's plain card style; 课堂时长 stays read-only here
+// since the actual duration is derived from startedAt/endedAt.
+function InfoTab({ d, onSaved }: { d: SessionData; onSaved: (fresh: SessionData) => void }) {
+  const toast = useToast();
+  const [teachers, setTeachers] = useState<TeacherItem[]>([]);
+  const [no, setNo] = useState('');
+  const [title, setTitle] = useState('');
+  const [time, setTime] = useState('');
+  const [timeErr, setTimeErr] = useState('');
+  const [tid, setTid] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api
+      .teachers()
+      .then(setTeachers)
+      .catch(() => {});
+  }, []);
+
+  // Seed once per session; after a save the echoed payload matches the form.
+  useEffect(() => {
+    setNo(d.lessonNumber != null ? String(d.lessonNumber) : '');
+    setTitle(d.lessonTitle ?? '');
+    setTime(d.startedAt ? startTimeOf(d.startedAt) : '');
+    setTid(d.teacherId ?? '');
+    setTimeErr('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [d.id]);
+
+  async function save() {
+    if (busy) return;
+    const patch: Parameters<typeof api.updateSessionInfo>[1] = {
+      lessonNumber: no.trim() ? Number(no.trim()) : null,
+      lessonTitle: title,
+      teacherId: tid || null,
+    };
+    // Legacy rows without startedAt keep it untouched (key omitted = no write).
+    if (d.startedAt) {
+      const next = applyStartTime(d.startedAt, time);
+      if (!next) {
+        setTimeErr('请输入有效的开始时间');
+        return;
+      }
+      if (d.endedAt && next >= d.endedAt) {
+        setTimeErr('开始时间必须早于结束时间');
+        return;
+      }
+      patch.startedAt = next;
+    }
+    setBusy(true);
+    try {
+      onSaved(await api.updateSessionInfo(d.id, patch));
+      toast('课堂信息已保存');
+    } catch {
+      toast('保存失败，请重试', 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // 该老师已不可选（如被移出）时仍显示当前值，避免下拉静默丢主讲人
+  const tidUnknown = tid !== '' && !teachers.some((t) => t.id === tid);
+
+  return (
+    <div style={{ maxWidth: 560 }}>
+      <div style={cardStyle}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 }}>
+          <div style={{ fontSize: 15, fontWeight: 700 }}>课堂信息</div>
+          <div style={{ fontSize: 12.5, color: '#aab1bc' }}>修改会同步到上课记录、Recap 与成长档案</div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px 14px' }}>
+          <div>
+            <label style={infoLabel}>课次号</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ color: '#aab1bc', fontSize: 14 }}>第</span>
+              <input
+                value={no}
+                onChange={(e) => setNo(e.target.value.replace(/[^0-9]/g, '').slice(0, 3))}
+                placeholder="4"
+                inputMode="numeric"
+                style={{ ...inputStyle, flex: 1, minWidth: 0 }}
+              />
+              <span style={{ color: '#aab1bc', fontSize: 14 }}>课</span>
+            </div>
+          </div>
+          <div>
+            <label style={infoLabel}>开始时间</label>
+            <input
+              type="time"
+              value={time}
+              disabled={!d.startedAt}
+              title={d.startedAt ? undefined : '旧记录未存开始时间，无法修改'}
+              onChange={(e) => {
+                setTime(e.target.value);
+                setTimeErr('');
+              }}
+              style={{ ...inputStyle, width: '100%', opacity: d.startedAt ? 1 : 0.55 }}
+            />
+            {timeErr && <div style={{ color: '#e5484d', fontSize: 12.5, marginTop: 6 }}>{timeErr}</div>}
+          </div>
+          <div style={{ gridColumn: '1 / -1' }}>
+            <label style={infoLabel}>课题</label>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="A private conversation"
+              style={{ ...inputStyle, width: '100%' }}
+            />
+          </div>
+          <div style={{ gridColumn: '1 / -1' }}>
+            <label style={infoLabel}>主讲老师</label>
+            <select value={tid} onChange={(e) => setTid(e.target.value)} style={{ ...selectStyle, width: '100%' }}>
+              <option value="">未设置</option>
+              {tidUnknown && <option value={tid}>{d.teacherName ?? tid}</option>}
+              {teachers.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 20 }}>
+          <button
+            style={{
+              height: 42,
+              padding: '0 24px',
+              background: GREEN,
+              color: '#fff',
+              border: 'none',
+              borderRadius: 10,
+              fontWeight: 600,
+              fontSize: 14.5,
+              cursor: 'pointer',
+              opacity: busy ? 0.6 : 1,
+            }}
+            onClick={save}
+            disabled={busy}
+          >
+            {busy ? '保存中…' : '保存'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const infoLabel: CSSProperties = {
+  display: 'block',
+  fontSize: 12.5,
+  fontWeight: 600,
+  color: '#7a828f',
+  marginBottom: 7,
+};
+const inputStyle: CSSProperties = {
+  height: 40,
+  padding: '0 12px',
+  border: '1px solid #e2e5ea',
+  borderRadius: 9,
+  fontSize: 14,
+  color: '#1e2430',
+  background: '#fbfcfd',
+  outline: 'none',
+};
 
 const cardStyle: CSSProperties = {
   background: '#fff',

@@ -115,6 +115,11 @@ export function addStudent(sqlite: DB, p: { classId: string; name: string }): st
   return id;
 }
 
+/** Rename a student (基本信息编辑). */
+export function renameStudent(sqlite: DB, studentId: string, name: string): void {
+  sqlite.prepare(`UPDATE students SET name=? WHERE id=?`).run(name, studentId);
+}
+
 /** wx.login upsert: create the account on first sight, stamp last_login_at. Returns the id. */
 export function upsertWechatAccount(sqlite: DB, p: { openid: string; unionid: string | null }): string {
   const existing = sqlite.prepare(`SELECT id FROM wechat_accounts WHERE openid=?`).get(p.openid) as any;
@@ -310,14 +315,36 @@ export function deleteSession(sqlite: DB, sessionId: string): void {
 }
 
 /**
- * Adjust a committed session's start time (record fix-up from the 上课记录 tab).
+ * Patch a committed session's 课堂信息 (record fix-up from the session detail
+ * page / 上课记录 改时间). Partial: only keys present in `p` are written.
  * The stored `date` follows startedAt (decision 9), so date labels and recap
  * ordering stay consistent; the actual duration is derived on read.
  */
-export function updateSessionStartedAt(sqlite: DB, sessionId: string, startedAt: string): void {
-  sqlite
-    .prepare(`UPDATE class_sessions SET started_at=?, date=? WHERE id=?`)
-    .run(startedAt, startedAt.slice(0, 10), sessionId);
+export function updateSessionInfo(
+  sqlite: DB,
+  sessionId: string,
+  p: { lessonNumber?: number | null; lessonTitle?: string | null; teacherId?: string | null; startedAt?: string },
+): void {
+  const sets: string[] = [];
+  const vals: unknown[] = [];
+  if ('lessonNumber' in p) {
+    sets.push('lesson_number=?');
+    vals.push(p.lessonNumber);
+  }
+  if ('lessonTitle' in p) {
+    sets.push('lesson_title=?');
+    vals.push(p.lessonTitle);
+  }
+  if ('teacherId' in p) {
+    sets.push('teacher_id=?');
+    vals.push(p.teacherId);
+  }
+  if (p.startedAt !== undefined) {
+    sets.push('started_at=?', 'date=?');
+    vals.push(p.startedAt, p.startedAt.slice(0, 10));
+  }
+  if (!sets.length) return;
+  sqlite.prepare(`UPDATE class_sessions SET ${sets.join(', ')} WHERE id=?`).run(...vals, sessionId);
 }
 
 /**
