@@ -1,20 +1,13 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { ClassInfoModal } from '../components/ClassInfoModal';
 import { HomeworkTemplateEditor } from '../components/HomeworkTemplateEditor';
 import { Markdown } from '../components/Markdown';
 import { Modal } from '../components/Modal';
 import { SessionsTable } from '../components/SessionsTable';
 import { TopBar } from '../components/TopBar';
 import { useToast } from '../components/Toast';
-import {
-  api,
-  type ClassDetail as Detail,
-  type JoinRequestItem,
-  type Me,
-  type Student,
-  type TeacherItem,
-} from '../lib/api';
-import { BOOK_LABELS, BOOKS } from '../lib/homework';
+import { api, type ClassDetail as Detail, type JoinRequestItem, type Me, type Student } from '../lib/api';
 import {
   addGroup,
   moveStudent,
@@ -71,14 +64,6 @@ export function ClassDetail({ me }: { me: Me | null }) {
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
               <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, letterSpacing: '-.3px' }}>{d?.name ?? ' '}</h1>
-              {d?.level && (
-                <span
-                  className="mono"
-                  style={{ fontSize: 12, color: '#7a828f', background: '#f0f2f5', padding: '3px 9px', borderRadius: 7 }}
-                >
-                  {d.level}
-                </span>
-              )}
               {d && <EditClassInfo d={d} me={me} reload={reload} />}
             </div>
             <div style={{ marginTop: 8, fontSize: 13.5, color: '#7a828f', whiteSpace: 'nowrap' }}>
@@ -206,54 +191,15 @@ const ghostBtn: CSSProperties = {
   cursor: 'pointer',
 };
 
-// ===== CLASS INFO EDIT (名称/级别/负责老师) =================================
+// ===== CLASS INFO EDIT (名称/教材册数/负责老师) =============================
 function EditClassInfo({ d, me, reload }: { d: Detail; me: Me | null; reload: () => Promise<void> | void }) {
   const toast = useToast();
   const [open, setOpen] = useState(false);
-  const [teachers, setTeachers] = useState<TeacherItem[]>([]);
-  const [name, setName] = useState('');
-  const [level, setLevel] = useState('');
-  const [textbook, setTextbook] = useState('');
-  const [teacherId, setTeacherId] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  function openModal() {
-    setName(d.name);
-    setLevel(d.level ?? '');
-    setTextbook(d.textbook != null ? String(d.textbook) : '');
-    // legacy rows may have no 负责老师 — default the pick to the logged-in teacher
-    setTeacherId(d.teacherId ?? me?.id ?? '');
-    setOpen(true);
-    api
-      .teachers()
-      .then(setTeachers)
-      .catch(() => toast('老师列表加载失败', 'error'));
-  }
-
-  async function save() {
-    if (!name.trim() || !teacherId || busy) return;
-    setBusy(true);
-    try {
-      await api.updateClassInfo(d.id, {
-        name: name.trim(),
-        level: level.trim() || null,
-        teacherId,
-        textbook: textbook ? Number(textbook) : null,
-      });
-      await reload();
-      toast('班级信息已更新');
-      setOpen(false);
-    } catch {
-      toast('保存失败，请重试', 'error');
-    } finally {
-      setBusy(false);
-    }
-  }
 
   return (
     <>
       <button
-        onClick={openModal}
+        onClick={() => setOpen(true)}
         title="编辑班级信息"
         style={{
           height: 28,
@@ -269,67 +215,22 @@ function EditClassInfo({ d, me, reload }: { d: Detail; me: Me | null; reload: ()
       >
         ✎ 编辑
       </button>
-      <Modal open={open} onClose={() => setOpen(false)} title="编辑班级信息">
-        <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#5b6472', marginBottom: 6 }}>
-          班级名称
-        </label>
-        <input
-          value={name}
-          autoFocus
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && save()}
-          placeholder="如 三年级A班"
-          style={fieldStyle}
-        />
-        <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#5b6472', margin: '14px 0 6px' }}>
-          级别 <span style={{ fontWeight: 400, color: '#9aa1ac' }}>（选填，如 新概念二册）</span>
-        </label>
-        <input
-          value={level}
-          onChange={(e) => setLevel(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && save()}
-          placeholder="留空则不显示"
-          style={fieldStyle}
-        />
-        <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#5b6472', margin: '14px 0 6px' }}>
-          教材册数 <span style={{ fontWeight: 400, color: '#9aa1ac' }}>（课文复习默认按此册）</span>
-        </label>
-        <select
-          value={textbook}
-          onChange={(e) => setTextbook(e.target.value)}
-          style={{ ...fieldStyle, cursor: 'pointer' }}
-        >
-          <option value="">未设置</option>
-          {BOOKS.map((b) => (
-            <option key={b} value={b}>
-              {BOOK_LABELS[b]}
-            </option>
-          ))}
-        </select>
-        <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#5b6472', margin: '14px 0 6px' }}>
-          负责老师
-        </label>
-        <select
-          value={teacherId}
-          onChange={(e) => setTeacherId(e.target.value)}
-          style={{ ...fieldStyle, cursor: 'pointer' }}
-        >
-          {!teachers.some((t) => t.id === teacherId) && <option value={teacherId}>{d.teacherName}</option>}
-          {teachers.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-            </option>
-          ))}
-        </select>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
-          <button style={ghostBtn} onClick={() => setOpen(false)} disabled={busy}>
-            取消
-          </button>
-          <button style={{ ...primaryBtn, opacity: name.trim() && teacherId && !busy ? 1 : 0.55 }} onClick={save}>
-            {busy ? '保存中…' : '保存'}
-          </button>
-        </div>
-      </Modal>
+      <ClassInfoModal
+        open={open}
+        onClose={() => setOpen(false)}
+        title="编辑班级信息"
+        submitLabel="保存"
+        busyLabel="保存中…"
+        errorText="保存失败，请重试"
+        // legacy rows may have no 负责老师 — default the pick to the logged-in teacher
+        initial={{ name: d.name, teacherId: d.teacherId ?? me?.id ?? '', textbook: d.textbook }}
+        fallbackTeacherName={d.teacherName}
+        onSubmit={async (v) => {
+          await api.updateClassInfo(d.id, v);
+          await reload();
+          toast('班级信息已更新');
+        }}
+      />
     </>
   );
 }
@@ -1331,4 +1232,3 @@ function InviteTab({ d }: { d: Detail }) {
     </div>
   );
 }
-

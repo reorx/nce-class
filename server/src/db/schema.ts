@@ -53,7 +53,6 @@ export const classes = sqliteTable('classes', {
     .notNull()
     .references(() => organizations.id),
   name: text('name').notNull(),
-  level: text('level'), // 新概念二册 etc. (optional grade / book, free text)
   notes: text('notes'), // 班级资源 — free-form markdown kept by the teachers
   textbook: integer('textbook'), // 教材册数 1-4 (structured, for 课文复习 defaults)
   homeworkTemplate: text('homework_template'), // 作业模板 — {lesson_number}/{date}/{class_name} vars

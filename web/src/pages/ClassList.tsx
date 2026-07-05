@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Modal } from '../components/Modal';
+import { ClassInfoModal } from '../components/ClassInfoModal';
 import { TopBar } from '../components/TopBar';
 import { useToast } from '../components/Toast';
 import { api, type ClassListItem, type Me } from '../lib/api';
 import { loadSession } from '../lib/classroomStore';
-import { BOOK_LABELS, BOOKS } from '../lib/homework';
 import { GREEN, GREEN_DARK, PAL } from '../lib/theme';
 
 const ORANGE = '#f0862a';
@@ -35,16 +34,10 @@ function useLiveClassroom(classId: string): number | null {
   return startMs == null ? null : Math.max(0, Math.floor((nowMs - startMs) / 1000));
 }
 
-const LEVELS = ['新概念一册', '新概念二册', '新概念三册'];
-
 export function ClassList({ me }: { me: Me | null }) {
   const [classes, setClasses] = useState<ClassListItem[]>([]);
   const [search, setSearch] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
-  const [name, setName] = useState('');
-  const [level, setLevel] = useState<string>(LEVELS[1]);
-  const [textbook, setTextbook] = useState<number | null>(2);
-  const [busy, setBusy] = useState(false);
   const toast = useToast();
   const nav = useNavigate();
 
@@ -57,24 +50,6 @@ export function ClassList({ me }: { me: Me | null }) {
   useEffect(() => {
     reload();
   }, []);
-
-  async function submitCreate() {
-    const nm = name.trim();
-    if (!nm || busy) return;
-    setBusy(true);
-    try {
-      const created = await api.createClass(nm, level || null, textbook);
-      await reload();
-      toast(`已创建「${nm}」`);
-      setCreateOpen(false);
-      setName('');
-      nav(`/classes/${created.id}`);
-    } catch {
-      toast('创建失败，请重试', 'error');
-    } finally {
-      setBusy(false);
-    }
-  }
 
   const list = useMemo(
     () => classes.filter((c) => !search.trim() || c.name.includes(search.trim())),
@@ -162,126 +137,25 @@ export function ClassList({ me }: { me: Me | null }) {
         )}
       </div>
 
-      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="新建班级">
-        <label style={labelStyle}>班级名称</label>
-        <input
-          value={name}
-          autoFocus
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && submitCreate()}
-          placeholder="如 三年级C班"
-          style={fieldStyle}
-        />
-        <label style={{ ...labelStyle, marginTop: 15 }}>课程级别</label>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {LEVELS.map((lv, i) => {
-            const on = level === lv;
-            return (
-              <button
-                key={lv}
-                onClick={() => {
-                  setLevel(lv);
-                  setTextbook(i + 1); // 级别与教材册数联动，仍可在下方单独改
-                }}
-                style={{
-                  padding: '8px 13px',
-                  borderRadius: 8,
-                  border: `1px solid ${on ? GREEN : '#e2e5ea'}`,
-                  background: on ? '#eef7f0' : '#fff',
-                  color: on ? '#2c7a48' : '#5b6472',
-                  fontWeight: 600,
-                  fontSize: 13,
-                  cursor: 'pointer',
-                }}
-              >
-                {lv}
-              </button>
-            );
-          })}
-        </div>
-        <label style={{ ...labelStyle, marginTop: 15 }}>
-          教材册数 <span style={{ fontWeight: 400, color: '#9aa1ac' }}>（课文复习默认按此册）</span>
-        </label>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {BOOKS.map((b) => {
-            const on = textbook === b;
-            return (
-              <button
-                key={b}
-                onClick={() => setTextbook(on ? null : b)}
-                style={{
-                  padding: '8px 13px',
-                  borderRadius: 8,
-                  border: `1px solid ${on ? GREEN : '#e2e5ea'}`,
-                  background: on ? '#eef7f0' : '#fff',
-                  color: on ? '#2c7a48' : '#5b6472',
-                  fontWeight: 600,
-                  fontSize: 13,
-                  cursor: 'pointer',
-                }}
-              >
-                {BOOK_LABELS[b]}
-              </button>
-            );
-          })}
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 22 }}>
-          <button
-            style={{
-              height: 40,
-              padding: '0 18px',
-              background: '#fff',
-              color: '#5b6472',
-              border: '1px solid #e2e5ea',
-              borderRadius: 9,
-              fontWeight: 600,
-              fontSize: 14,
-              cursor: 'pointer',
-            }}
-            onClick={() => setCreateOpen(false)}
-          >
-            取消
-          </button>
-          <button
-            style={{
-              height: 40,
-              padding: '0 18px',
-              background: GREEN,
-              color: '#fff',
-              border: 'none',
-              borderRadius: 9,
-              fontWeight: 600,
-              fontSize: 14,
-              cursor: 'pointer',
-              opacity: name.trim() && !busy ? 1 : 0.55,
-            }}
-            onClick={submitCreate}
-          >
-            {busy ? '创建中…' : '创建班级'}
-          </button>
-        </div>
-      </Modal>
+      <ClassInfoModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="新建班级"
+        submitLabel="创建班级"
+        busyLabel="创建中…"
+        errorText="创建失败，请重试"
+        initial={{ name: '', teacherId: me?.id ?? '', textbook: null }}
+        fallbackTeacherName={me?.name}
+        onSubmit={async (v) => {
+          const created = await api.createClass(v);
+          await reload();
+          toast(`已创建「${v.name}」`);
+          nav(`/classes/${created.id}`);
+        }}
+      />
     </div>
   );
 }
-
-const labelStyle: CSSProperties = {
-  display: 'block',
-  fontSize: 12.5,
-  fontWeight: 600,
-  color: '#5b6472',
-  marginBottom: 6,
-};
-const fieldStyle: CSSProperties = {
-  width: '100%',
-  height: 40,
-  padding: '0 12px',
-  border: '1px solid #e2e5ea',
-  borderRadius: 9,
-  fontSize: 14,
-  color: '#1e2430',
-  background: '#fbfcfd',
-};
 
 function ClassCard({ c, ci }: { c: ClassListItem; ci: number }) {
   const shown = c.roster.slice(0, 4);
@@ -310,9 +184,6 @@ function ClassCard({ c, ci }: { c: ClassListItem; ci: number }) {
             }}
           >
             {c.name}
-          </div>
-          <div className="mono" style={{ marginTop: 5, fontSize: 11.5, color: '#9aa1ac', letterSpacing: '.2px' }}>
-            {c.level}
           </div>
         </div>
         <div

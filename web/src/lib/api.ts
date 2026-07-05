@@ -22,7 +22,6 @@ export interface TagItem {
 export interface ClassListItem {
   id: string;
   name: string;
-  level: string | null;
   teacherName: string;
   studentCount: number;
   roster: string[];
@@ -111,7 +110,6 @@ export type LastRecap = Recap;
 export interface ClassDetail {
   id: string;
   name: string;
-  level: string | null;
   notes: string | null; // 班级资源 — free-form markdown
   textbook: number | null; // 教材册数 1-4 (structured)
   homeworkTemplate: string | null; // 作业模板 with {lesson_number}/{date}/{class_name} vars
@@ -282,12 +280,10 @@ export const api = {
     req<TeacherItem>('POST', '/api/teachers', { name, username, password }),
   classes: () => get<ClassListItem[]>('/api/classes'),
   classDetail: (id: string) => get<ClassDetail>(`/api/classes/${id}`),
-  createClass: (name: string, level: string | null, textbook: number | null) =>
-    req<ClassDetail>('POST', '/api/classes', { name, level, textbook }),
-  updateClassInfo: (
-    classId: string,
-    p: { name: string; level: string | null; teacherId: string; textbook: number | null },
-  ) => req<ClassDetail>('PUT', `/api/classes/${classId}`, p),
+  createClass: (p: { name: string; teacherId: string; textbook: number | null }) =>
+    req<ClassDetail>('POST', '/api/classes', p),
+  updateClassInfo: (classId: string, p: { name: string; teacherId: string; textbook: number | null }) =>
+    req<ClassDetail>('PUT', `/api/classes/${classId}`, p),
   addStudent: (classId: string, name: string) => req<Student>('POST', `/api/classes/${classId}/students`, { name }),
   deleteStudent: (id: string) => req<{ ok: true }>('DELETE', `/api/students/${id}`),
   setStudentStatus: (id: string, status: StudentStatus) =>

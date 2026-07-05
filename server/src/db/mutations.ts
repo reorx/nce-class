@@ -86,24 +86,24 @@ export function createTeacher(
 /** Create a class in the given org owned by the given teacher. Returns its id. */
 export function createClass(
   sqlite: DB,
-  p: { orgId: string; name: string; level: string | null; teacherId: string; textbook: number | null },
+  p: { orgId: string; name: string; teacherId: string; textbook: number | null },
 ): string {
   const id = `c-${nanoid(10)}`;
   sqlite
-    .prepare(`INSERT INTO classes (id, org_id, name, level, teacher_id, textbook) VALUES (?,?,?,?,?,?)`)
-    .run(id, p.orgId, p.name, p.level, p.teacherId, p.textbook);
+    .prepare(`INSERT INTO classes (id, org_id, name, teacher_id, textbook) VALUES (?,?,?,?,?)`)
+    .run(id, p.orgId, p.name, p.teacherId, p.textbook);
   return id;
 }
 
-/** Update a class's basic info (name / level / 负责老师 / 教材册数). */
+/** Update a class's basic info (name / 负责老师 / 教材册数). */
 export function updateClassInfo(
   sqlite: DB,
   classId: string,
-  p: { name: string; level: string | null; teacherId: string; textbook: number | null },
+  p: { name: string; teacherId: string; textbook: number | null },
 ): void {
   sqlite
-    .prepare(`UPDATE classes SET name=?, level=?, teacher_id=?, textbook=? WHERE id=?`)
-    .run(p.name, p.level, p.teacherId, p.textbook, classId);
+    .prepare(`UPDATE classes SET name=?, teacher_id=?, textbook=? WHERE id=?`)
+    .run(p.name, p.teacherId, p.textbook, classId);
 }
 
 /** Add a teacher-created student to a class. Returns the new student id. */

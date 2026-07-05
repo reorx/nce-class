@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS wechat_accounts (
 );
 CREATE TABLE IF NOT EXISTS classes (
   id TEXT PRIMARY KEY, org_id TEXT NOT NULL, name TEXT NOT NULL,
-  level TEXT, notes TEXT, teacher_id TEXT,
+  notes TEXT, teacher_id TEXT,
   textbook INTEGER, homework_template TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

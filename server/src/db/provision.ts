@@ -20,6 +20,10 @@ export function migrate(sqlite: DB): void {
   if (!classCols.some((c) => c.name === 'notes')) {
     sqlite.exec(`ALTER TABLE classes ADD COLUMN notes TEXT`);
   }
+  // 课程级别 field removed 2026-07-05 — drop the leftover column on old databases.
+  if (classCols.some((c) => c.name === 'level')) {
+    sqlite.exec(`ALTER TABLE classes DROP COLUMN level`);
+  }
   // 作业机制: 教材册数 + 作业模板 on classes, 作业布置 fields on class_sessions.
   if (!classCols.some((c) => c.name === 'textbook')) {
     sqlite.exec(`ALTER TABLE classes ADD COLUMN textbook INTEGER`);

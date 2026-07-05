@@ -69,10 +69,10 @@ function seed(sqlite: DB) {
   teacher('t-out', 'org-2', '外老师', 'waiguo', 'teacher');
 
   run(
-    `INSERT INTO classes (id, org_id, name, level, teacher_id, created_at) VALUES ('c1','org-1','三年级A班','新概念二册','t-wangli','2026-06-01 08:00:00')`,
+    `INSERT INTO classes (id, org_id, name, teacher_id, created_at) VALUES ('c1','org-1','三年级A班','t-wangli','2026-06-01 08:00:00')`,
   );
   run(
-    `INSERT INTO classes (id, org_id, name, level, teacher_id, created_at) VALUES ('c-out','org-2','外班',NULL,'t-out','2026-06-01 08:00:01')`,
+    `INSERT INTO classes (id, org_id, name, teacher_id, created_at) VALUES ('c-out','org-2','外班','t-out','2026-06-01 08:00:01')`,
   );
 
   const student = (id: string, cls: string, name: string, source: string, i: number) =>

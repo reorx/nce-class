@@ -97,10 +97,7 @@ export default function Join() {
       <View className="hero">
         <View className="l1">👩‍🏫 {preview.teacherName}老师 邀请你加入</View>
         <View className="l2">{preview.className}</View>
-        <View className="l3">
-          {preview.orgName}
-          {preview.level ? ` · ${preview.level}` : ''}
-        </View>
+        <View className="l3">{preview.orgName}</View>
       </View>
       <View className="upload" onClick={pickPhoto}>
         {photo ? (

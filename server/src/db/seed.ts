@@ -87,7 +87,6 @@ const OTHER_CLASSES = [
   {
     id: 'c3',
     name: '四年级A班',
-    level: '新概念二册',
     teacher: 't-chenxiao',
     count: 18,
     last: '2026-06-30',
@@ -96,7 +95,6 @@ const OTHER_CLASSES = [
   {
     id: 'c2',
     name: '三年级B班',
-    level: '新概念二册',
     teacher: 't-wangli',
     count: 15,
     last: '2026-06-26',
@@ -105,7 +103,6 @@ const OTHER_CLASSES = [
   {
     id: 'c5',
     name: '新概念一册 · 周末班',
-    level: '新概念一册',
     teacher: 't-limei',
     count: 16,
     last: '2026-06-28',
@@ -114,7 +111,6 @@ const OTHER_CLASSES = [
   {
     id: 'c4',
     name: '五年级提高班',
-    level: '新概念三册',
     teacher: 't-wangli',
     count: 10,
     last: '2026-06-28',
@@ -123,7 +119,6 @@ const OTHER_CLASSES = [
   {
     id: 'c6',
     name: '新概念二册 · 晚间班',
-    level: '新概念二册',
     teacher: 't-zhangwei',
     count: 14,
     last: '2026-06-29',
@@ -214,13 +209,12 @@ function seedMockWechatAccounts() {
 }
 
 function seedC1() {
-  const cls = { id: 'c1', name: '三年级A班', level: '新概念二册', teacher: 't-wangli' };
+  const cls = { id: 'c1', name: '三年级A班', teacher: 't-wangli' };
   db.insert(t.classes)
     .values({
       id: cls.id,
       orgId: ORG_ID,
       name: cls.name,
-      level: cls.level,
       notes: [
         '# 班级资源',
         '',
@@ -346,7 +340,6 @@ function seedOtherClass(c: (typeof OTHER_CLASSES)[number]) {
       id: c.id,
       orgId: ORG_ID,
       name: c.name,
-      level: c.level,
       teacherId: c.teacher,
       createdAt: ts(),
     })

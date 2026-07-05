@@ -1190,7 +1190,7 @@ function ClassInfoView({ classId, session }: { classId: string; session: Classro
   const startedHm = session.startedAt.slice(11, 16);
   const facts: [string, string][] = detail
     ? [
-        ['班级', detail.name + (detail.level ? ` · ${detail.level}` : '')],
+        ['班级', detail.name],
         ['负责老师', detail.teacherName],
         ['学生', `${detail.studentCount} 人`],
         ['默认分组', `${detail.groupCount} 组`],

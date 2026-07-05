@@ -226,7 +226,6 @@ function classListPayload() {
     return {
       id: c.id,
       name: c.name,
-      level: c.level,
       teacherName: teacher?.name ?? '—',
       studentCount: counts.get(c.id) ?? 0,
       roster: rosterByClass.get(c.id) ?? [],
@@ -286,7 +285,6 @@ function classDetailPayload(id: string) {
   return {
     id: c.id,
     name: c.name,
-    level: c.level,
     notes: c.notes ?? null,
     textbook: c.textbook ?? null,
     homeworkTemplate: c.homework_template ?? null,
@@ -613,7 +611,6 @@ export function createApp() {
     const org = q.orgById.get(c.org_id) as any;
     return {
       className: c.name,
-      level: c.level,
       teacherName: teacher?.name ?? '—',
       orgName: org?.name ?? '',
       studentCount: (q.countStudentsOfClass.get(c.id) as any)?.c ?? 0,
@@ -698,7 +695,6 @@ export function createApp() {
       (q.classesOfOrg.all(teacher.org_id) as any[]).map((c) => ({
         id: c.id,
         name: c.name,
-        level: c.level,
         studentCount: counts.get(c.id) ?? 0,
         pendingCount: pending.get(c.id) ?? 0,
       })),
@@ -956,14 +952,17 @@ export function createApp() {
     const teacher = res.locals.teacher;
     const name = str(req.body?.name);
     if (!name) return res.status(400).json({ error: '班级名称必填' });
-    const level = str(req.body?.level);
     const textbook = bookOr(req.body?.textbook);
     if (textbook === 'invalid') return res.status(400).json({ error: '教材册数必须是 1-4' });
-    const id = createClass(sqlite, { orgId: teacher.org_id, name, level, teacherId: teacher.id, textbook });
+    // 负责老师 optional on create; defaults to the acting teacher (mirrors PUT's same-org check).
+    const teacherId = str(req.body?.teacherId) ?? teacher.id;
+    const t = q.teacherById.get(teacherId) as any;
+    if (!t || t.org_id !== teacher.org_id) return res.status(400).json({ error: '负责老师不存在或不属于本校' });
+    const id = createClass(sqlite, { orgId: teacher.org_id, name, teacherId, textbook });
     res.status(201).json(classDetailPayload(id));
   });
 
-  // ---- class basic info (name / level / 负责老师, full replace) ----
+  // ---- class basic info (name / 负责老师, full replace) ----
   app.put('/api/classes/:id', (req, res) => {
     const teacher = res.locals.teacher;
     if (!classInOrg(req.params.id, teacher.org_id)) return res.status(404).json({ error: 'class not found' });
@@ -975,7 +974,7 @@ export function createApp() {
     if (!t || t.org_id !== teacher.org_id) return res.status(400).json({ error: '负责老师不存在或不属于本校' });
     const textbook = bookOr(req.body?.textbook);
     if (textbook === 'invalid') return res.status(400).json({ error: '教材册数必须是 1-4' });
-    updateClassInfo(sqlite, req.params.id, { name, level: str(req.body?.level), teacherId, textbook });
+    updateClassInfo(sqlite, req.params.id, { name, teacherId, textbook });
     res.json(classDetailPayload(req.params.id));
   });
 

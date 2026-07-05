@@ -60,7 +60,6 @@ describe('GET /api/wx/invites/:token 预览', () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
       className: '三年级A班',
-      level: '新概念二册',
       teacherName: '王莉',
       orgName: '晨光英语',
       studentCount: 4,

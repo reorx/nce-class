@@ -50,10 +50,7 @@ export default function TeacherClasses() {
         >
           <View className="main">
             <View className="name">{c.name}</View>
-            <View className="sub">
-              {c.level ? `${c.level} · ` : ''}
-              {c.studentCount} 名学生
-            </View>
+            <View className="sub">{c.studentCount} 名学生</View>
           </View>
           {c.pendingCount > 0 && <Text className="badge">{c.pendingCount} 条申请</Text>}
           <Text className="arrow">›</Text>

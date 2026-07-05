@@ -220,32 +220,40 @@ describe('default grouping (PUT replace)', () => {
 describe('class creation', () => {
   it('creates a class owned by the acting teacher and lists it', async () => {
     const { agent } = await login();
-    const created = await agent.post('/api/classes').send({ name: '四年级C班', level: '新概念三册' });
+    const created = await agent.post('/api/classes').send({ name: '四年级C班' });
     expect(created.status).toBe(201);
     expect(created.body).toMatchObject({ name: '四年级C班', teacherName: '王莉', studentCount: 0 });
 
     const list = (await agent.get('/api/classes')).body;
     expect(list.find((c: any) => c.name === '四年级C班')).toBeTruthy();
   });
+
+  it('accepts an explicit 负责老师, rejecting unknown or cross-org ones with 400', async () => {
+    const { agent } = await login();
+    const t2 = await agent.post('/api/teachers').send({ name: '李芳', username: 'lifang', password: 'secret66' });
+    const created = await agent.post('/api/classes').send({ name: '五年级D班', teacherId: t2.body.id });
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({ teacherId: t2.body.id, teacherName: '李芳' });
+
+    expect((await agent.post('/api/classes').send({ name: 'X', teacherId: 'nope' })).status).toBe(400);
+    expect((await agent.post('/api/classes').send({ name: 'X', teacherId: 't-out' })).status).toBe(400);
+  });
 });
 
 describe('class info update', () => {
-  it('updates name, level and 负责老师, echoing the new detail', async () => {
+  it('updates name and 负责老师, echoing the new detail', async () => {
     const { agent } = await login();
     const created = await agent.post('/api/teachers').send({ name: '李芳', username: 'lifang', password: 'secret66' });
-    const res = await agent
-      .put('/api/classes/c1')
-      .send({ name: '三年级B班', level: '新概念一册', teacherId: created.body.id });
+    const res = await agent.put('/api/classes/c1').send({ name: '三年级B班', teacherId: created.body.id });
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
       name: '三年级B班',
-      level: '新概念一册',
       teacherId: created.body.id,
       teacherName: '李芳',
     });
 
-    const row = sqlite.prepare(`SELECT name, level, teacher_id FROM classes WHERE id='c1'`).get() as any;
-    expect(row).toEqual({ name: '三年级B班', level: '新概念一册', teacher_id: created.body.id });
+    const row = sqlite.prepare(`SELECT name, teacher_id FROM classes WHERE id='c1'`).get() as any;
+    expect(row).toEqual({ name: '三年级B班', teacher_id: created.body.id });
     // the class list reflects the change too
     const list = (await agent.get('/api/classes')).body;
     expect(list.find((c: any) => c.id === 'c1')).toMatchObject({ name: '三年级B班', teacherName: '李芳' });
@@ -256,17 +264,9 @@ describe('class info update', () => {
     expect((await agent.get('/api/classes/c1')).body.teacherId).toBe('t-wangli');
   });
 
-  it('clears level back to null on blank input', async () => {
-    const { agent } = await login();
-    const res = await agent.put('/api/classes/c1').send({ name: '三年级A班', level: '   ', teacherId: 't-wangli' });
-    expect(res.status).toBe(200);
-    expect(res.body.level).toBeNull();
-    expect((sqlite.prepare(`SELECT level FROM classes WHERE id='c1'`).get() as any).level).toBeNull();
-  });
-
   it('rejects a missing name or 负责老师 with 400', async () => {
     const { agent } = await login();
-    expect((await agent.put('/api/classes/c1').send({ level: 'x', teacherId: 't-wangli' })).status).toBe(400);
+    expect((await agent.put('/api/classes/c1').send({ teacherId: 't-wangli' })).status).toBe(400);
     expect((await agent.put('/api/classes/c1').send({ name: '   ', teacherId: 't-wangli' })).status).toBe(400);
     expect((await agent.put('/api/classes/c1').send({ name: 'X' })).status).toBe(400);
   });

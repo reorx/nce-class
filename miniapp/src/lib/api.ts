@@ -74,7 +74,6 @@ export interface WxMe {
 
 export interface ClassPreview {
   className: string;
-  level: string | null;
   teacherName: string;
   orgName: string;
   studentCount: number;
@@ -83,7 +82,6 @@ export interface ClassPreview {
 export interface TeacherClass {
   id: string;
   name: string;
-  level: string | null;
   studentCount: number;
   pendingCount: number;
 }
@@ -123,7 +121,7 @@ export interface SessionBrief {
 
 export interface StudentHome {
   student: { id: string; name: string; enName: string | null; photoUrl: string | null };
-  class: { id: string; name: string; level: string | null; teacherName: string; orgName: string };
+  class: { id: string; name: string; teacherName: string; orgName: string };
   sessions: SessionBrief[];
   latestSessionId: string | null;
 }
