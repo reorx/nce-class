@@ -1,0 +1,3 @@
+- [ ] 课程表 calendar，课程安排 schedule
+- [ ] 课堂小比赛功能，开启一个 topic 的比赛，然后把学生按顺序录进去。小比赛也会在 recap 中呈现，展示前三名
+- [ ] inclass whiteboard, record in class session, show in recap student's received in wechat
