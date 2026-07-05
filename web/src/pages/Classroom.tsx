@@ -26,7 +26,14 @@ import {
 import { buildLogLines, type LogLine } from '../lib/classroomLog';
 import { allSelected, dragTargets, someSelected, toggleAll, toggleOne } from '../lib/multiSelect';
 import { lessonLabel as fmtLessonLabel } from '../lib/lesson';
-import { prevLessonInfo, type PrevLessonInfo } from '../lib/prevLesson';
+import {
+  prevLessonGroups,
+  prevLessonInfo,
+  prevLessonStars,
+  type PrevLessonGroup,
+  type PrevLessonInfo,
+  type PrevLessonStar,
+} from '../lib/prevLesson';
 import { configFromDetail } from '../lib/setup';
 import { displayZoom } from '../lib/zoom';
 import {
@@ -1032,7 +1039,14 @@ interface Seg {
 function PrevLessonButton({ classId }: { classId: string }) {
   const [open, setOpen] = useState(false);
   const [state, setState] = useState<
-    { status: 'idle' | 'loading' | 'error' } | { status: 'ready'; info: PrevLessonInfo | null; homework: string | null }
+    | { status: 'idle' | 'loading' | 'error' }
+    | {
+        status: 'ready';
+        info: PrevLessonInfo | null;
+        homework: string | null;
+        groups: PrevLessonGroup[];
+        stars: PrevLessonStar[];
+      }
   >({ status: 'idle' });
   const wrapRef = useRef<HTMLDivElement>(null);
 
@@ -1054,8 +1068,20 @@ function PrevLessonButton({ classId }: { classId: string }) {
       .classDetail(classId)
       .then(async (d) => {
         const info = prevLessonInfo(d.sessions);
-        const homework = info?.hasHomework ? (await api.sessionDetail(info.sessionId)).homeworkContent : null;
-        setState({ status: 'ready', info, homework });
+        // sessionDetail carries both the 作业 text and the embedded recap
+        // (每组分数 / 今日之星), so one fetch covers the whole popover.
+        if (!info) {
+          setState({ status: 'ready', info: null, homework: null, groups: [], stars: [] });
+          return;
+        }
+        const detail = await api.sessionDetail(info.sessionId);
+        setState({
+          status: 'ready',
+          info,
+          homework: info.hasHomework ? detail.homeworkContent : null,
+          groups: prevLessonGroups(detail.recap),
+          stars: prevLessonStars(detail.recap),
+        });
       })
       .catch(() => setState({ status: 'error' }));
   };
@@ -1085,6 +1111,64 @@ function PrevLessonButton({ classId }: { classId: string }) {
         {row('日期', state.info.dateLabel)}
         {row('课次', state.info.lessonText)}
         {row(
+          '分数',
+          state.groups.length ? (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {state.groups.map((g) => (
+                <span
+                  key={g.name}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 5,
+                    padding: '3px 10px',
+                    borderRadius: 999,
+                    background: '#f1f4f8',
+                    fontSize: 13,
+                    fontWeight: 800,
+                    color: '#4b5563',
+                  }}
+                >
+                  {g.emoji && <span>{g.emoji}</span>}
+                  <span>{g.name}</span>
+                  <span style={{ color: '#2c3340' }}>{g.score}</span>
+                </span>
+              ))}
+            </div>
+          ) : (
+            <span style={{ color: '#a7b0bb' }}>无分组记录</span>
+          ),
+        )}
+        {row(
+          '之星',
+          state.stars.length ? (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {state.stars.map((s) => (
+                <span
+                  key={s.name}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 5,
+                    padding: '3px 10px',
+                    borderRadius: 999,
+                    background: '#fff7e6',
+                    fontSize: 13,
+                    fontWeight: 800,
+                    color: '#8f6b16',
+                  }}
+                >
+                  <span>🌟</span>
+                  <span>{s.name}</span>
+                  <span style={{ color: '#b8891f' }}>+{s.net}</span>
+                </span>
+              ))}
+            </div>
+          ) : (
+            <span style={{ color: '#a7b0bb' }}>暂无</span>
+          ),
+        )}
+        {row(
           '作业',
           state.homework ? (
             <div
@@ -1104,6 +1188,24 @@ function PrevLessonButton({ classId }: { classId: string }) {
             <span style={{ color: '#a7b0bb' }}>未布置作业</span>
           ),
         )}
+        <a
+          href={`/classes/${classId}/sessions/${state.info.sessionId}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            display: 'flex',
+            justifyContent: 'center',
+            marginTop: 10,
+            paddingTop: 12,
+            borderTop: '1px solid #eef1f5',
+            fontSize: 14,
+            fontWeight: 800,
+            color: '#3f8f4f',
+            textDecoration: 'none',
+          }}
+        >
+          查看上课记录 →
+        </a>
       </>
     );
   };

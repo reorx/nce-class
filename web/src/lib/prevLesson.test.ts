@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { Session } from './api';
-import { prevLessonInfo } from './prevLesson';
+import type { Recap, Session } from './api';
+import { prevLessonGroups, prevLessonInfo, prevLessonStars } from './prevLesson';
 
 function mkSession(over: Partial<Session>): Session {
   return {
@@ -47,5 +47,69 @@ describe('prevLessonInfo', () => {
     const info = prevLessonInfo([mkSession({ lessonNumber: null, lessonTitle: null, hasHomework: false })]);
     expect(info?.lessonText).toBe('未填写课次');
     expect(info?.hasHomework).toBe(false);
+  });
+});
+
+function mkRecap(over: Partial<Recap>): Recap {
+  return {
+    date: '7月1日',
+    weekday: '周二',
+    lessonNumber: 7,
+    lessonTitle: 'Too late',
+    actualDurationMin: 115,
+    attendancePresent: 12,
+    attendanceTotal: 13,
+    groups: [],
+    stars: [],
+    warned: [],
+    studentTags: [],
+    ...over,
+  };
+}
+
+describe('prevLessonGroups', () => {
+  it('按分数降序排列，同分用 orderIndex 稳定次序', () => {
+    const groups = prevLessonGroups(
+      mkRecap({
+        groups: [
+          { name: '蓝队', emoji: '🐬', orderIndex: 1, score: 3 },
+          { name: '红队', emoji: '🔥', orderIndex: 0, score: 5 },
+          { name: '绿队', emoji: '🌿', orderIndex: 2, score: 3 },
+        ],
+      }),
+    );
+    expect(groups).toEqual([
+      { name: '红队', emoji: '🔥', score: 5 },
+      { name: '蓝队', emoji: '🐬', score: 3 },
+      { name: '绿队', emoji: '🌿', score: 3 },
+    ]);
+  });
+
+  it('无小组 → 空数组', () => {
+    expect(prevLessonGroups(mkRecap({ groups: [] }))).toEqual([]);
+  });
+});
+
+describe('prevLessonStars', () => {
+  it('取净得分最高前三，降序', () => {
+    const stars = prevLessonStars(
+      mkRecap({
+        stars: [
+          { name: '小明', net: 2 },
+          { name: '军军', net: 5 },
+          { name: '浩浩', net: 3 },
+          { name: '丽丽', net: 4 },
+        ],
+      }),
+    );
+    expect(stars).toEqual([
+      { name: '军军', net: 5 },
+      { name: '丽丽', net: 4 },
+      { name: '浩浩', net: 3 },
+    ]);
+  });
+
+  it('无亮眼学生 → 空数组', () => {
+    expect(prevLessonStars(mkRecap({ stars: [] }))).toEqual([]);
   });
 });
