@@ -37,9 +37,6 @@ import {
   byScoreDesc,
   gScore,
   sScore,
-  stars as recapStars,
-  studentTags,
-  warned as recapWarned,
   type Homework,
   type Recitation,
   type SEvent,
@@ -274,9 +271,31 @@ export function Classroom() {
         zoom,
       }}
     >
-      {/* header — 左：课次(点击编辑课堂信息)；右：班级名 + 倒计时（弱化灰） */}
+      {/* header — 左：🏫班级名(进班级信息 view) · 课次(点击编辑课堂信息)；右：倒计时（弱化灰） */}
       <div style={{ display: 'flex', alignItems: 'center', padding: '16px 26px 12px', gap: 14, flexShrink: 0 }}>
-        <span style={{ fontSize: 28 }}>🏫</span>
+        <span
+          onClick={() => goView('info')}
+          title="班级信息"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '4px 12px',
+            margin: '-4px -12px',
+            borderRadius: 12,
+            fontWeight: 900,
+            fontSize: 25,
+            color: '#2c3340',
+            cursor: 'pointer',
+            transition: 'background .12s',
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,.65)')}
+          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+        >
+          <span style={{ fontSize: 28 }}>🏫</span>
+          {className}
+        </span>
+        <span style={{ fontWeight: 900, fontSize: 22, color: '#a3b39a' }}>·</span>
         <span
           onClick={() => setShowInfo(true)}
           title="编辑课堂信息"
@@ -300,8 +319,28 @@ export function Classroom() {
           <span style={{ fontSize: 15, color: '#a3b39a' }}>✎</span>
         </span>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 18 }}>
+          <button
+            onClick={() => goView('log')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 7,
+              padding: '6px 14px',
+              borderRadius: 12,
+              border: 'none',
+              background: view === 'log' ? '#fff' : 'rgba(255,255,255,.65)',
+              boxShadow: view === 'log' ? '0 4px 12px rgba(60,90,55,.14)' : 'none',
+              color: '#5b6672',
+              fontWeight: 800,
+              fontSize: 15,
+              fontFamily: 'inherit',
+              cursor: 'pointer',
+            }}
+          >
+            <span style={{ fontSize: 15 }}>📜</span>
+            日志
+          </button>
           <PrevLessonButton classId={id} />
-          <span style={{ fontWeight: 800, fontSize: 18, color: '#a7b0bb' }}>{className}</span>
           <div
             style={{
               display: 'flex',
@@ -637,12 +676,6 @@ export function Classroom() {
         <button onClick={() => goView('attendance')} style={attnStyle(view === 'attendance')}>
           <span style={{ fontSize: 17 }}>📋</span>出勤
         </button>
-        <button onClick={() => goView('info')} style={attnStyle(view === 'info')}>
-          <span style={{ fontSize: 17 }}>📚</span>班级信息
-        </button>
-        <button onClick={() => goView('log')} style={attnStyle(view === 'log')}>
-          <span style={{ fontSize: 17 }}>📜</span>日志
-        </button>
         <div style={{ display: 'flex', gap: 6, background: '#eef2ea', padding: 6, borderRadius: 18 }}>
           {(
             [
@@ -658,9 +691,6 @@ export function Classroom() {
           ))}
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 12, alignItems: 'center' }}>
-          <button onClick={openDiscard} style={discardStyle}>
-            退出不保存
-          </button>
           <button onClick={undo} style={undoStyle(events.length > 0)}>
             <span style={{ fontSize: 16 }}>↩</span>撤销
           </button>
@@ -763,16 +793,14 @@ export function Classroom() {
         />
       )}
 
-      {/* end-class recap (local preview → confirm commits) */}
+      {/* end-class confirmation (irreversible-commit review → confirm commits) */}
       {showEnd && (
-        <EndRecap
+        <EndConfirm
           className={className}
           lesson={lessonLabel}
-          groups={groups}
+          startedAt={session.startedAt}
           students={students}
-          events={events}
           submitting={submitting}
-          colorOf={colorOf}
           onClose={() => !submitting && setShowEnd(false)}
           onConfirm={confirmEnd}
           onDiscard={() => {
@@ -2417,139 +2445,74 @@ function GroupPopup({
   );
 }
 
-// ===== end-class recap =====================================================
-function EndRecap({
+// ===== end-class confirmation ==============================================
+// Not a recap preview — the recap lives on the session detail page after commit.
+// This dialog warns that ending is irreversible and surfaces the facts worth a
+// last look: 课次 / 开始时间 / 作业检查（作业无「未检查」态，默认即「没交」，
+// 所以这里把在场且仍为没交的学生当作未检查名单提示老师）。
+function EndConfirm({
   className,
   lesson,
-  groups,
+  startedAt,
   students,
-  events,
   submitting,
-  colorOf,
   onClose,
   onConfirm,
   onDiscard,
 }: {
   className: string;
   lesson: string;
-  groups: SGroup[];
+  startedAt: string;
   students: ClassroomStudent[];
-  events: SEvent[];
   submitting: boolean;
-  colorOf: (gid: string) => (typeof GROUP_COLORS)[number];
   onClose: () => void;
   onConfirm: () => void;
   onDiscard: () => void;
 }) {
-  const ranking = [...groups]
-    .map((g) => ({ ...g, score: gScore(events, g.id), c: colorOf(g.id) }))
-    .sort((a, b) => b.score - a.score)
-    .map((g, i) => ({ ...g, medal: ['🥇', '🥈', '🥉'][i] || '' }));
-  const stars = recapStars(students, events);
-  const warned = recapWarned(students, events);
-  const tagged = studentTags(students);
+  const unchecked = students.filter((s) => s.attendance === 'present' && s.h === '没交');
+  const row = (label: string, value: ReactNode) => (
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, padding: '9px 0' }}>
+      <span style={{ width: 66, flexShrink: 0, fontSize: 14, fontWeight: 700, color: '#a7b0bb' }}>{label}</span>
+      <div style={{ flex: 1, minWidth: 0, fontSize: 16, fontWeight: 800, color: '#2c3340' }}>{value}</div>
+    </div>
+  );
   return (
-    <Overlay z={60} onClose={onClose} strong>
-      <div
-        style={{
-          width: 600,
-          maxWidth: '94vw',
-          maxHeight: '88vh',
-          overflow: 'auto',
-          background: '#fff',
-          borderRadius: 30,
-          padding: '28px 30px 24px',
-          boxShadow: '0 30px 70px rgba(20,40,20,.3)',
-          animation: 'pop-in .22s cubic-bezier(.2,.9,.3,1.2)',
-        }}
-        onClick={stop}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 22 }}>
-          <span style={{ fontSize: 30 }}>🎉</span>
-          <span style={{ fontWeight: 900, fontSize: 25, color: '#2c3340' }}>本堂课回顾</span>
-          <span style={{ fontWeight: 700, fontSize: 16, color: '#8a94a0', marginTop: 6 }}>
-            {className} · {lesson}
-          </span>
+    <Overlay z={60} onClose={() => !submitting && onClose()} strong>
+      <div style={{ ...popupCard(500), maxHeight: '88vh', overflow: 'auto' }} onClick={stop}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+          <span style={{ fontSize: 28 }}>⚠️</span>
+          <span style={{ fontWeight: 900, fontSize: 23, color: '#2c3340' }}>结束课堂？</span>
           <button onClick={onClose} style={{ ...closeBtn, marginLeft: 'auto' }}>
             ✕
           </button>
         </div>
 
-        <div style={{ fontWeight: 800, fontSize: 16, color: '#5b6672', marginBottom: 12 }}>🏆 各组得分</div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24 }}>
-          {ranking.map((g) => (
-            <div
-              key={g.id}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 12,
-                padding: '13px 16px',
-                borderRadius: 16,
-                background: g.c.headBg,
-              }}
-            >
-              <span style={{ fontSize: 22, width: 26, textAlign: 'center' }}>{g.medal}</span>
-              <span style={{ fontSize: 24 }}>{g.emoji}</span>
-              <span style={{ fontWeight: 800, fontSize: 19, color: g.c.headFg }}>{g.name}</span>
-              <div
-                style={{
-                  marginLeft: 'auto',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 4,
-                  fontFamily: NUM,
-                  fontWeight: 800,
-                  fontSize: 24,
-                  color: g.c.headFg,
-                }}
-              >
-                <span style={{ fontSize: 18 }}>⭐</span>
-                {g.score}
-              </div>
-            </div>
-          ))}
+        <div style={{ fontSize: 15, fontWeight: 600, color: '#5b6672', lineHeight: 1.7, marginBottom: 16 }}>
+          结束后本节课将整体存档入库、生成课堂战报，<b style={{ color: '#e0454a' }}>该操作不可撤销</b>
+          。请确认以下信息无误：
         </div>
 
-        <div style={{ fontWeight: 800, fontSize: 16, color: '#5b6672', marginBottom: 12 }}>🌟 表现亮眼</div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 22 }}>
-          {stars.length === 0 && <span style={{ color: '#a7b0bb', fontSize: 14 }}>暂无</span>}
-          {stars.map((s) => (
-            <RecapBadge key={s.id} name={s.name} ring={colorOf(s.g).ring} bg="#eaf9ef" fg="#1e9e4a" />
-          ))}
-        </div>
-
-        {tagged.length > 0 && (
-          <>
-            <div style={{ fontWeight: 800, fontSize: 16, color: '#5b6672', marginBottom: 12 }}>🏅 奖章</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 22 }}>
-              {tagged.map((s) => (
-                <div
-                  key={s.id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 9,
-                    padding: '8px 15px 8px 8px',
-                    borderRadius: 16,
-                    background: '#fff6dd',
-                  }}
-                >
-                  <div style={ringAvatar(36, '#f5a623', 15)}>{s.name[0]}</div>
-                  <span style={{ fontWeight: 800, fontSize: 16, color: '#8f6b16' }}>{s.name}</span>
-                  <span style={{ fontWeight: 700, fontSize: 14, color: '#b8891f' }}>{s.tags.join('、')}</span>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-
-        <div style={{ fontWeight: 800, fontSize: 16, color: '#5b6672', marginBottom: 12 }}>⚠️ 被老师提醒</div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 26 }}>
-          {warned.length === 0 && <span style={{ color: '#a7b0bb', fontSize: 14 }}>暂无</span>}
-          {warned.map((s) => (
-            <RecapBadge key={s.id} name={s.name} ring={colorOf(s.g).ring} bg="#ffedee" fg="#e0454a" />
-          ))}
+        <div
+          style={{
+            padding: '8px 18px',
+            borderRadius: 16,
+            background: '#f6f8f4',
+            marginBottom: 20,
+          }}
+        >
+          {row('班级', className)}
+          {row('课次', lesson)}
+          {row('开始时间', startedAt.slice(0, 16))}
+          {row(
+            '作业检查',
+            unchecked.length === 0 ? (
+              <span style={{ color: '#1e9e4a' }}>已全部检查</span>
+            ) : (
+              <span style={{ color: '#b9791a' }}>
+                {unchecked.length} 人未检查（没交）：{unchecked.map((s) => s.name).join('、')}
+              </span>
+            ),
+          )}
         </div>
 
         <div style={{ display: 'flex', gap: 12 }}>
@@ -2590,7 +2553,7 @@ function EndRecap({
               boxShadow: '0 5px 14px rgba(47,180,87,.3)',
             }}
           >
-            {submitting ? '保存中…' : '确认结束 · 生成 recap 推送家长'}
+            {submitting ? '保存中…' : '确认结束'}
           </button>
         </div>
         <div style={{ textAlign: 'center', marginTop: 14 }}>
@@ -2615,24 +2578,6 @@ function EndRecap({
         </div>
       </div>
     </Overlay>
-  );
-}
-
-function RecapBadge({ name, ring, bg, fg }: { name: string; ring: string; bg: string; fg: string }) {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 9,
-        padding: '8px 15px 8px 8px',
-        borderRadius: 16,
-        background: bg,
-      }}
-    >
-      <div style={ringAvatar(36, ring, 15)}>{name[0]}</div>
-      <span style={{ fontWeight: 800, fontSize: 16, color: fg }}>{name}</span>
-    </div>
   );
 }
 
@@ -2815,21 +2760,6 @@ function undoStyle(enabled: boolean): CSSProperties {
     pointerEvents: enabled ? 'auto' : 'none',
   };
 }
-
-const discardStyle: CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 6,
-  padding: '11px 16px',
-  borderRadius: 14,
-  border: 'none',
-  background: 'transparent',
-  color: '#a7b0bb',
-  fontWeight: 700,
-  fontSize: 14,
-  fontFamily: 'inherit',
-  cursor: 'pointer',
-};
 
 function attnStyle(active: boolean): CSSProperties {
   return {
