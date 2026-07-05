@@ -542,7 +542,7 @@ function buildCommitInput(body: any, classId: string, teacher: any): { input: Co
     const collapsed = str(t?.tag)?.replace(/\s+/g, ' ');
     const tag = collapsed ? [...collapsed].slice(0, MAX_TAG_LEN).join('').trim() : null;
     if (!tag) continue;
-    const key = `${studentId} ${tag.toLowerCase()}`;
+    const key = `${studentId}\0${tag.toLowerCase()}`;
     if (seenTags.has(key)) continue;
     seenTags.add(key);
     tags.push({ studentId, tag });
@@ -697,6 +697,20 @@ export function createApp() {
         name: c.name,
         studentCount: counts.get(c.id) ?? 0,
         pendingCount: pending.get(c.id) ?? 0,
+      })),
+    );
+  });
+
+  // 老师端「上课记录」：org 级全部课堂 brief（导航中枢入口；课后处理/recap 分享后续挂在行上）
+  app.get('/api/wx/teacher/sessions', (_req, res) => {
+    const teacher = wxTeacherOf(res);
+    if (!teacher) return res.status(403).json({ error: '未绑定老师账号' });
+    const sgCounts = new Map((q.sessionGroupCounts.all() as any[]).map((r) => [r.session_id, r.c]));
+    res.json(
+      (q.sessionsOfOrg.all(teacher.org_id) as any[]).map((s) => ({
+        ...sessionSummary(s, sgCounts.get(s.id) ?? 0),
+        classId: s.class_id,
+        className: s.class_name,
       })),
     );
   });

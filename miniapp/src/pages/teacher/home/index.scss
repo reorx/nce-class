@@ -1,0 +1,73 @@
+.page {
+  padding: 32px;
+}
+
+.hint {
+  text-align: center;
+  color: #9aa0b0;
+  font-size: 26px;
+  margin: 80px 0;
+}
+
+.head {
+  margin-bottom: 28px;
+
+  .org {
+    font-size: 24px;
+    color: #9aa0b0;
+  }
+
+  .who {
+    font-size: 38px;
+    font-weight: 800;
+    margin-top: 4px;
+  }
+}
+
+.nav-card {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  background: #fff;
+  border: 2px solid #e7e9ee;
+  border-radius: 20px;
+  padding: 30px 28px;
+  margin-bottom: 20px;
+
+  .icon {
+    font-size: 48px;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+
+  .main {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .name {
+    font-size: 32px;
+    font-weight: 800;
+  }
+
+  .sub {
+    font-size: 24px;
+    color: #9aa0b0;
+    margin-top: 6px;
+  }
+
+  .badge {
+    background: #ffece8;
+    color: #e5484d;
+    font-size: 22px;
+    font-weight: 700;
+    padding: 6px 16px;
+    border-radius: 999px;
+    flex-shrink: 0;
+  }
+
+  .arrow {
+    color: #c9cedb;
+    font-size: 34px;
+  }
+}

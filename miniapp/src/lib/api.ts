@@ -86,6 +86,18 @@ export interface TeacherClass {
   pendingCount: number;
 }
 
+export interface TeacherSessionBrief {
+  id: string;
+  date: string; // MM-DD
+  year: string;
+  weekday: string;
+  lessonNumber: number | null;
+  lessonTitle: string | null;
+  classId: string;
+  className: string;
+  hasHomework: boolean;
+}
+
 export interface InviteResult {
   token: string;
   expiresAt: string;
@@ -169,6 +181,8 @@ export const bindTeacher = (username: string, password: string) =>
 
 // ---- 老师侧 ----
 export const getTeacherClasses = () => request<TeacherClass[]>('GET', '/api/wx/teacher/classes');
+
+export const getTeacherSessions = () => request<TeacherSessionBrief[]>('GET', '/api/wx/teacher/sessions');
 
 export const createInvite = (classId: string) =>
   request<InviteResult>('POST', `/api/wx/teacher/classes/${classId}/invites`);

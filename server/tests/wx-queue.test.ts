@@ -43,6 +43,37 @@ describe('GET /api/wx/teacher/classes 班级列表', () => {
   });
 });
 
+describe('GET /api/wx/teacher/sessions 上课记录', () => {
+  it('本组织全部课堂倒序 brief（含班级名 + 作业标记）', async () => {
+    const teacher = await wxLogin(app, 'dev-teacher');
+    const res = await request(app).get('/api/wx/teacher/sessions').set(auth(teacher));
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(1);
+    expect(res.body[0]).toMatchObject({
+      id: 'sess1',
+      classId: 'c1',
+      className: '三年级A班',
+      date: '06-26',
+      year: '2026',
+      lessonNumber: 7,
+      lessonTitle: 'Too late',
+      hasHomework: false,
+    });
+    // 布置作业后标记翻转
+    sqlite.prepare(`UPDATE class_sessions SET homework_content='读课文' WHERE id='sess1'`).run();
+    const res2 = await request(app).get('/api/wx/teacher/sessions').set(auth(teacher));
+    expect(res2.body[0].hasHomework).toBe(true);
+  });
+
+  it('只看本组织；未绑老师 403；未登录 401', async () => {
+    const out = await wxLogin(app, 'dev-out');
+    expect((await request(app).get('/api/wx/teacher/sessions').set(auth(out))).body).toEqual([]);
+    const parent = await wxLogin(app, 'dev-parent');
+    expect((await request(app).get('/api/wx/teacher/sessions').set(auth(parent))).status).toBe(403);
+    expect((await request(app).get('/api/wx/teacher/sessions')).status).toBe(401);
+  });
+});
+
 describe('GET /api/wx/teacher/classes/:id/join-requests 队列', () => {
   it('pending 条目含注册四项 + 微信昵称', async () => {
     const { teacherToken } = await joinAs('brand-new', {

@@ -4,8 +4,10 @@ export default defineAppConfig({
     'pages/join/index',
     'pages/recap/index',
     'pages/bind/index',
+    'pages/teacher/home/index',
     'pages/teacher/classes/index',
     'pages/teacher/class/index',
+    'pages/teacher/sessions/index',
   ],
   window: {
     backgroundTextStyle: 'light',

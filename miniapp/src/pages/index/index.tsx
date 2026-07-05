@@ -32,7 +32,7 @@ export default function Index() {
       const m = await ensureLogin();
       setMe(m);
       if (routeForMe(m) === 'teacher') {
-        Taro.redirectTo({ url: '/pages/teacher/classes/index' });
+        Taro.redirectTo({ url: '/pages/teacher/home/index' });
         return;
       }
       await loadChild(m, loadCurrentChildId());
