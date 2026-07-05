@@ -399,7 +399,8 @@ export function saveGrouping(sqlite: DB, classId: string, groups: GroupInput[]):
  */
 export function commitSession(sqlite: DB, input: CommitInput): string {
   const tx = sqlite.transaction((): string => {
-    // ① default-grouping writeback (open-time grouping, NOT final memberships)
+    // ① default-grouping writeback (end-of-class grouping: any in-class 调组
+    //    the client folded into input.defaultGrouping persists to the class)
     saveGrouping(sqlite, input.classId, input.defaultGrouping);
 
     // ② class_sessions

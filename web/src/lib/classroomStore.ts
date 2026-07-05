@@ -221,8 +221,9 @@ export function reducer(s: ClassroomSession, a: CAction): ClassroomSession {
         startedAt: a.startedAt ?? s.startedAt,
       };
     case 'setGroupEmoji':
-      // Cosmetic, not membership — unlike re-grouping it also updates the
-      // frozen default grouping so the new emoji writes back to the class.
+      // Cosmetic, not membership — sync the emoji into defaultGrouping so it
+      // writes back. (Membership itself is recomputed live at commit time via
+      // writebackGrouping, so moveStudent doesn't need to touch it here.)
       return {
         ...s,
         groups: s.groups.map((g) => (g.id === a.gid ? { ...g, emoji: a.emoji } : g)),
@@ -410,6 +411,19 @@ export function clearCommitBackup(clientSessionId: string, store: KVStore | null
 // ---- commit ---------------------------------------------------------------
 
 /** Assemble the one-shot commit payload from the finished local session. */
+/**
+ * 默认分组回写（§7.2）= 下课时的最终分组，让课中调组（moveStudent）持久化、下次生效。
+ * 组的身份/名称/emoji/顺序沿用 s.defaultGrouping（它已跟踪改名/换 emoji/删组）；
+ * 成员从当前 s.students[].g 现算 —— 到课与缺席学生都靠 g 字段保住座位，
+ * 缺席学生若未被调组仍留原组（沿用旧行为），任何课中调组都会被带上。
+ */
+function writebackGrouping(s: ClassroomSession): DefaultGroup[] {
+  return s.defaultGrouping.map((g) => ({
+    ...g,
+    memberIds: s.students.filter((st) => st.g === g.clientId).map((st) => st.id),
+  }));
+}
+
 export function buildCommitPayload(s: ClassroomSession, endedAt: string): CommitPayload {
   const n = Number(s.lessonNumber);
   const lessonNumber = s.lessonNumber && Number.isFinite(n) ? n : null;
@@ -447,7 +461,7 @@ export function buildCommitPayload(s: ClassroomSession, endedAt: string): Commit
     plannedDurationMin: s.plannedDurationMin,
     startedAt: s.startedAt,
     endedAt,
-    defaultGrouping: { groups: s.defaultGrouping },
+    defaultGrouping: { groups: writebackGrouping(s) },
     sessionGroups,
     memberships,
     events,

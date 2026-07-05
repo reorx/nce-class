@@ -525,6 +525,18 @@ describe('buildCommitPayload', () => {
     expect(p.checks).toHaveLength(2);
   });
 
+  it('writes back the END-of-class grouping: in-class 调组 persists to the default', () => {
+    let s = boot();
+    // 小明(s1) 从 g1 调到 g2；丽丽(s5) 从 g2 调到 g1；缺席的小刚(s3) 仍留在 g1
+    s = reducer(s, { type: 'moveStudent', sid: 's1', gid: 'g2' });
+    s = reducer(s, { type: 'moveStudent', sid: 's5', gid: 'g1' });
+    const groups = buildCommitPayload(s, '2026-07-02 20:58:00').defaultGrouping.groups;
+    const g1 = groups.find((g) => g.clientId === 'g1')!;
+    const g2 = groups.find((g) => g.clientId === 'g2')!;
+    expect(g1.memberIds.sort()).toEqual(['s2', 's3', 's5']); // 小红 + 缺席小刚 + 调入的丽丽
+    expect(g2.memberIds.sort()).toEqual(['s1']); // 只剩调入的小明
+  });
+
   it('omits homework checks for the default「没交」— including students moved back to it', () => {
     let s = boot();
     s = reducer(s, { type: 'setHomework', sid: 's1', v: '完成', at: '2026-07-02 19:05:00' });
