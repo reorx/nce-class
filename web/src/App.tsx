@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { ToastProvider } from './components/Toast';
 import { api, type Me } from './lib/api';
+import { ClassAttendance } from './pages/ClassAttendance';
 import { ClassDetail } from './pages/ClassDetail';
 import { ClassList } from './pages/ClassList';
 import { Classroom } from './pages/Classroom';
@@ -56,6 +57,7 @@ export function App() {
         <Route path="/classes/:id" element={guard(<ClassDetail me={me} />)} />
         <Route path="/classes/:id/students/:sid" element={guard(<StudentProfile me={me} />)} />
         <Route path="/classes/:id/sessions/:sid" element={guard(<SessionDetail me={me} />)} />
+        <Route path="/classes/:id/attendance" element={guard(<ClassAttendance />)} />
         <Route path="/classes/:id/setup" element={guard(<Setup />)} />
         <Route path="/classes/:id/classroom" element={guard(<Classroom />)} />
         <Route path="/sessions" element={guard(<Sessions me={me} />)} />

@@ -77,7 +77,8 @@ CREATE TABLE IF NOT EXISTS session_groups (
 );
 CREATE TABLE IF NOT EXISTS session_memberships (
   id TEXT PRIMARY KEY, session_id TEXT NOT NULL, student_id TEXT NOT NULL,
-  session_group_id TEXT, attendance TEXT NOT NULL DEFAULT 'present'
+  session_group_id TEXT, attendance TEXT NOT NULL DEFAULT 'present',
+  made_up INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS score_events (
   id TEXT PRIMARY KEY, session_id TEXT NOT NULL, target_type TEXT NOT NULL,

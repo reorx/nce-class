@@ -726,6 +726,124 @@ describe('student growth profile', () => {
   });
 });
 
+describe('class attendance (考勤)', () => {
+  /** Second ended session: s1/s3 present, s2 absent; s4 has NO membership row (未入班). */
+  const addSession2 = () => {
+    sqlite.exec(`
+      INSERT INTO class_sessions (id, class_id, teacher_id, date, lesson_number, lesson_title, status, planned_duration_min, started_at, ended_at)
+      VALUES ('sess2','c1','t-wangli','2026-07-03',8,'The best and the worst','ended',120,'2026-07-03 19:00:00','2026-07-03 21:00:00');
+      INSERT INTO session_groups (id, session_id, name, emoji, order_index)
+      VALUES ('sg3','sess2','第1组','🦁',0),('sg4','sess2','第2组','🐯',1);
+      INSERT INTO session_memberships (id, session_id, student_id, session_group_id, attendance)
+      VALUES ('sm2-s1','sess2','s1','sg3','present'),('sm2-s2','sess2','s2',NULL,'absent'),('sm2-s3','sess2','s3','sg4','present');
+    `);
+  };
+
+  it('blocks unauthenticated access with 401', async () => {
+    expect((await request(app).get('/api/classes/c1/attendance')).status).toBe(401);
+    expect((await request(app).put('/api/sessions/sess1/attendance/s1').send({ status: 'absent' })).status).toBe(401);
+  });
+
+  it('returns ended sessions oldest→newest, the roster, and the record matrix', async () => {
+    addSession2();
+    sqlite.exec(`
+      INSERT INTO class_sessions (id, class_id, teacher_id, date, status, planned_duration_min)
+      VALUES ('sess-live','c1','t-wangli','2026-07-04','ongoing',120);
+    `);
+    const { agent } = await login();
+    const res = await agent.get('/api/classes/c1/attendance');
+    expect(res.status).toBe(200);
+    const a = res.body;
+    expect(a.classId).toBe('c1');
+    expect(a.className).toBe('三年级A班');
+    // ongoing session excluded; ended ones oldest first
+    expect(a.sessions.map((s: any) => s.id)).toEqual(['sess1', 'sess2']);
+    expect(a.sessions[0]).toMatchObject({ date: '2026-06-26', lessonNumber: 7, lessonTitle: 'Too late' });
+    expect(a.students.map((s: any) => s.id)).toEqual(['s1', 's2', 's3', 's4']);
+    expect(a.students[0]).toMatchObject({ name: '小明', status: 'active' });
+    const rec = (sid: string, stid: string) => a.records.find((r: any) => r.sessionId === sid && r.studentId === stid);
+    expect(rec('sess1', 's4')).toMatchObject({ status: 'absent', madeUp: false });
+    expect(rec('sess1', 's1')).toMatchObject({ status: 'present', madeUp: false });
+    expect(rec('sess2', 's4')).toBeUndefined(); // no membership row → 未入班 cell
+  });
+
+  it('excludes archived students but keeps suspended ones', async () => {
+    const { agent } = await login();
+    await agent.put('/api/students/s2/status').send({ status: 'suspended' });
+    await agent.put('/api/students/s3/status').send({ status: 'archived' });
+    const a = (await agent.get('/api/classes/c1/attendance')).body;
+    expect(a.students.map((s: any) => [s.id, s.status])).toEqual([
+      ['s1', 'active'],
+      ['s2', 'suspended'],
+      ['s4', 'active'],
+    ]);
+  });
+
+  it("404s for another org's class", async () => {
+    const { agent } = await login();
+    expect((await agent.get('/api/classes/c-out/attendance')).status).toBe(404);
+    const out = await login('waiguo');
+    expect((await out.agent.get('/api/classes/c1/attendance')).status).toBe(404);
+  });
+
+  it('corrects a record to 请假 with makeup and reflects it in the matrix', async () => {
+    const { agent } = await login();
+    const res = await agent.put('/api/sessions/sess1/attendance/s4').send({ status: 'leave', madeUp: true });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ sessionId: 'sess1', studentId: 's4', status: 'leave', madeUp: true });
+    const a = (await agent.get('/api/classes/c1/attendance')).body;
+    const r = a.records.find((x: any) => x.sessionId === 'sess1' && x.studentId === 's4');
+    expect(r).toMatchObject({ status: 'leave', madeUp: true });
+  });
+
+  it('switching back to 到勤 clears the makeup flag', async () => {
+    const { agent } = await login();
+    await agent.put('/api/sessions/sess1/attendance/s4').send({ status: 'absent', madeUp: true });
+    const res = await agent.put('/api/sessions/sess1/attendance/s4').send({ status: 'present', madeUp: true });
+    expect(res.body).toMatchObject({ status: 'present', madeUp: false });
+    const row = sqlite.prepare(`SELECT made_up FROM session_memberships WHERE id='sm-s4'`).get() as any;
+    expect(row.made_up).toBe(0);
+  });
+
+  it('keeps the group snapshot intact when toggling status', async () => {
+    const { agent } = await login();
+    await agent.put('/api/sessions/sess1/attendance/s1').send({ status: 'absent' });
+    await agent.put('/api/sessions/sess1/attendance/s1').send({ status: 'present' });
+    const row = sqlite
+      .prepare(`SELECT session_group_id, attendance FROM session_memberships WHERE id='sm-s1'`)
+      .get() as any;
+    expect(row).toEqual({ session_group_id: 'sg1', attendance: 'present' });
+  });
+
+  it('counts 请假 as not present in the recap attendance split', async () => {
+    const { agent } = await login();
+    await agent.put('/api/sessions/sess1/attendance/s1').send({ status: 'leave' });
+    const recap = (await agent.get('/api/sessions/sess1/recap')).body;
+    expect(recap.attendancePresent).toBe(2);
+    expect(recap.attendanceTotal).toBe(4);
+  });
+
+  it('validates the status value (400)', async () => {
+    const { agent } = await login();
+    expect((await agent.put('/api/sessions/sess1/attendance/s1').send({ status: 'late' })).status).toBe(400);
+    expect((await agent.put('/api/sessions/sess1/attendance/s1').send({})).status).toBe(400);
+  });
+
+  it('404s when the student has no membership row in that session (未入班 cells stay locked)', async () => {
+    addSession2();
+    const { agent } = await login();
+    // s4 never entered sess2's snapshot
+    expect((await agent.put('/api/sessions/sess2/attendance/s4').send({ status: 'present' })).status).toBe(404);
+  });
+
+  it('404s for cross-org sessions and unknown ids', async () => {
+    const out = await login('waiguo');
+    expect((await out.agent.put('/api/sessions/sess1/attendance/s1').send({ status: 'present' })).status).toBe(404);
+    const { agent } = await login();
+    expect((await agent.put('/api/sessions/nope/attendance/s1').send({ status: 'present' })).status).toBe(404);
+  });
+});
+
 describe('session deletion', () => {
   const childCount = (table: string, sid = 'sess1') =>
     (sqlite.prepare(`SELECT COUNT(*) c FROM ${table} WHERE session_id=?`).get(sid) as any).c;

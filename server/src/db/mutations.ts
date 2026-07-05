@@ -250,6 +250,20 @@ export function setSessionHomework(
 }
 
 /**
+ * 考勤 correction: rewrite one membership's attendance status (+补课 flag).
+ * The group snapshot is left untouched — flipping present↔absent after the
+ * fact must not lose where the student sat that day.
+ */
+export function setAttendance(
+  sqlite: DB,
+  p: { sessionId: string; studentId: string; status: string; madeUp: boolean },
+): void {
+  sqlite
+    .prepare(`UPDATE session_memberships SET attendance=?, made_up=? WHERE session_id=? AND student_id=?`)
+    .run(p.status, p.madeUp ? 1 : 0, p.sessionId, p.studentId);
+}
+
+/**
  * Set a student's status (active 在读 / suspended 停课 / archived 已归档).
  * Leaving active also removes them from the default grouping (decision 3);
  * coming back does NOT restore it — they reappear ungrouped.

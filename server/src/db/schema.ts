@@ -205,7 +205,12 @@ export const sessionMemberships = sqliteTable('session_memberships', {
     .notNull()
     .references(() => students.id),
   sessionGroupId: text('session_group_id').references(() => sessionGroups.id),
-  attendance: text('attendance').notNull().default('present'), // present | absent
+  // present | absent | leave — commits only ever write present/absent; leave
+  // (请假) enters via post-hoc 考勤 corrections. Non-present ⇒ 未到堂 everywhere.
+  attendance: text('attendance').notNull().default('present'),
+  // 补课 flag (考勤 page): counts toward attendance-rate stats only, never
+  // rewrites the day's recap. Meaningful only with absent/leave.
+  madeUp: integer('made_up').notNull().default(0),
 });
 
 // ---- ScoreEvent — ledger; single source of truth for all derived scores ----

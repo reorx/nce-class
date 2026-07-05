@@ -320,6 +320,25 @@ function ClassCard({ c, ci }: { c: ClassListItem; ci: number }) {
           {liveSec != null ? '返回课堂' : '开始上课'}
         </Link>
         <Link
+          to={`/classes/${c.id}/attendance`}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '0 15px',
+            height: 38,
+            background: '#fff',
+            color: '#3c4451',
+            border: '1px solid #e2e5ea',
+            borderRadius: 9,
+            textDecoration: 'none',
+            fontWeight: 600,
+            fontSize: 13.5,
+          }}
+        >
+          考勤
+        </Link>
+        <Link
           to={`/classes/${c.id}`}
           style={{
             display: 'flex',

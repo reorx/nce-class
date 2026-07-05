@@ -41,6 +41,11 @@ export function migrate(sqlite: DB): void {
   if (!sessionCols.some((c) => c.name === 'review_lesson')) {
     sqlite.exec(`ALTER TABLE class_sessions ADD COLUMN review_lesson INTEGER`);
   }
+  // 考勤 corrections: 补课 flag on session memberships.
+  const memberCols = sqlite.prepare(`PRAGMA table_info(session_memberships)`).all() as { name: string }[];
+  if (!memberCols.some((c) => c.name === 'made_up')) {
+    sqlite.exec(`ALTER TABLE session_memberships ADD COLUMN made_up INTEGER NOT NULL DEFAULT 0`);
+  }
 }
 
 /** Provision a real account on a clean database: org (by name, created if missing) + teacher + password credential. */

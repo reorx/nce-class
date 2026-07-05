@@ -28,6 +28,7 @@ import {
   dismissJoinRequest,
   linkJoinRequest,
   saveGrouping,
+  setAttendance,
   setClassNotes,
   setHomeworkTemplate,
   setSessionHomework,
@@ -135,6 +136,20 @@ const q = {
     `SELECT * FROM class_sessions WHERE class_id=? AND status='ended' ORDER BY date DESC, lesson_number DESC`,
   ),
   membershipOfStudent: sqlite.prepare(`SELECT * FROM session_memberships WHERE session_id=? AND student_id=?`),
+  // 考勤 page: ended sessions oldest→newest (columns), non-archived roster
+  // (rows), and every membership record of the class in one sweep.
+  attendanceSessionsOfClass: sqlite.prepare(
+    `SELECT id, date, started_at, lesson_number, lesson_title FROM class_sessions
+     WHERE class_id=? AND status='ended' ORDER BY date, started_at, lesson_number`,
+  ),
+  attendanceStudentsOfClass: sqlite.prepare(
+    `SELECT id, name, status FROM students WHERE class_id=? AND status != 'archived' ORDER BY created_at, id`,
+  ),
+  attendanceRecordsOfClass: sqlite.prepare(
+    `SELECT sm.session_id sid, sm.student_id stid, sm.attendance, sm.made_up
+     FROM session_memberships sm JOIN class_sessions cs ON cs.id = sm.session_id
+     WHERE cs.class_id=? AND cs.status='ended'`,
+  ),
   defaultGroupOfStudent: sqlite.prepare(
     `SELECT g.name, g.emoji FROM class_group_memberships m JOIN class_groups g ON g.id=m.class_group_id
      WHERE m.student_id=?`,
@@ -1242,6 +1257,47 @@ export function createApp() {
     }
     setSessionHomework(sqlite, s.id, { content, reviewBook, reviewLesson });
     res.json(sessionDetailPayload(q.sessionById.get(s.id) as any, c));
+  });
+
+  // ---- 考勤 (attendance history grid: sessions × students) ----
+  app.get('/api/classes/:id/attendance', (req, res) => {
+    const c = classInOrg(req.params.id, res.locals.teacher.org_id);
+    if (!c) return res.status(404).json({ error: 'class not found' });
+    const sessions = (q.attendanceSessionsOfClass.all(c.id) as any[]).map((s) => ({
+      id: s.id,
+      date: s.date,
+      startedAt: s.started_at,
+      lessonNumber: s.lesson_number,
+      lessonTitle: s.lesson_title,
+    }));
+    const students = (q.attendanceStudentsOfClass.all(c.id) as any[]).map((s) => ({
+      id: s.id,
+      name: s.name,
+      status: s.status,
+    }));
+    const records = (q.attendanceRecordsOfClass.all(c.id) as any[]).map((r) => ({
+      sessionId: r.sid,
+      studentId: r.stid,
+      status: r.attendance,
+      madeUp: r.made_up === 1,
+    }));
+    res.json({ classId: c.id, className: c.name, sessions, students, records });
+  });
+
+  // ---- 考勤 correction (status + 补课 flag; cells without a membership row stay locked) ----
+  app.put('/api/sessions/:id/attendance/:studentId', (req, res) => {
+    const teacher = res.locals.teacher;
+    const s = q.sessionById.get(req.params.id) as any;
+    if (!s || !classInOrg(s.class_id, teacher.org_id)) return res.status(404).json({ error: 'session not found' });
+    const status = str(req.body?.status);
+    if (status !== 'present' && status !== 'absent' && status !== 'leave')
+      return res.status(400).json({ error: 'status 必须是 present / absent / leave' });
+    const mem = q.membershipOfStudent.get(s.id, req.params.studentId) as any;
+    if (!mem) return res.status(404).json({ error: 'attendance record not found' });
+    // 补课 only makes sense for a missed class; going back to present clears it.
+    const madeUp = status !== 'present' && req.body?.madeUp === true;
+    setAttendance(sqlite, { sessionId: s.id, studentId: req.params.studentId, status, madeUp });
+    res.json({ sessionId: s.id, studentId: req.params.studentId, status, madeUp });
   });
 
   // ---- recap (read) ----

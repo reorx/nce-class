@@ -269,6 +269,38 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
 
 const get = <T>(url: string) => req<T>('GET', url);
 
+// ---- 考勤 (attendance history grid) ----
+export type AttendanceStatus = 'present' | 'absent' | 'leave';
+
+export interface AttendanceSession {
+  id: string;
+  date: string; // YYYY-MM-DD
+  startedAt: string | null;
+  lessonNumber: number | null;
+  lessonTitle: string | null;
+}
+
+export interface AttendanceStudent {
+  id: string;
+  name: string;
+  status: StudentStatus;
+}
+
+export interface AttendanceRecord {
+  sessionId: string;
+  studentId: string;
+  status: AttendanceStatus;
+  madeUp: boolean;
+}
+
+export interface ClassAttendance {
+  classId: string;
+  className: string;
+  sessions: AttendanceSession[];
+  students: AttendanceStudent[];
+  records: AttendanceRecord[];
+}
+
 export const api = {
   me: () => get<Me>('/api/me'),
   login: (username: string, password: string) => req<Me>('POST', '/api/auth/login', { username, password }),
@@ -307,4 +339,7 @@ export const api = {
   getJoinRequests: (classId: string) => get<JoinRequestItem[]>(`/api/classes/${classId}/join-requests`),
   commitSession: (classId: string, payload: CommitPayload) =>
     req<CommitResult>('POST', `/api/classes/${classId}/sessions`, payload),
+  classAttendance: (classId: string) => get<ClassAttendance>(`/api/classes/${classId}/attendance`),
+  updateAttendance: (sessionId: string, studentId: string, p: { status: AttendanceStatus; madeUp?: boolean }) =>
+    req<AttendanceRecord>('PUT', `/api/sessions/${sessionId}/attendance/${studentId}`, p),
 };
