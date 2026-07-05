@@ -116,11 +116,37 @@ export function ClassDetail({ me }: { me: Me | null }) {
         )}
         {d && tab === 'invite' && <InviteTab d={d} />}
         {d && tab === 'sessions' && (
-          <SessionsTable
-            sessions={d.sessions.map((s) => ({ ...s, classId: d.id }))}
-            reload={reload}
-            footnote="点击课名进入课堂详情（作业布置 / Recap）"
-          />
+          <div>
+            <div style={{ display: 'flex', marginBottom: 14 }}>
+              <Link
+                to={`/classes/${id}/setup?backfill=1`}
+                title="补充一节过去的课（不实时计时）"
+                style={{
+                  marginLeft: 'auto',
+                  height: 36,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '0 15px',
+                  background: GREEN,
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: 9,
+                  textDecoration: 'none',
+                  fontWeight: 600,
+                  fontSize: 13.5,
+                  boxShadow: '0 2px 8px rgba(47,180,87,.24)',
+                }}
+              >
+                <span style={{ fontSize: 15, lineHeight: 1 }}>📝</span>手动记录课堂
+              </Link>
+            </div>
+            <SessionsTable
+              sessions={d.sessions.map((s) => ({ ...s, classId: d.id }))}
+              reload={reload}
+              footnote="点击课名进入课堂详情（作业布置 / Recap）"
+            />
+          </div>
         )}
       </div>
     </div>

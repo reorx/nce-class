@@ -1233,6 +1233,34 @@ describe('end-class commit', () => {
     expect(c.c).toBe(0);
   });
 
+  // 手动记录课堂 (backfill): the web commits a PAST startedAt + endedAt=startedAt+时长,
+  // while events recorded live-today carry a createdAt well outside that window.
+  // This locks in that the commit path needs no server change — no "not in the
+  // past" guard, no event-createdAt bounds check — and that date derives from the
+  // backfilled startedAt. If this fails, someone tightened buildCommitInput.
+  it('手动记录课堂: a past-dated commit lands with a derived past date, events outside the window accepted', async () => {
+    const { agent } = await login();
+    const res = await agent.post('/api/classes/c1/sessions').send(
+      body({
+        clientSessionId: 'cs-backfill',
+        startedAt: '2025-03-10 14:00:00',
+        endedAt: '2025-03-10 16:00:00', // = startedAt + 120 分钟, as the 补录 flow computes
+        events: [
+          // recorded 补录-today: createdAt is long after endedAt — must NOT be rejected
+          { targetType: 'student', targetId: 's1', clientGroupId: 'g1', delta: 1, createdAt: '2026-07-05 10:00:00' },
+          { targetType: 'group', targetId: 'g1', clientGroupId: 'g1', delta: 1, createdAt: '2026-07-05 10:00:01' },
+        ],
+        checks: [],
+      }),
+    );
+    expect(res.status).toBe(201);
+    const row = sqlite.prepare(`SELECT * FROM class_sessions WHERE client_session_id='cs-backfill'`).get() as any;
+    expect(row.date).toBe('2025-03-10'); // derived from the backfilled startedAt, not "today"
+    const detail = (await agent.get('/api/classes/c1')).body;
+    const s = detail.sessions.find((x: any) => x.id === row.id);
+    expect(s.actualDurationMin).toBe(120); // endedAt − startedAt survives verbatim
+  });
+
   // ---- schema 向后兼容 (protobuf-style; guards buildCommitInput's contract) --
   // 课堂进行中服务端可能发新版：旧页面攒了一整节课的数据，提交的是旧 shape 的
   // payload。这两条用例守住演进纪律——旧 payload 永远能入库、未知字段永远被忽略。

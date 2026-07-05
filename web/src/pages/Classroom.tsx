@@ -12,17 +12,20 @@ import {
   buildCommitPayload,
   clearCommitBackup,
   clearSession,
+  endSql,
   loadSession,
   newClientSessionId,
   nowSql,
   reducer,
   saveCommitBackup,
   saveSession,
+  sqlFromParts,
   startTimeOf,
   type CAction,
   type ClassroomSession,
   type ClassroomStudent,
 } from '../lib/classroomStore';
+import { weekdayCN } from '../lib/attendance';
 import { buildLogLines, type LogLine } from '../lib/classroomLog';
 import { allSelected, dragTargets, someSelected, toggleAll, toggleOne } from '../lib/multiSelect';
 import { lessonLabel as fmtLessonLabel } from '../lib/lesson';
@@ -159,10 +162,13 @@ export function Classroom() {
   }, []);
 
   // 1s tick drives the countdown off the persisted startedAt (survives refresh).
+  // 补录课堂 (backfill) isn't happening now — no ticking; the header shows a
+  // static 补录 badge instead of a countdown, so skip the interval entirely.
   useEffect(() => {
+    if (session?.backfill) return;
     const t = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(t);
-  }, []);
+  }, [session?.backfill]);
 
   const dispatch = (a: CAction) => setSession((s) => (s ? reducer(s, a) : s));
 
@@ -207,9 +213,12 @@ export function Classroom() {
   };
 
   // ---- countdown / overtime (§7.3) ----------------------------------------
+  // 补录课堂：startedAt 在过去，实时倒计时会算出大幅「超时」——不 live 计时，
+  // 右上角改渲染静态「补录」标签（见 header），这里的派生值 backfill 时不使用。
+  const backfill = !!session.backfill;
   const elapsedSec = Math.max(0, Math.floor((nowMs - parseLocal(session.startedAt)) / 1000));
   const remainingSec = session.plannedDurationMin * 60 - elapsedSec;
-  const overtime = remainingSec < 0;
+  const overtime = !backfill && remainingSec < 0;
   const timerStr = fmtTimer(Math.abs(remainingSec));
 
   const className = session.className ?? '班级';
@@ -220,7 +229,10 @@ export function Classroom() {
   const confirmEnd = () => {
     if (submitting) return;
     setSubmitting(true);
-    const payload = buildCommitPayload(session, nowSql());
+    // Live class ⇒ endedAt is the wall clock at 结束; 补录课堂 ⇒ a fixed
+    // startedAt + 时长 (the class isn't happening now, so "now" is meaningless).
+    const endedAt = session.backfill ? endSql(session.startedAt, session.plannedDurationMin) : nowSql();
+    const payload = buildCommitPayload(session, endedAt);
     // Copy to the collision-free backup slot BEFORE the POST: a failed or
     // interrupted submit must never lose the lesson, even if a new session for
     // this class later overwrites nce.classroom.<classId>. Cleared only after
@@ -349,22 +361,46 @@ export function Classroom() {
             日志
           </button>
           <PrevLessonButton classId={id} />
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              color: overtime ? '#ff5a5f' : '#a7b0bb',
-              fontWeight: 800,
-              fontSize: 21,
-            }}
-          >
-            <span style={{ fontSize: 18 }}>{overtime ? '⏰' : '⏱'}</span>
-            <span style={{ fontFamily: NUM, letterSpacing: '.5px', fontVariantNumeric: 'tabular-nums' }}>
-              {overtime ? `+${timerStr}` : timerStr}
-            </span>
-            {overtime && <span style={{ fontSize: 13, fontWeight: 800, opacity: 0.9 }}>超时</span>}
-          </div>
+          {backfill ? (
+            <div
+              title="补录课堂：补充一节过去的课，不实时计时"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '7px 15px',
+                borderRadius: 12,
+                background: '#fff6e0',
+                color: '#b9791a',
+                fontWeight: 800,
+                fontSize: 16,
+              }}
+            >
+              <span style={{ fontSize: 17 }}>📝</span>
+              补录课堂
+              <span style={{ color: '#d9b877' }}>·</span>
+              <span style={{ fontFamily: NUM, fontVariantNumeric: 'tabular-nums' }}>
+                {dateLabelCn(session.startedAt)}
+              </span>
+            </div>
+          ) : (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                color: overtime ? '#ff5a5f' : '#a7b0bb',
+                fontWeight: 800,
+                fontSize: 21,
+              }}
+            >
+              <span style={{ fontSize: 18 }}>{overtime ? '⏰' : '⏱'}</span>
+              <span style={{ fontFamily: NUM, letterSpacing: '.5px', fontVariantNumeric: 'tabular-nums' }}>
+                {overtime ? `+${timerStr}` : timerStr}
+              </span>
+              {overtime && <span style={{ fontSize: 13, fontWeight: 800, opacity: 0.9 }}>超时</span>}
+            </div>
+          )}
         </div>
       </div>
 
@@ -790,6 +826,7 @@ export function Classroom() {
           lessonTitle={session.lessonTitle ?? ''}
           durationMin={session.plannedDurationMin}
           startedAt={session.startedAt}
+          backfill={backfill}
           teacherId={session.teacherId ?? meId}
           teacherName={session.teacherName ?? ''}
           teachers={teachers}
@@ -807,6 +844,8 @@ export function Classroom() {
           className={className}
           lesson={lessonLabel}
           startedAt={session.startedAt}
+          backfill={backfill}
+          endedAt={backfill ? endSql(session.startedAt, session.plannedDurationMin) : undefined}
           students={students}
           submitting={submitting}
           onClose={() => !submitting && setShowEnd(false)}
@@ -1303,7 +1342,7 @@ function ClassInfoView({ classId, session }: { classId: string; session: Classro
   const lessonFacts: [string, string][] = [
     ['课次', fmtLessonLabel(session.lessonNumber, session.lessonTitle)],
     ['主讲老师', session.teacherName || '—'],
-    ['开始时间', startedHm],
+    ['开始时间', session.backfill ? `${dateLabelCn(session.startedAt)} ${startedHm}` : startedHm],
     ['计划时长', `${session.plannedDurationMin} 分钟`],
   ];
 
@@ -2270,6 +2309,7 @@ function LessonInfoDialog({
   lessonTitle,
   durationMin,
   startedAt,
+  backfill,
   teacherId,
   teacherName,
   teachers,
@@ -2280,6 +2320,7 @@ function LessonInfoDialog({
   lessonTitle: string;
   durationMin: number;
   startedAt: string;
+  backfill: boolean;
   teacherId: string;
   teacherName: string;
   teachers: TeacherItem[];
@@ -2296,16 +2337,20 @@ function LessonInfoDialog({
   const [no, setNo] = useState(lessonNumber);
   const [title, setTitle] = useState(lessonTitle);
   const [duration, setDuration] = useState(String(durationMin));
+  // 补录课堂可改整个上课日期；实时课只改时分（applyStartTime 保留日期）
+  const [dateStr, setDateStr] = useState(() =>
+    /^\d{4}-\d{2}-\d{2}/.test(startedAt) ? startedAt.slice(0, 10) : nowSql().slice(0, 10),
+  );
   const [start, setStart] = useState(() => startTimeOf(startedAt));
   const [startErr, setStartErr] = useState('');
   const [tid, setTid] = useState(teacherId);
   const save = () => {
-    // undefined keeps the session's current 开始时间 (cleared / invalid input)
-    const nextStart = applyStartTime(startedAt, start) ?? undefined;
+    // 补录：从日期 + 时分重组 startedAt；实时课只换时分（undefined 保留原开始时间）
+    const nextStart = backfill ? sqlFromParts(dateStr, start) : (applyStartTime(startedAt, start) ?? undefined);
     // 'YYYY-MM-DD HH:mm:ss' compares lexicographically — a future start would
     // freeze the countdown at full duration and commit endedAt < startedAt
     if (nextStart && nextStart > nowSql()) {
-      setStartErr('开始时间不能晚于当前时间');
+      setStartErr(backfill ? '上课时间不能设在未来' : '开始时间不能晚于当前时间');
       return;
     }
     onSave({
@@ -2371,6 +2416,25 @@ function LessonInfoDialog({
           />
         </InfoField>
 
+        {backfill && (
+          <>
+            <label style={fieldLabel}>上课日期</label>
+            <InfoField>
+              <span style={{ fontSize: 20 }}>📅</span>
+              <input
+                type="date"
+                value={dateStr}
+                onChange={(e) => {
+                  setDateStr(e.target.value);
+                  setStartErr('');
+                }}
+                onKeyDown={onKey}
+                style={{ flex: 1, minWidth: 0, width: '100%', ...inputBase, fontVariantNumeric: 'tabular-nums' }}
+              />
+            </InfoField>
+          </>
+        )}
+
         <label style={fieldLabel}>开始时间</label>
         <InfoField>
           <span style={{ fontSize: 20 }}>🕒</span>
@@ -2403,7 +2467,7 @@ function LessonInfoDialog({
           <span style={{ fontWeight: 800, fontSize: 16, color: '#a7b0bb' }}>分钟</span>
         </InfoField>
         <div style={{ fontSize: 13, fontWeight: 700, color: '#a7b0bb', marginTop: 8 }}>
-          改开始时间或时长会重新计算右上角倒计时
+          {backfill ? '补录课堂：结束时间 = 上课日期时间 + 时长' : '改开始时间或时长会重新计算右上角倒计时'}
         </div>
 
         <label style={{ ...fieldLabel, marginTop: 18 }}>主讲老师</label>
@@ -2559,6 +2623,8 @@ function EndConfirm({
   className,
   lesson,
   startedAt,
+  backfill,
+  endedAt,
   students,
   submitting,
   onClose,
@@ -2568,6 +2634,8 @@ function EndConfirm({
   className: string;
   lesson: string;
   startedAt: string;
+  backfill: boolean;
+  endedAt?: string;
   students: ClassroomStudent[];
   submitting: boolean;
   onClose: () => void;
@@ -2597,6 +2665,27 @@ function EndConfirm({
           。请确认以下信息无误：
         </div>
 
+        {backfill && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '10px 14px',
+              borderRadius: 12,
+              background: '#fff6e0',
+              color: '#b9791a',
+              fontWeight: 700,
+              fontSize: 13.5,
+              lineHeight: 1.5,
+              marginBottom: 14,
+            }}
+          >
+            <span style={{ fontSize: 16 }}>📝</span>
+            这是一节补录课堂 · 结束时间按「开始 + 时长」记录
+          </div>
+        )}
+
         <div
           style={{
             padding: '8px 18px',
@@ -2608,6 +2697,7 @@ function EndConfirm({
           {row('班级', className)}
           {row('课次', lesson)}
           {row('开始时间', startedAt.slice(0, 16))}
+          {backfill && endedAt && row('结束时间', endedAt.slice(0, 16))}
           {row(
             '作业检查',
             unchecked.length === 0 ? (
@@ -2889,4 +2979,13 @@ function fmtTimer(elapsed: number): string {
   const mm = String(Math.floor((elapsed % 3600) / 60)).padStart(2, '0');
   const ss = String(elapsed % 60).padStart(2, '0');
   return `${hh}:${mm}:${ss}`;
+}
+
+/** '2026-07-03 14:00:00' → '7月3日 周四' — the 补录 header badge's date label
+ *  (weekday via lib/attendance's single source of truth). */
+function dateLabelCn(startedAt: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(startedAt);
+  if (!m) return startedAt.slice(0, 10);
+  const [, , mo, d] = m;
+  return `${Number(mo)}月${Number(d)}日 ${weekdayCN(startedAt.slice(0, 10))}`;
 }

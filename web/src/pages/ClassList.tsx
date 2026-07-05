@@ -19,19 +19,23 @@ function fmtTimer(elapsed: number): string {
   return `${hh}:${mm}:${ss}`;
 }
 
-/** Seconds since the in-progress local classroom started, or null when none. */
-function useLiveClassroom(classId: string): number | null {
-  const startMs = useMemo(() => {
+/** The in-progress local classroom for a class, or null when none. `sec` =
+ *  seconds since it started (drives the live banner). `backfill` marks a 补录
+ *  session — it isn't happening now, so the card shows a static 补录 chip
+ *  instead of a ticking timer (a past startedAt would tick to an absurd value). */
+function useLiveClassroom(classId: string): { sec: number; backfill: boolean } | null {
+  const meta = useMemo(() => {
     const s = loadSession(classId);
-    return s ? parseLocal(s.startedAt) : null;
+    return s ? { startMs: parseLocal(s.startedAt), backfill: !!s.backfill } : null;
   }, [classId]);
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
-    if (startMs == null) return;
+    if (meta == null || meta.backfill) return; // 补录 doesn't tick
     const t = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(t);
-  }, [startMs]);
-  return startMs == null ? null : Math.max(0, Math.floor((nowMs - startMs) / 1000));
+  }, [meta]);
+  if (meta == null) return null;
+  return { sec: Math.max(0, Math.floor((nowMs - meta.startMs) / 1000)), backfill: meta.backfill };
 }
 
 export function ClassList({ me }: { me: Me | null }) {
@@ -159,7 +163,7 @@ export function ClassList({ me }: { me: Me | null }) {
 
 function ClassCard({ c, ci }: { c: ClassListItem; ci: number }) {
   const shown = c.roster.slice(0, 4);
-  const liveSec = useLiveClassroom(c.id);
+  const live = useLiveClassroom(c.id);
   return (
     <div
       style={{
@@ -257,28 +261,46 @@ function ClassCard({ c, ci }: { c: ClassListItem; ci: number }) {
       </div>
 
       <div style={{ marginTop: 15, display: 'flex', flexDirection: 'column', gap: 7 }}>
-        {liveSec != null && (
+        {live != null && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
             <span style={{ color: '#a6adb8', width: 52 }}>本节课</span>
-            <span
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '2px 9px',
-                borderRadius: 7,
-                background: '#fdf3e5',
-                border: '1px solid #f6e0c2',
-                color: '#c05f0a',
-                fontWeight: 600,
-              }}
-            >
-              <span style={{ width: 6, height: 6, borderRadius: '50%', background: ORANGE, flexShrink: 0 }} />
-              课堂进行中
-              <span className="mono" style={{ fontSize: 11.5, fontWeight: 600 }}>
-                {fmtTimer(liveSec)}
+            {live.backfill ? (
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '2px 9px',
+                  borderRadius: 7,
+                  background: '#fff6e0',
+                  border: '1px solid #f6e0c2',
+                  color: '#b9791a',
+                  fontWeight: 600,
+                }}
+              >
+                📝 补录中
               </span>
-            </span>
+            ) : (
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '2px 9px',
+                  borderRadius: 7,
+                  background: '#fdf3e5',
+                  border: '1px solid #f6e0c2',
+                  color: '#c05f0a',
+                  fontWeight: 600,
+                }}
+              >
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: ORANGE, flexShrink: 0 }} />
+                课堂进行中
+                <span className="mono" style={{ fontSize: 11.5, fontWeight: 600 }}>
+                  {fmtTimer(live.sec)}
+                </span>
+              </span>
+            )}
           </div>
         )}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
@@ -297,7 +319,7 @@ function ClassCard({ c, ci }: { c: ClassListItem; ci: number }) {
       <div style={{ height: 1, background: '#eef0f3', margin: '15px 0 13px' }} />
       <div style={{ display: 'flex', gap: 9 }}>
         <Link
-          to={liveSec != null ? `/classes/${c.id}/classroom` : `/classes/${c.id}/setup`}
+          to={live != null ? `/classes/${c.id}/classroom` : `/classes/${c.id}/setup`}
           style={{
             flex: 1,
             display: 'flex',
@@ -305,19 +327,19 @@ function ClassCard({ c, ci }: { c: ClassListItem; ci: number }) {
             justifyContent: 'center',
             gap: 7,
             height: 38,
-            background: liveSec != null ? ORANGE : GREEN,
+            background: live != null ? ORANGE : GREEN,
             color: '#fff',
             borderRadius: 9,
             textDecoration: 'none',
             fontWeight: 600,
             fontSize: 13.5,
-            boxShadow: liveSec != null ? '0 2px 7px rgba(240,134,42,.28)' : '0 2px 7px rgba(47,180,87,.24)',
+            boxShadow: live != null ? '0 2px 7px rgba(240,134,42,.28)' : '0 2px 7px rgba(47,180,87,.24)',
           }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = liveSec != null ? ORANGE_DARK : GREEN_DARK)}
-          onMouseLeave={(e) => (e.currentTarget.style.background = liveSec != null ? ORANGE : GREEN)}
+          onMouseEnter={(e) => (e.currentTarget.style.background = live != null ? ORANGE_DARK : GREEN_DARK)}
+          onMouseLeave={(e) => (e.currentTarget.style.background = live != null ? ORANGE : GREEN)}
         >
-          <span style={{ fontSize: 9 }}>{liveSec != null ? '↻' : '▶'}</span>
-          {liveSec != null ? '返回课堂' : '开始上课'}
+          <span style={{ fontSize: 9 }}>{live != null ? '↻' : '▶'}</span>
+          {live != null ? (live.backfill ? '返回补录' : '返回课堂') : '开始上课'}
         </Link>
         <Link
           to={`/classes/${c.id}/attendance`}

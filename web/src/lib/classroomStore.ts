@@ -51,6 +51,10 @@ export interface ClassroomSession {
   teacherName?: string;
   plannedDurationMin: number;
   startedAt: string; // real wall clock at 开始课堂, 'YYYY-MM-DD HH:mm:ss'
+  // 补录课堂：老师事后补一节过去的课。startedAt 是老师选的过去日期/时间，课堂不
+  // live 计时（右上角静态「补录」标签），结束时 endedAt = startedAt + 时长（endSql）
+  // 而非 nowSql()。可选字段 → 老存档/旧代码读成普通实时课（persisted-shape compat）。
+  backfill?: boolean;
   defaultGrouping: DefaultGroup[];
   groups: SGroup[];
   students: ClassroomStudent[];
@@ -64,7 +68,7 @@ export interface ClassroomSession {
 /** Boot a fresh, empty-ledger ClassroomSession from a 课前配置 handoff config. */
 export function buildClassroomSession(
   cfg: SessionConfig,
-  meta: { classId: string; clientSessionId: string; startedAt: string },
+  meta: { classId: string; clientSessionId: string; startedAt: string; backfill?: boolean },
 ): ClassroomSession {
   const groups: SGroup[] = cfg.groups.map((g) => ({ id: g.id, name: g.name, emoji: g.emoji }));
   const present: ClassroomStudent[] = cfg.students.map((s) => ({
@@ -107,6 +111,7 @@ export function buildClassroomSession(
     teacherName: cfg.teacherName,
     plannedDurationMin: cfg.durationMin,
     startedAt: meta.startedAt,
+    backfill: meta.backfill || undefined, // omit when false so live sessions stay lean
     defaultGrouping,
     groups,
     students: [...present, ...absent],
@@ -477,6 +482,24 @@ const pad = (n: number) => String(n).padStart(2, '0');
 /** Local wall clock as the naive 'YYYY-MM-DD HH:mm:ss' string the server parses. */
 export function nowSql(d: Date = new Date()): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+/** Compose a naive 'YYYY-MM-DD HH:mm:00' from a date-input ('YYYY-MM-DD') and a
+ *  time-input ('HH:MM') — the 补录 setup form and the classroom info dialog's
+ *  date field. A malformed date falls back to today, a malformed time to 00:00,
+ *  so the result is always a server-parseable timestamp. */
+export function sqlFromParts(date: string, hhmm: string): string {
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : nowSql().slice(0, 10);
+  const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(hhmm);
+  return `${d} ${m ? `${m[1]}:${m[2]}` : '00:00'}:00`;
+}
+
+/** End time of a 补录 (manual backfill) session = 开始 + 时长. Fixed instead of
+ *  the live clock (nowSql), since a backfilled class isn't happening now. */
+export function endSql(startedAt: string, durationMin: number): string {
+  const ms = Date.parse(startedAt.replace(' ', 'T'));
+  if (Number.isNaN(ms)) return nowSql(); // malformed startedAt — last-resort fallback
+  return nowSql(new Date(ms + Math.max(1, durationMin) * 60000));
 }
 
 /** The 'HH:MM' slice of a stored startedAt for the dialog's time input

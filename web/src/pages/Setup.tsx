@@ -1,8 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { GroupEditPopover } from '../components/GroupEditMenu';
 import { api, type ClassDetail, type LastRecap, type TeacherItem } from '../lib/api';
-import { buildClassroomSession, loadSession, newClientSessionId, nowSql, saveSession } from '../lib/classroomStore';
+import {
+  buildClassroomSession,
+  loadSession,
+  newClientSessionId,
+  nowSql,
+  saveSession,
+  sqlFromParts,
+} from '../lib/classroomStore';
 import { GROUP_COLORS } from '../lib/session';
 import {
   addGroup,
@@ -38,12 +45,21 @@ function fmtMonthDay(mmdd: string): string {
 export function Setup() {
   const { id = 'c1' } = useParams();
   const nav = useNavigate();
+  // 补录课堂 (manual backfill): entered via `?backfill=1` from 上课记录. Unlocks a
+  // date + start-time picker; the classroom then runs non-live (frozen timer) and
+  // commits endedAt = startedAt + 时长 instead of the wall clock.
+  const [params] = useSearchParams();
+  const backfill = params.get('backfill') === '1';
 
   const [detail, setDetail] = useState<ClassDetail | null>(null);
   const [state, setState] = useState<SetupState | null>(null);
   const [lessonNo, setLessonNo] = useState('');
   const [lessonTitle, setLessonTitle] = useState('');
   const [durationMin, setDurationMin] = useState('120');
+  // 补录：上课日期 + 开始时间，默认今天/此刻（普通实时课不显示、不使用）。
+  const [dateStr, setDateStr] = useState(() => nowSql().slice(0, 10));
+  const [timeStr, setTimeStr] = useState(() => nowSql().slice(11, 16));
+  const [startErr, setStartErr] = useState('');
   // 主讲老师: all same-org teachers, defaulting to the logged-in one.
   const [teachers, setTeachers] = useState<TeacherItem[]>([]);
   const [teacherId, setTeacherId] = useState('');
@@ -93,6 +109,13 @@ export function Setup() {
   // persist it (offline-first, decision 3) — no backend request until 结束课堂.
   const start = () => {
     if (!state) return;
+    const startedAt = backfill ? sqlFromParts(dateStr, timeStr) : nowSql();
+    // 补录不能落在未来：手滑选错年份/时间会生成一条排在最前的假记录，污染
+    // 上课记录/lastRecap/下一课次建议等按日期排序的视图。与课堂内编辑弹窗同一道校验。
+    if (backfill && startedAt > nowSql()) {
+      setStartErr('上课时间不能设在未来');
+      return;
+    }
     const config = buildSessionConfig(state, {
       lessonNumber: lessonNo.trim(),
       lessonTitle: lessonTitle.trim(),
@@ -104,7 +127,8 @@ export function Setup() {
     const session = buildClassroomSession(config, {
       classId: id,
       clientSessionId: newClientSessionId(),
-      startedAt: nowSql(),
+      startedAt,
+      backfill: backfill || undefined,
     });
     saveSession(session);
     nav(`/classes/${id}/classroom`);
@@ -134,7 +158,26 @@ export function Setup() {
         <span style={{ fontWeight: 700, fontSize: 19, color: '#66756c' }}>
           {detail?.students.filter((s) => s.status === 'active').length ?? 0} 名学生
         </span>
-        <span style={{ marginLeft: 'auto', fontWeight: 700, fontSize: 16, color: '#8a94a0' }}>{TODAY}</span>
+        {backfill ? (
+          <span
+            style={{
+              marginLeft: 'auto',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              fontWeight: 800,
+              fontSize: 15,
+              color: '#b9791a',
+              background: '#fff6e0',
+              padding: '8px 16px',
+              borderRadius: 12,
+            }}
+          >
+            <span style={{ fontSize: 17 }}>📝</span>补录课堂
+          </span>
+        ) : (
+          <span style={{ marginLeft: 'auto', fontWeight: 700, fontSize: 16, color: '#8a94a0' }}>{TODAY}</span>
+        )}
       </div>
 
       {/* body */}
@@ -152,6 +195,18 @@ export function Setup() {
           }}
         >
           <SessionInfoCard
+            backfill={backfill}
+            dateStr={dateStr}
+            timeStr={timeStr}
+            startErr={startErr}
+            onDate={(v) => {
+              setDateStr(v);
+              setStartErr('');
+            }}
+            onTime={(v) => {
+              setTimeStr(v);
+              setStartErr('');
+            }}
             lessonNo={lessonNo}
             lessonTitle={lessonTitle}
             durationMin={durationMin}
@@ -456,6 +511,12 @@ export function Setup() {
 
 // ===== session info card ===================================================
 function SessionInfoCard({
+  backfill,
+  dateStr,
+  timeStr,
+  startErr,
+  onDate,
+  onTime,
   lessonNo,
   lessonTitle,
   durationMin,
@@ -466,6 +527,12 @@ function SessionInfoCard({
   onDuration,
   onTeacher,
 }: {
+  backfill: boolean;
+  dateStr: string;
+  timeStr: string;
+  startErr: string;
+  onDate: (v: string) => void;
+  onTime: (v: string) => void;
   lessonNo: string;
   lessonTitle: string;
   durationMin: string;
@@ -503,8 +570,38 @@ function SessionInfoCard({
         </span>
       </div>
       <div style={{ fontSize: 14, fontWeight: 600, color: '#98a2b0', marginBottom: 18 }}>
-        填了会进入 recap 与成长档案；留空则以日期标识
+        {backfill ? '补录一节过去的课 · 设置上课日期与开始时间' : '填了会进入 recap 与成长档案；留空则以日期标识'}
       </div>
+
+      {backfill && (
+        <>
+          <label style={fieldLabel}>上课日期</label>
+          <Field>
+            <span style={{ fontSize: 20 }}>📅</span>
+            <input
+              type="date"
+              value={dateStr}
+              max={nowSql().slice(0, 10)}
+              onChange={(e) => onDate(e.target.value)}
+              style={{ flex: 1, minWidth: 0, width: '100%', ...inputBase, fontVariantNumeric: 'tabular-nums' }}
+            />
+          </Field>
+
+          <label style={fieldLabel}>开始时间</label>
+          <Field>
+            <span style={{ fontSize: 20 }}>🕒</span>
+            <input
+              type="time"
+              value={timeStr}
+              onChange={(e) => onTime(e.target.value)}
+              style={{ flex: 1, minWidth: 0, width: '100%', ...inputBase, fontVariantNumeric: 'tabular-nums' }}
+            />
+          </Field>
+          {startErr && (
+            <div style={{ color: '#ff5a5f', fontSize: 13, fontWeight: 700, margin: '-10px 0 16px' }}>{startErr}</div>
+          )}
+        </>
+      )}
 
       <label style={fieldLabel}>课次号</label>
       <Field>
@@ -541,7 +638,9 @@ function SessionInfoCard({
         <span style={{ fontWeight: 800, fontSize: 16, color: '#a7b0bb' }}>分钟</span>
       </Field>
       <div style={{ fontSize: 13, fontWeight: 700, color: '#a7b0bb', marginTop: 8 }}>
-        默认 120 分钟（2 小时）· 驱动课堂右上角倒计时
+        {backfill
+          ? '结束时间 = 开始时间 + 时长（补录课堂不实时计时）'
+          : '默认 120 分钟（2 小时）· 驱动课堂右上角倒计时'}
       </div>
 
       <label style={{ ...fieldLabel, marginTop: 18 }}>主讲老师</label>

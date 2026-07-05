@@ -7,12 +7,14 @@ import {
   buildCommitPayload,
   clearCommitBackup,
   clearSession,
+  endSql,
   listCommitBackups,
   loadSession,
   nowSql,
   reducer,
   saveCommitBackup,
   saveSession,
+  sqlFromParts,
   startTimeOf,
   type ClassroomSession,
 } from './classroomStore';
@@ -612,6 +614,49 @@ describe('applyStartTime / startTimeOf (开始时间 dialog helpers)', () => {
 describe('nowSql', () => {
   it('formats a date as naive YYYY-MM-DD HH:mm:ss', () => {
     expect(nowSql(new Date(2026, 6, 2, 9, 5, 3))).toBe('2026-07-02 09:05:03');
+  });
+});
+
+describe('补录课堂 (manual backfill)', () => {
+  it('carries the backfill flag from meta onto the session, defaulting off', () => {
+    expect(boot().backfill).toBeUndefined(); // a normal live session
+    const b = buildClassroomSession(config(), { ...META, backfill: true });
+    expect(b.backfill).toBe(true);
+  });
+
+  it('round-trips the flag through localStorage; an old archive reads as non-backfill', () => {
+    const store = memStore();
+    const b = buildClassroomSession(config(), { ...META, backfill: true });
+    saveSession(b, store);
+    expect(loadSession('c1', store)!.backfill).toBe(true);
+    // 存档 shape 兼容：老版本没有 backfill 键 → 读成普通实时课
+    const legacy = { ...boot() } as Record<string, unknown>;
+    delete legacy.backfill;
+    store.setItem('nce.classroom.c1', JSON.stringify(legacy));
+    expect(loadSession('c1', store)!.backfill).toBeUndefined();
+  });
+
+  it('commits with endedAt = 开始 + 时长 (endSql), unlike a live session stamped at 结束', () => {
+    const b = buildClassroomSession(config(), { ...META, backfill: true }); // startedAt 19:00, 120 分钟
+    const p = buildCommitPayload(b, endSql(b.startedAt, b.plannedDurationMin));
+    expect(p.startedAt).toBe('2026-07-02 19:00:00');
+    expect(p.endedAt).toBe('2026-07-02 21:00:00');
+  });
+});
+
+describe('sqlFromParts / endSql (补录 time helpers)', () => {
+  it('composes a parseable started-at from a date + HH:MM', () => {
+    expect(sqlFromParts('2026-07-03', '14:30')).toBe('2026-07-03 14:30:00');
+  });
+
+  it('falls back to 00:00 for a bad time and today for a bad date', () => {
+    expect(sqlFromParts('2026-07-03', 'nope')).toBe('2026-07-03 00:00:00');
+    expect(sqlFromParts('', '14:30')).toMatch(/^\d{4}-\d{2}-\d{2} 14:30:00$/);
+  });
+
+  it('endSql adds the duration in minutes, rolling across the hour/day boundary', () => {
+    expect(endSql('2026-07-02 19:00:00', 120)).toBe('2026-07-02 21:00:00');
+    expect(endSql('2026-07-02 23:30:00', 60)).toBe('2026-07-03 00:30:00');
   });
 });
 
