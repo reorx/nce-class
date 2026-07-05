@@ -1659,15 +1659,17 @@ function SegmentView({
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const canDrag = onMove != null && (view === 'recite' || view === 'homework');
   const selecting = canDrag && selected.size > 0;
-  const total = students.length;
-  const bucket = (pred: (s: ClassroomStudent) => boolean) => students.filter(pred);
+  // 背书/作业检查只针对到勤学生：出勤视图外，未到勤者不进花名册（改为未到勤即从检查列表移除）
+  const roster = view === 'attendance' ? students : students.filter((s) => s.attendance === 'present');
+  const total = roster.length;
+  const bucket = (pred: (s: ClassroomStudent) => boolean) => roster.filter(pred);
 
   let icon = '',
     title = '',
     progress = '',
     segs: Seg[] = [];
   if (view === 'recite') {
-    const done = students.filter((s) => s.r !== null).length;
+    const done = roster.filter((s) => s.r !== null).length;
     icon = '📖';
     title = '背书检查';
     progress = `已检查 ${done} / ${total}`;
@@ -1685,8 +1687,8 @@ function SegmentView({
     ];
   } else if (view === 'homework') {
     // 没有「未批改」态：默认人人「没交」，交了拖去「完成」，交了但要补做拖去「需补」。
-    const done = students.filter((s) => s.h === '完成').length;
-    const redo = students.filter((s) => s.h === '需补').length;
+    const done = roster.filter((s) => s.h === '完成').length;
+    const redo = roster.filter((s) => s.h === '需补').length;
     icon = '📝';
     title = '作业检查';
     progress = `完成 ${done} · 需补 ${redo}`;
