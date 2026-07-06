@@ -23,9 +23,19 @@ export interface ClassListItem {
   id: string;
   name: string;
   teacherName: string;
+  textbook: number | null; // 教材册数 1-4
   studentCount: number;
   roster: string[];
-  lastSession: { date: string; weekday: string; relative: string } | null;
+  lastSession: {
+    id: string;
+    date: string;
+    weekday: string;
+    relative: string;
+    lessonNumber: number | null;
+    lessonTitle: string | null;
+    startedAt: string | null;
+    endedAt: string | null;
+  } | null;
 }
 
 export type StudentStatus = 'active' | 'suspended' | 'archived';

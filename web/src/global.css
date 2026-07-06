@@ -24,9 +24,11 @@ button {
 a {
   color: inherit;
 }
+/* !important: usages carry inline color/textDecoration for their rest state,
+   which would otherwise beat this class rule and swallow the hover effect. */
 .dc-name-link:hover {
-  color: #279a49;
-  text-decoration: underline;
+  color: #279a49 !important;
+  text-decoration: underline !important;
 }
 ::-webkit-scrollbar {
   width: 10px;

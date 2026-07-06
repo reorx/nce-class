@@ -5,12 +5,15 @@ import { TopBar } from '../components/TopBar';
 import { useToast } from '../components/Toast';
 import { api, type ClassListItem, type Me } from '../lib/api';
 import { loadSession } from '../lib/classroomStore';
+import { BOOK_LABELS } from '../lib/homework';
+import { lessonLabel } from '../lib/lesson';
 import { GREEN, GREEN_DARK, PAL } from '../lib/theme';
 
 const ORANGE = '#f0862a';
 const ORANGE_DARK = '#dd7317';
 
 const parseLocal = (t: string) => Date.parse(t.replace(' ', 'T'));
+const hm = (t: string) => t.slice(11, 16); // 'YYYY-MM-DD HH:mm:ss' -> 'HH:mm'
 
 function fmtTimer(elapsed: number): string {
   const hh = Math.floor(elapsed / 3600);
@@ -177,18 +180,26 @@ function ClassCard({ c, ci }: { c: ClassListItem; ci: number }) {
     >
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
         <div style={{ minWidth: 0 }}>
-          <div
+          <Link
+            to={`/classes/${c.id}`}
+            className="dc-name-link"
+            title="进入班级管理"
             style={{
+              display: 'block',
               fontWeight: 700,
               fontSize: 16.5,
               color: '#1e2430',
               whiteSpace: 'nowrap',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
+              textDecoration: 'none',
             }}
           >
             {c.name}
-          </div>
+          </Link>
+          {c.textbook != null && (
+            <div style={{ marginTop: 4, fontSize: 12, color: '#8b93a0' }}>新概念英语 · {BOOK_LABELS[c.textbook]}</div>
+          )}
         </div>
         <div
           className="mono"
@@ -303,17 +314,62 @@ function ClassCard({ c, ci }: { c: ClassListItem; ci: number }) {
             )}
           </div>
         )}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
-          <span style={{ color: '#a6adb8', width: 52 }}>上次上课</span>
-          <span style={{ fontWeight: 600, color: '#5b6472' }}>{c.lastSession?.relative ?? '尚未上课'}</span>
-          <span className="mono" style={{ color: '#aab1bc', fontSize: 11.5 }}>
-            {c.lastSession ? `${c.lastSession.date} ${c.lastSession.weekday}` : '—'}
-          </span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
-          <span style={{ color: '#a6adb8', width: 52 }}>负责老师</span>
-          <span style={{ fontWeight: 600, color: '#5b6472' }}>{c.teacherName}</span>
-        </div>
+        {c.lastSession ? (
+          <Link
+            to={`/classes/${c.id}/sessions/${c.lastSession.id}`}
+            title="查看上节课详情"
+            style={{
+              display: 'block',
+              textDecoration: 'none',
+              background: '#f8f9fb',
+              border: '1px solid #eef0f3',
+              borderRadius: 10,
+              padding: '9px 12px',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#d5dbe3')}
+            onMouseLeave={(e) => (e.currentTarget.style.borderColor = '#eef0f3')}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 11.5, color: '#a6adb8' }}>上次上课</span>
+              <span style={{ marginLeft: 'auto', fontSize: 11.5, fontWeight: 600, color: '#8b93a0' }}>
+                {c.lastSession.relative}
+              </span>
+            </div>
+            <div
+              style={{
+                marginTop: 5,
+                fontWeight: 600,
+                fontSize: 13.5,
+                color: '#3c4451',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
+              {lessonLabel(c.lastSession.lessonNumber, c.lastSession.lessonTitle, '未记录课次')}
+            </div>
+            <div className="mono" style={{ marginTop: 3, fontSize: 11.5, color: '#aab1bc' }}>
+              {c.lastSession.date} {c.lastSession.weekday}
+              {c.lastSession.startedAt
+                ? ` · ${hm(c.lastSession.startedAt)}${c.lastSession.endedAt ? `–${hm(c.lastSession.endedAt)}` : ''}`
+                : ''}
+            </div>
+          </Link>
+        ) : (
+          <div
+            style={{
+              background: '#f8f9fb',
+              border: '1px dashed #e2e5ea',
+              borderRadius: 10,
+              padding: '13px 12px',
+              textAlign: 'center',
+              fontSize: 12.5,
+              color: '#a6adb8',
+            }}
+          >
+            尚未上课
+          </div>
+        )}
       </div>
 
       <div style={{ height: 1, background: '#eef0f3', margin: '15px 0 13px' }} />
@@ -344,10 +400,11 @@ function ClassCard({ c, ci }: { c: ClassListItem; ci: number }) {
         <Link
           to={`/classes/${c.id}/attendance`}
           style={{
+            flex: 1,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            padding: '0 15px',
+            gap: 7,
             height: 38,
             background: '#fff',
             color: '#3c4451',
@@ -358,26 +415,21 @@ function ClassCard({ c, ci }: { c: ClassListItem; ci: number }) {
             fontSize: 13.5,
           }}
         >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+          >
+            <rect x="3" y="4.5" width="18" height="17" rx="2.5" />
+            <line x1="3" y1="9.5" x2="21" y2="9.5" />
+            <line x1="8" y1="2.5" x2="8" y2="6.5" />
+            <line x1="16" y1="2.5" x2="16" y2="6.5" />
+          </svg>
           考勤
-        </Link>
-        <Link
-          to={`/classes/${c.id}`}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '0 17px',
-            height: 38,
-            background: '#fff',
-            color: '#3c4451',
-            border: '1px solid #e2e5ea',
-            borderRadius: 9,
-            textDecoration: 'none',
-            fontWeight: 600,
-            fontSize: 13.5,
-          }}
-        >
-          管理
         </Link>
       </div>
     </div>

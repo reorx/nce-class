@@ -127,6 +127,7 @@ export function SessionsTable({
               <Link
                 to={`/classes/${s.classId}/sessions/${s.id}`}
                 title="查看课堂详情（作业布置 / Recap / 课堂信息）"
+                className="dc-name-link"
                 style={{
                   display: 'block',
                   fontWeight: 600,

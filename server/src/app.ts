@@ -71,7 +71,12 @@ const q = {
     `SELECT id, class_id, name FROM students WHERE status != 'archived' ORDER BY created_at, id`,
   ),
   studentById: sqlite.prepare(`SELECT * FROM students WHERE id=?`),
-  lastSessions: sqlite.prepare(`SELECT class_id, MAX(date) d FROM class_sessions GROUP BY class_id`),
+  // Latest session per class for the class-list card's mini 上次上课 card
+  // (started_at breaks same-day ties; legacy NULL started_at sorts last).
+  lastSessionOfClass: sqlite.prepare(
+    `SELECT * FROM class_sessions WHERE class_id=?
+     ORDER BY date DESC, started_at DESC, lesson_number DESC LIMIT 1`,
+  ),
   // Deliberately NOT status-filtered: the detail page shows archived rows, and
   // the commit's classifyStudent must keep suspended/archived students 'own' so
   // a stale local classroom still submits with its snapshot intact.
@@ -243,7 +248,6 @@ function actualMin(s: any): number {
 function classListPayload() {
   const classes = q.classes.all() as any[];
   const counts = new Map((q.studentCounts.all() as any[]).map((r) => [r.class_id, r.c]));
-  const last = new Map((q.lastSessions.all() as any[]).map((r) => [r.class_id, r.d]));
   const rosterByClass = new Map<string, string[]>();
   for (const s of q.allStudentsOrdered.all() as any[]) {
     const arr = rosterByClass.get(s.class_id) || [];
@@ -252,15 +256,25 @@ function classListPayload() {
   }
   return classes.map((c) => {
     const teacher = c.teacher_id ? (q.teacherById.get(c.teacher_id) as any) : null;
-    const lastDate = last.get(c.id) as string | undefined;
+    const ls = q.lastSessionOfClass.get(c.id) as any;
     return {
       id: c.id,
       name: c.name,
       teacherName: teacher?.name ?? '—',
+      textbook: c.textbook ?? null,
       studentCount: counts.get(c.id) ?? 0,
       roster: rosterByClass.get(c.id) ?? [],
-      lastSession: lastDate
-        ? { date: md(lastDate), weekday: weekdayCN(lastDate), relative: relativeDayCN(lastDate) }
+      lastSession: ls
+        ? {
+            id: ls.id,
+            date: md(ls.date),
+            weekday: weekdayCN(ls.date),
+            relative: relativeDayCN(ls.date),
+            lessonNumber: ls.lesson_number ?? null,
+            lessonTitle: ls.lesson_title ?? null,
+            startedAt: ls.started_at ?? null,
+            endedAt: ls.ended_at ?? null,
+          }
         : null,
     };
   });
