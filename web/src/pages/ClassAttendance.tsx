@@ -402,7 +402,7 @@ export function ClassAttendance() {
                         : undefined
                     }
                     style={{
-                      flex: '1 0 54px',
+                      flex: '0 0 54px',
                       boxSizing: 'border-box',
                       minHeight: 60,
                       padding: '7px 2px 6px',
@@ -581,7 +581,7 @@ export function ClassAttendance() {
                           }}
                           title={title}
                           style={{
-                            flex: '1 0 54px',
+                            flex: '0 0 54px',
                             boxSizing: 'border-box',
                             height: 46,
                             position: 'relative',
