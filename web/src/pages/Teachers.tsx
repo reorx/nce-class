@@ -12,6 +12,10 @@ export function Teachers({ me }: { me: Me | null }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState<TeacherItem | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editPassword, setEditPassword] = useState('');
+  const [editBusy, setEditBusy] = useState(false);
   const toast = useToast();
 
   const reload = () =>
@@ -41,6 +45,32 @@ export function Teachers({ me }: { me: Me | null }) {
       toast(e instanceof ApiError ? e.message : '添加失败，请重试', 'error');
     } finally {
       setBusy(false);
+    }
+  }
+
+  function openEdit(t: TeacherItem) {
+    setEditing(t);
+    setEditName(t.name);
+    setEditPassword('');
+  }
+
+  // 姓名必填；密码留空则不改，否则至少 6 位。
+  const editValid = editName.trim() && (editPassword.length === 0 || editPassword.length >= 6);
+
+  async function submitEdit() {
+    if (!editing || !editValid || editBusy) return;
+    setEditBusy(true);
+    try {
+      const p: { name: string; password?: string } = { name: editName.trim() };
+      if (editPassword.length > 0) p.password = editPassword;
+      await api.updateTeacher(editing.id, p);
+      await reload();
+      toast(`已保存「${editName.trim()}」`);
+      setEditing(null);
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : '保存失败，请重试', 'error');
+    } finally {
+      setEditBusy(false);
     }
   }
 
@@ -93,7 +123,14 @@ export function Teachers({ me }: { me: Me | null }) {
               <div style={squareAvatarStyle(t.name, 38)}>{t.name[0]}</div>
               <div style={{ minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontWeight: 700, fontSize: 14.5, color: '#1e2430' }}>{t.name}</span>
+                  <span
+                    className="dc-name-link"
+                    onClick={() => openEdit(t)}
+                    title="编辑老师"
+                    style={{ fontWeight: 700, fontSize: 14.5, color: '#1e2430', cursor: 'pointer' }}
+                  >
+                    {t.name}
+                  </span>
                   {t.id === me?.id && (
                     <span
                       style={{
@@ -198,6 +235,70 @@ export function Teachers({ me }: { me: Me | null }) {
             onClick={submitAdd}
           >
             {busy ? '添加中…' : '添加老师'}
+          </button>
+        </div>
+      </Modal>
+
+      <Modal open={editing != null} onClose={() => setEditing(null)} title="编辑老师">
+        <label style={labelStyle}>姓名</label>
+        <input
+          value={editName}
+          autoFocus
+          onChange={(e) => setEditName(e.target.value)}
+          placeholder="如 李芳"
+          style={fieldStyle}
+        />
+        <label style={{ ...labelStyle, marginTop: 15 }}>用户名</label>
+        <input
+          value={editing?.username ?? ''}
+          readOnly
+          disabled
+          style={{ ...fieldStyle, background: '#f2f4f6', color: '#9aa1ac', cursor: 'not-allowed' }}
+        />
+        <div style={{ marginTop: 5, fontSize: 12, color: '#9aa1ac' }}>用户名不可修改。</div>
+        <label style={{ ...labelStyle, marginTop: 15 }}>新密码</label>
+        <input
+          type="password"
+          value={editPassword}
+          onChange={(e) => setEditPassword(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && submitEdit()}
+          placeholder="留空则不修改"
+          style={fieldStyle}
+        />
+        <div style={{ marginTop: 5, fontSize: 12, color: '#9aa1ac' }}>如需重置密码，请输入至少 6 位新密码。</div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 22 }}>
+          <button
+            style={{
+              height: 40,
+              padding: '0 18px',
+              background: '#fff',
+              color: '#5b6472',
+              border: '1px solid #e2e5ea',
+              borderRadius: 9,
+              fontWeight: 600,
+              fontSize: 14,
+              cursor: 'pointer',
+            }}
+            onClick={() => setEditing(null)}
+          >
+            取消
+          </button>
+          <button
+            style={{
+              height: 40,
+              padding: '0 18px',
+              background: GREEN,
+              color: '#fff',
+              border: 'none',
+              borderRadius: 9,
+              fontWeight: 600,
+              fontSize: 14,
+              cursor: 'pointer',
+              opacity: editValid && !editBusy ? 1 : 0.55,
+            }}
+            onClick={submitEdit}
+          >
+            {editBusy ? '保存中…' : '保存'}
           </button>
         </div>
       </Modal>

@@ -134,6 +134,44 @@ describe('teachers', () => {
         .status,
     ).toBe(401);
   });
+
+  it('renames a teacher without touching the username or password', async () => {
+    const { agent } = await login();
+    const res = await agent.put('/api/teachers/t-wangli').send({ name: '王老师' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ id: 't-wangli', name: '王老师', username: 'wangli', role: 'owner' });
+    // username stays put, the original password still logs in
+    const row = sqlite.prepare(`SELECT name, username FROM teachers WHERE id='t-wangli'`).get() as any;
+    expect(row).toEqual({ name: '王老师', username: 'wangli' });
+    expect((await login('wangli', 'demo1234')).res.status).toBe(200);
+  });
+
+  it('changes the password only when a non-blank one is provided', async () => {
+    const { agent } = await login();
+    // blank password → unchanged
+    expect((await agent.put('/api/teachers/t-wangli').send({ name: '王莉', password: '' })).status).toBe(200);
+    expect((await login('wangli', 'demo1234')).res.status).toBe(200);
+    // real password → old one stops working, new one logs in
+    expect((await agent.put('/api/teachers/t-wangli').send({ name: '王莉', password: 'newpass9' })).status).toBe(200);
+    expect((await login('wangli', 'demo1234')).res.status).toBe(401);
+    expect((await login('wangli', 'newpass9')).res.status).toBe(200);
+  });
+
+  it('rejects a blank name or a too-short password with 400', async () => {
+    const { agent } = await login();
+    expect((await agent.put('/api/teachers/t-wangli').send({ name: '   ' })).status).toBe(400);
+    expect((await agent.put('/api/teachers/t-wangli').send({ name: '王莉', password: '12345' })).status).toBe(400);
+    // nothing changed
+    expect((await login('wangli', 'demo1234')).res.status).toBe(200);
+    expect((sqlite.prepare(`SELECT name FROM teachers WHERE id='t-wangli'`).get() as any).name).toBe('王莉');
+  });
+
+  it('404 for a teacher outside the acting org', async () => {
+    const { agent } = await login();
+    expect((await agent.put('/api/teachers/t-out').send({ name: '黑手' })).status).toBe(404);
+    expect((await agent.put('/api/teachers/nope').send({ name: '幽灵' })).status).toBe(404);
+    expect((sqlite.prepare(`SELECT name FROM teachers WHERE id='t-out'`).get() as any).name).toBe('外老师');
+  });
 });
 
 describe('students', () => {

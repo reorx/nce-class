@@ -36,6 +36,7 @@ import {
   setStudentStatus,
   updateClassInfo,
   updateSessionInfo,
+  updateTeacher,
   upsertJoinRequest,
   upsertWechatAccount,
   type CommitInput,
@@ -1047,6 +1048,23 @@ export function createApp() {
     const id = createTeacher(sqlite, { orgId: res.locals.teacher.org_id, name, username, password });
     const t = q.teacherById.get(id) as any;
     res.status(201).json({ id: t.id, name: t.name, username: t.username, role: t.role });
+  });
+
+  // ---- teacher 编辑 (改名 + 可选改密; username immutable, 任何同校老师可改) ----
+  app.put('/api/teachers/:id', (req, res) => {
+    const acting = res.locals.teacher;
+    const t = q.teacherById.get(req.params.id) as any;
+    if (!t || t.org_id !== acting.org_id) return res.status(404).json({ error: 'teacher not found' });
+    const name = str(req.body?.name);
+    if (!name) return res.status(400).json({ error: '姓名必填' });
+    // Password optional (不 trim — spaces may be intentional): blank/absent leaves
+    // the credential unchanged, a provided one must still be ≥6.
+    const raw = typeof req.body?.password === 'string' ? req.body.password : '';
+    const password = raw.length > 0 ? raw : null;
+    if (password != null && password.length < 6) return res.status(400).json({ error: '密码至少 6 位' });
+    updateTeacher(sqlite, { teacherId: t.id, name, password });
+    const updated = q.teacherById.get(t.id) as any;
+    res.json({ id: updated.id, name: updated.name, username: updated.username, role: updated.role });
   });
 
   // ---- classes (read) ----

@@ -83,6 +83,23 @@ export function createTeacher(
   return id;
 }
 
+/**
+ * Rename a teacher and optionally reset their password (in-app 老师编辑). The
+ * username is immutable here. `password === null` leaves the credential
+ * untouched (blank = 不修改); a string is re-hashed into the password credential.
+ */
+export function updateTeacher(sqlite: DB, p: { teacherId: string; name: string; password: string | null }): void {
+  const tx = sqlite.transaction(() => {
+    sqlite.prepare(`UPDATE teachers SET name=? WHERE id=?`).run(p.name, p.teacherId);
+    if (p.password != null) {
+      sqlite
+        .prepare(`UPDATE credentials SET secret=? WHERE teacher_id=? AND provider='password'`)
+        .run(hashPassword(p.password), p.teacherId);
+    }
+  });
+  tx();
+}
+
 /** Create a class in the given org owned by the given teacher. Returns its id. */
 export function createClass(
   sqlite: DB,

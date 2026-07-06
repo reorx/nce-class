@@ -340,6 +340,9 @@ export const api = {
   orgTags: () => get<TagItem[]>('/api/tags'),
   createTeacher: (name: string, username: string, password: string) =>
     req<TeacherItem>('POST', '/api/teachers', { name, username, password }),
+  // 改名 + 可选改密（password 省略/留空则不改）；username 不可改。
+  updateTeacher: (id: string, p: { name: string; password?: string }) =>
+    req<TeacherItem>('PUT', `/api/teachers/${id}`, p),
   classes: () => get<ClassListItem[]>('/api/classes'),
   classDetail: (id: string) => get<ClassDetail>(`/api/classes/${id}`),
   createClass: (p: { name: string; teacherId: string; textbook: number | null }) =>
