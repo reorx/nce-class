@@ -455,6 +455,25 @@ function buildOverview(s: any) {
   };
 }
 
+/** 上节课作业参考：同班里排在当前课之前（按上课记录次序）、最近一节已布置作业的课。 */
+function prevHomeworkPayload(s: any, classId: string) {
+  const list = q.sessionsOfClass.all(classId) as any[]; // date DESC, lesson_number DESC
+  const idx = list.findIndex((r) => r.id === s.id);
+  const prev = idx < 0 ? null : (list.slice(idx + 1).find((r) => r.homework_content != null) ?? null);
+  if (!prev) return null;
+  return {
+    sessionId: prev.id,
+    date: md(prev.date),
+    year: prev.date.slice(0, 4),
+    weekday: weekdayCN(prev.date),
+    lessonNumber: prev.lesson_number,
+    lessonTitle: prev.lesson_title,
+    content: prev.homework_content,
+    reviewBook: prev.review_book ?? null,
+    reviewLesson: prev.review_lesson ?? null,
+  };
+}
+
 /** Session detail page payload: summary + owning-class context + 作业布置 + embedded recap + 课堂情况. */
 function sessionDetailPayload(s: any, c: any) {
   return {
@@ -466,6 +485,7 @@ function sessionDetailPayload(s: any, c: any) {
     homeworkContent: s.homework_content ?? null,
     reviewBook: s.review_book ?? null,
     reviewLesson: s.review_lesson ?? null,
+    prevHomework: prevHomeworkPayload(s, c.id),
     recap: buildRecap(s),
     overview: buildOverview(s),
   };

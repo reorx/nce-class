@@ -163,6 +163,19 @@ export interface SessionOverview {
   groups: OverviewGroup[];
 }
 
+/** 上节课作业参考 — 同班里当前课之前最近一节已布置作业的课（无则 null）. */
+export interface PrevHomework {
+  sessionId: string;
+  date: string;
+  year: string;
+  weekday: string;
+  lessonNumber: number | null;
+  lessonTitle: string | null;
+  content: string;
+  reviewBook: number | null;
+  reviewLesson: number | null;
+}
+
 /** GET /api/sessions/:id — session summary + owning-class context + 作业布置 + embedded recap + 课堂情况. */
 export interface SessionDetail extends Session {
   classId: string;
@@ -172,6 +185,7 @@ export interface SessionDetail extends Session {
   homeworkContent: string | null;
   reviewBook: number | null; // 课文复习: 第几册
   reviewLesson: number | null; // 课文复习: 第几课
+  prevHomework: PrevHomework | null;
   recap: Recap;
   overview: SessionOverview;
 }

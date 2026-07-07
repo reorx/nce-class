@@ -585,6 +585,38 @@ describe('session detail (GET /api/sessions/:id)', () => {
     expect(res.body.homeworkTemplate).toBe('- 背L{lesson_number}');
   });
 
+  it('carries 上节课作业参考: the nearest earlier session that assigned homework', async () => {
+    const { agent } = await login();
+    const ins = sqlite.prepare(
+      `INSERT INTO class_sessions (id, class_id, teacher_id, date, lesson_number, lesson_title, status, planned_duration_min, homework_content, review_book, review_lesson)
+       VALUES (?,?,?,?,?,?,'ended',120,?,?,?)`,
+    );
+    // 06-25 第6课 no homework → skipped; 06-24 第5课 has homework → picked
+    ins.run('sess-p2', 'c1', 't-wangli', '2026-06-25', 6, 'Percy Buttons', null, null, null);
+    ins.run('sess-p1', 'c1', 't-wangli', '2026-06-24', 5, 'No wrong numbers', '- 背L5 三遍\n- 练字两面', 2, 5);
+    const res = await agent.get('/api/sessions/sess1');
+    expect(res.body.prevHomework).toEqual({
+      sessionId: 'sess-p1',
+      date: '06-24',
+      year: '2026',
+      weekday: '周三',
+      lessonNumber: 5,
+      lessonTitle: 'No wrong numbers',
+      content: '- 背L5 三遍\n- 练字两面',
+      reviewBook: 2,
+      reviewLesson: 5,
+    });
+    // later sessions never count, even with homework — the earliest one has no reference
+    expect((await agent.get('/api/sessions/sess-p1')).body.prevHomework).toBeNull();
+    // 06-25 sits between: its reference is also the 06-24 session
+    expect((await agent.get('/api/sessions/sess-p2')).body.prevHomework).toMatchObject({ sessionId: 'sess-p1' });
+  });
+
+  it('prevHomework is null when no earlier session assigned homework', async () => {
+    const { agent } = await login();
+    expect((await agent.get('/api/sessions/sess1')).body.prevHomework).toBeNull();
+  });
+
   it('401 unauthenticated, 404 unknown and cross-org sessions', async () => {
     expect((await request(app).get('/api/sessions/sess1')).status).toBe(401);
     const { agent } = await login();

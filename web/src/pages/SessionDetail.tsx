@@ -148,6 +148,8 @@ function HomeworkTab({ d, onSaved }: { d: SessionData; onSaved: (fresh: SessionD
         }}
       />
 
+      {d.prevHomework && <PrevHomeworkCard p={d.prevHomework} classId={d.classId} />}
+
       <div style={cardStyle}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
           <div style={{ fontSize: 15, fontWeight: 700 }}>作业内容</div>
@@ -240,6 +242,33 @@ function HomeworkTab({ d, onSaved }: { d: SessionData; onSaved: (fresh: SessionD
           {busy ? '保存中…' : d.hasHomework ? '更新布置' : '完成布置'}
         </button>
       </div>
+    </div>
+  );
+}
+
+// 上次作业参考：同班里当前课之前最近一节已布置作业的课（服务端 prevHomework），只读展示。
+function PrevHomeworkCard({ p, classId }: { p: NonNullable<SessionData['prevHomework']>; classId: string }) {
+  return (
+    <div style={{ ...cardStyle, background: '#fafbfc' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+        <div style={{ fontSize: 15, fontWeight: 700 }}>上次作业参考</div>
+        <div style={{ fontSize: 12.5, color: '#aab1bc' }}>
+          {lessonLabel(p.lessonNumber, p.lessonTitle, '未填写课次')} · {p.date} {p.weekday}
+        </div>
+        <Link
+          to={`/classes/${classId}/sessions/${p.sessionId}?tab=homework`}
+          style={{ marginLeft: 'auto', fontSize: 12.5, fontWeight: 600, color: '#7a828f', textDecoration: 'none' }}
+        >
+          查看该课 →
+        </Link>
+      </div>
+      <pre style={prevContentStyle}>{p.content}</pre>
+      {p.reviewBook != null && (
+        <div style={{ marginTop: 10, fontSize: 12.5, color: '#7a828f' }}>
+          课文复习：{BOOK_LABELS[p.reviewBook]}
+          {p.reviewLesson != null ? ` · 第${p.reviewLesson}课` : ''}
+        </div>
+      )}
     </div>
   );
 }
@@ -432,6 +461,19 @@ const textareaStyle: CSSProperties = {
   lineHeight: 1.65,
   resize: 'vertical',
   outline: 'none',
+};
+const prevContentStyle: CSSProperties = {
+  margin: 0,
+  padding: '12px 14px',
+  border: '1px solid #edeff3',
+  borderRadius: 10,
+  background: '#fff',
+  color: '#5b6472',
+  fontFamily: "'IBM Plex Mono', monospace",
+  fontSize: 13,
+  lineHeight: 1.65,
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
 };
 const selectStyle: CSSProperties = {
   height: 40,
