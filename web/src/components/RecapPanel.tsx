@@ -1,6 +1,6 @@
 import { useRef, useState, type CSSProperties } from 'react';
 import { toBlob, toPng } from 'html-to-image';
-import { RecapCard } from './RecapCard';
+import { RecapCardV3 } from './RecapCardV3';
 import { useToast } from './Toast';
 import type { Recap } from '../lib/api';
 import { dateLabel } from '../lib/recapCard';
@@ -8,13 +8,24 @@ import { GREEN } from '../lib/theme';
 
 // 课堂战报面板（session 详情页 Recap tab）：左=移动端预览（手机边框），右=下载/复制/推送操作。
 
-const PREVIEW_W = 390;
+const PREVIEW_W = 414; // 对齐设计稿「Recap v3.dc.html」画板宽度
 const SNAP_OPTS = { pixelRatio: 2, backgroundColor: '#faf7f0' };
 
-export function RecapPanel({ recap, className, year }: { recap: Recap; className: string; year: string | null }) {
+export function RecapPanel({
+  recap,
+  className,
+  year,
+  homework,
+}: {
+  recap: Recap;
+  className: string;
+  year: string | null;
+  homework?: string | null;
+}) {
   const toast = useToast();
   const [downloading, setDownloading] = useState(false);
   const [copying, setCopying] = useState(false);
+  const [showScores, setShowScores] = useState(true);
   const cardRef = useRef<HTMLDivElement>(null);
 
   const fileName = () => `课堂战报-${className}-${dateLabel(year, recap.date)}.png`;
@@ -79,7 +90,7 @@ export function RecapPanel({ recap, className, year }: { recap: Recap; className
         <div style={{ borderRadius: 28, overflow: 'hidden', background: '#faf7f0', minHeight: 320 }}>
           {/* 截图只取战报本体（ref 在此层），不带手机边框 */}
           <div ref={cardRef}>
-            <RecapCard recap={recap} className={className} year={year} />
+            <RecapCardV3 recap={recap} className={className} year={year} homework={homework} showScores={showScores} />
           </div>
         </div>
       </div>
@@ -90,6 +101,21 @@ export function RecapPanel({ recap, className, year }: { recap: Recap; className
         <div style={{ fontSize: 12.5, color: '#8a929e', lineHeight: 1.7, marginTop: -4 }}>
           左侧即家长在手机上看到的课堂战报（全班版，不含个人表现）。可导出为图片发到班级群。
         </div>
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            fontSize: 13,
+            fontWeight: 600,
+            color: '#3c4451',
+            cursor: 'pointer',
+            userSelect: 'none',
+          }}
+        >
+          <input type="checkbox" checked={showScores} onChange={(e) => setShowScores(e.target.checked)} />
+          显示得分（关闭后战报只展示名次与检查结果）
+        </label>
         <button style={actionBtn(true)} disabled={downloading} onClick={download}>
           ⬇️ {downloading ? '生成图片中…' : '下载图片'}
         </button>

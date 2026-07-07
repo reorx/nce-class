@@ -88,7 +88,9 @@ export function SessionDetail({ me }: { me: Me | null }) {
         )}
         {d && tab === 'overview' && <OverviewTab d={d} />}
         {d && tab === 'homework' && <HomeworkTab d={d} onSaved={setD} />}
-        {d && tab === 'recap' && <RecapPanel recap={d.recap} className={d.className} year={d.year} />}
+        {d && tab === 'recap' && (
+          <RecapPanel recap={d.recap} className={d.className} year={d.year} homework={d.homeworkContent} />
+        )}
         {d && tab === 'info' && <InfoTab d={d} onSaved={setD} />}
       </div>
     </div>

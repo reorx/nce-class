@@ -84,11 +84,22 @@ export interface SessionListItem extends Session {
   className: string;
 }
 
+/** One student row inside a recap group (v3 战报成员明细); absent on legacy payloads. */
+export interface RecapMember {
+  name: string;
+  attendance: 'present' | 'absent' | 'leave';
+  score: number; // 该节个人净分
+  recitation: string | null; // '已背完' | '背完部分' | '没背'; null = 未检查
+  homework: string | null; // '完成' | '需补' | '没交'; null = 没交 (缺记录)
+  warns: number; // 该节被扣分的事件次数
+}
+
 export interface RecapGroup {
   name: string;
   emoji: string | null;
   orderIndex: number;
   score: number;
+  members?: RecapMember[]; // roster order; absent on legacy payloads
 }
 
 export interface RecapStar {
@@ -112,6 +123,7 @@ export interface Recap {
   attendancePresent: number;
   attendanceTotal: number;
   groups: RecapGroup[];
+  ungrouped?: RecapMember[]; // 无组学生（通常是缺席未拖入组的）; absent on legacy payloads
   stars: RecapStar[];
   warned: { name: string }[];
   studentTags: RecapStudentTags[];

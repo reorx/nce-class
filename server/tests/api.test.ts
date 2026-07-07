@@ -717,6 +717,31 @@ describe('session recap', () => {
     // 奖章 tags grouped per student (seeded: s1 got 进步之星)
     expect(recap.studentTags).toEqual([{ name: '小明', tags: ['进步之星'] }]);
   });
+
+  it('carries per-member detail (score/attendance/checks/warns) inside each group, plus ungrouped members', async () => {
+    const { agent } = await login();
+    const recap = (await agent.get('/api/sessions/sess1/recap')).body;
+    // groups sorted score desc; members in roster order (display sort is a client concern)
+    expect(recap.groups[0].members).toEqual([
+      { name: '小明', attendance: 'present', score: 2, recitation: '已背完', homework: '完成', warns: 0 },
+      { name: '小红', attendance: 'present', score: 1, recitation: '背完部分', homework: null, warns: 0 },
+    ]);
+    expect(recap.groups[1].members).toEqual([
+      { name: '小刚', attendance: 'present', score: 0, recitation: null, homework: null, warns: 1 },
+    ]);
+    // s4 浩浩 has no session group → surfaces in the top-level ungrouped bucket
+    expect(recap.ungrouped).toEqual([
+      { name: '浩浩', attendance: 'absent', score: 0, recitation: null, homework: null, warns: 0 },
+    ]);
+  });
+
+  it('reflects 请假 (attendance correction) in the member rows', async () => {
+    const { agent } = await login();
+    await agent.put('/api/sessions/sess1/attendance/s2').send({ status: 'leave' });
+    const recap = (await agent.get('/api/sessions/sess1/recap')).body;
+    const xiaohong = recap.groups[0].members.find((m: any) => m.name === '小红');
+    expect(xiaohong.attendance).toBe('leave');
+  });
 });
 
 describe('org tag library (GET /api/tags)', () => {

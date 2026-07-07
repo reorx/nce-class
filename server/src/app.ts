@@ -146,7 +146,8 @@ const q = {
      WHERE sm.session_id=? ORDER BY st.created_at, st.id`,
   ),
   sessionStudentNet: sqlite.prepare(
-    `SELECT target_id sid, COALESCE(SUM(delta),0) net
+    `SELECT target_id sid, COALESCE(SUM(delta),0) net,
+       COALESCE(SUM(CASE WHEN delta<0 THEN 1 ELSE 0 END),0) warns
      FROM score_events WHERE session_id=? AND target_type='student' GROUP BY target_id`,
   ),
   sessionChecks: sqlite.prepare(`SELECT student_id sid, type, status FROM check_records WHERE session_id=?`),
@@ -348,9 +349,31 @@ function classDetailPayload(id: string) {
   };
 }
 
-/** Full recap derived from one ended session's ledger (group ranking + 亮眼/被提醒 + 出勤). */
+/** Full recap derived from one ended session's ledger (group ranking + 亮眼/被提醒 + 出勤 + 成员明细). */
 function buildRecap(s: any) {
   const scoreByGid = new Map((q.sessionGroupScores.all(s.id) as any[]).map((r) => [r.gid, r.score]));
+  // Per-member rows (roster order; missing check record = null, read side maps
+  // to 没交/未检查 per PRD §8). warns = 该节被扣分的事件次数.
+  const roster = q.sessionRoster.all(s.id) as any[];
+  const netByStudent = new Map((q.sessionStudentNet.all(s.id) as any[]).map((r) => [r.sid, r]));
+  const checkByStudent = new Map<string, { homework?: string; recitation?: string }>();
+  for (const r of q.sessionChecks.all(s.id) as any[]) {
+    const rec = checkByStudent.get(r.sid) ?? {};
+    rec[r.type as 'homework' | 'recitation'] = r.status;
+    checkByStudent.set(r.sid, rec);
+  }
+  const memberOf = (m: any) => {
+    const net = netByStudent.get(m.sid);
+    const ck = checkByStudent.get(m.sid) ?? {};
+    return {
+      name: m.name,
+      attendance: m.attendance,
+      score: net?.net ?? 0,
+      recitation: ck.recitation ?? null,
+      homework: ck.homework ?? null,
+      warns: net?.warns ?? 0,
+    };
+  };
   const groups = (q.sessionGroups.all(s.id) as any[])
     .map((g) => ({
       id: g.id,
@@ -358,8 +381,10 @@ function buildRecap(s: any) {
       emoji: g.emoji,
       orderIndex: g.order_index,
       score: scoreByGid.get(g.id) ?? 0,
+      members: roster.filter((m) => m.gid === g.id).map(memberOf),
     }))
     .sort((a, b) => b.score - a.score);
+  const ungrouped = roster.filter((m) => m.gid == null).map(memberOf);
   const deltas = q.sessionStudentDeltas.all(s.id) as any[];
   const stars = deltas
     .filter((r) => r.net >= 2)
@@ -386,6 +411,7 @@ function buildRecap(s: any) {
     attendancePresent: att?.present ?? 0,
     attendanceTotal: att?.total ?? 0,
     groups,
+    ungrouped,
     stars,
     warned,
     studentTags,
