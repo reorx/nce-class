@@ -112,17 +112,13 @@ export interface RecapGroupCard {
   medal: string; // 前三名有奖牌，其余为空串
   rankLabel: string; // 第N名
   members: MemberRow[]; // 仅到堂成员，按净分降序
-  absentText: string | null; // 缺席成员脚注（无则 null）
+  absentText: string | null; // 请假成员脚注（缺席不展示，无则 null）
 }
 
-/** 缺席脚注："a、b 请假未到 · c 缺席未到"；全员到堂 → null。 */
+/** 请假脚注："a、b 请假未到"；缺席不展示；无请假 → null。 */
 export function absentText(members: RecapMember[]): string | null {
   const leave = members.filter((m) => m.attendance === 'leave').map((m) => m.name);
-  const absent = members.filter((m) => m.attendance === 'absent').map((m) => m.name);
-  const parts = [];
-  if (leave.length) parts.push(`${leave.join('、')} 请假未到`);
-  if (absent.length) parts.push(`${absent.join('、')} 缺席未到`);
-  return parts.length ? parts.join(' · ') : null;
+  return leave.length ? `${leave.join('、')} 请假未到` : null;
 }
 
 export function groupCards(recap: Recap): RecapGroupCard[] {
@@ -154,7 +150,7 @@ export function groupCards(recap: Recap): RecapGroupCard[] {
     });
 }
 
-/** 未分组学生说明行："浩浩 缺席未到 · 新新 未分组"；无则 null。 */
+/** 未分组学生说明行："悦悦 请假未到 · 新新 未分组"；缺席不展示；无则 null。 */
 export function ungroupedNote(recap: Recap): string | null {
   const list = recap.ungrouped ?? [];
   if (list.length === 0) return null;
@@ -163,7 +159,7 @@ export function ungroupedNote(recap: Recap): string | null {
   if (away) parts.push(away);
   const present = list.filter(isPresent).map((m) => m.name);
   if (present.length) parts.push(`${present.join('、')} 未分组`);
-  return parts.join(' · ');
+  return parts.length ? parts.join(' · ') : null;
 }
 
 // ---- 分类统计（需要关注的同学） -----------------------------------------------

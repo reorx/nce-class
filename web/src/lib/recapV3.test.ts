@@ -149,7 +149,8 @@ describe('groupCards', () => {
     });
     const [card] = groupCards(r);
     expect(card.members.map((m) => m.name)).toEqual(['小明', '思思']);
-    expect(card.absentText).toBe('悦悦 请假未到 · 乐乐 缺席未到');
+    // 只保留请假脚注，缺席不再展示
+    expect(card.absentText).toBe('悦悦 请假未到');
   });
 });
 
@@ -158,13 +159,16 @@ describe('absentText / ungroupedNote', () => {
     expect(absentText([mem('小明')])).toBeNull();
   });
 
-  it('groups names by leave vs absent', () => {
+  it('lists 请假 names and drops 缺席 entirely', () => {
     expect(absentText([mem('a', { attendance: 'leave' }), mem('b', { attendance: 'leave' })])).toBe('a、b 请假未到');
+    expect(absentText([mem('a', { attendance: 'absent' })])).toBeNull();
+    expect(absentText([mem('a', { attendance: 'leave' }), mem('b', { attendance: 'absent' })])).toBe('a 请假未到');
   });
 
-  it('ungroupedNote covers absent and 未分组 present members', () => {
+  it('ungroupedNote covers 请假 and 未分组 present members, ignoring 缺席', () => {
     expect(ungroupedNote(mkRecap())).toBeNull();
-    expect(ungroupedNote(mkRecap({ ungrouped: [mem('浩浩', { attendance: 'absent' })] }))).toBe('浩浩 缺席未到');
+    expect(ungroupedNote(mkRecap({ ungrouped: [mem('浩浩', { attendance: 'absent' })] }))).toBeNull();
+    expect(ungroupedNote(mkRecap({ ungrouped: [mem('悦悦', { attendance: 'leave' })] }))).toBe('悦悦 请假未到');
     expect(ungroupedNote(mkRecap({ ungrouped: [mem('新新')] }))).toBe('新新 未分组');
   });
 });
