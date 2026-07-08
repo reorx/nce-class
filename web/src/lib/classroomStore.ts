@@ -166,11 +166,15 @@ export function reducer(s: ClassroomSession, a: CAction): ClassroomSession {
     case 'setRecite': {
       const st = s.students.find((x) => x.id === a.sid);
       if (!st || st.r === a.v) return s; // 点同一状态 = 纯 no-op，不记日志
-      return pushLog(
-        mapStudent(s, a.sid, (x) => ({ ...x, r: a.v })),
-        'recite',
+      return reconcileRecitePoint(
+        pushLog(
+          mapStudent(s, a.sid, (x) => ({ ...x, r: a.v })),
+          'recite',
+          a.sid,
+          a.v,
+          a.at,
+        ),
         a.sid,
-        a.v,
         a.at,
       );
     }
@@ -262,6 +266,27 @@ function pushEvent(
   createdAt: string,
 ): ClassroomSession {
   return { ...s, events: [...s.events, { id: s.nid, tt, tid, g, d, createdAt }], nid: s.nid + 1 };
+}
+
+/** 背书自动加分：「已背完」在一节课内绑定唯一 1 分。进入该状态且账上没有该生的
+ *  背书分（src:'recite'）→ 补发 +1（记当前组）；离开该状态 → 收回同源事件。反复
+ *  切换净效果恒等于当前状态，绝不累积；老师手动 undoEvent 删掉自动分后状态不回退，
+ *  直到下次重新进入「已背完」才会再发。 */
+function reconcileRecitePoint(s: ClassroomSession, sid: string, at: string): ClassroomSession {
+  const st = s.students.find((x) => x.id === sid);
+  if (!st) return s;
+  const has = s.events.some((e) => e.src === 'recite' && e.tt === 'student' && e.tid === sid);
+  if (st.r === '已背完' && !has) {
+    return {
+      ...s,
+      events: [...s.events, { id: s.nid, tt: 'student', tid: sid, g: st.g, d: 1, createdAt: at, src: 'recite' }],
+      nid: s.nid + 1,
+    };
+  }
+  if (st.r !== '已背完' && has) {
+    return { ...s, events: s.events.filter((e) => !(e.src === 'recite' && e.tt === 'student' && e.tid === sid)) };
+  }
+  return s;
 }
 
 function mapStudent(s: ClassroomSession, sid: string, fn: (x: ClassroomStudent) => ClassroomStudent): ClassroomSession {

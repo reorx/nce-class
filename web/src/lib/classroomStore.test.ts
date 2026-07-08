@@ -309,14 +309,14 @@ describe('课堂日志 (status log + 任意单条撤销)', () => {
   it('logs recite / homework / attendance changes, sharing the nid sequence with score events', () => {
     let s = boot();
     s = reducer(s, { type: 'scoreStudent', sid: 's1', d: 1, at }); // takes id 1
-    s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完', at: at2 });
+    s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完', at: at2 }); // log id 2 + 自动加分事件 id 3
     s = reducer(s, { type: 'toggleAttendance', sid: 's2', at: at2 });
     expect(s.log).toEqual([
       { id: 2, at: at2, kind: 'recite', sid: 's1', to: '已背完' },
-      { id: 3, at: at2, kind: 'attendance', sid: 's2', to: 'absent' },
+      { id: 4, at: at2, kind: 'attendance', sid: 's2', to: 'absent' },
     ]);
-    expect(s.events[0].id).toBe(1);
-    expect(s.nid).toBe(4); // 一个计数器给两个数组发号 → 合并时间线有稳定全序
+    expect(s.events.map((e) => e.id)).toEqual([1, 3]);
+    expect(s.nid).toBe(5); // 一个计数器给两个数组发号 → 合并时间线有稳定全序
   });
 
   it('re-selecting the same status is a pure no-op (no state change, no log entry)', () => {
@@ -372,6 +372,88 @@ describe('课堂日志 (status log + 任意单条撤销)', () => {
     s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完', at });
     const p = buildCommitPayload(s, '2026-07-02 21:00:00');
     expect('log' in p).toBe(false);
+  });
+});
+
+describe('背书自动加分（「已背完」在一节课内绑定唯一 1 分）', () => {
+  const at = '2026-07-02 19:05:00';
+  const at2 = '2026-07-02 19:06:00';
+  const reciteEvents = (s: ClassroomSession, sid: string) =>
+    s.events.filter((e) => e.src === 'recite' && e.tid === sid);
+
+  it('标记「已背完」自动 +1：个人分与组分同步，事件带 src 标记', () => {
+    let s = boot();
+    s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完', at });
+    expect(sScore(s.events, 's1')).toBe(1);
+    expect(gScore(s.events, 'g1')).toBe(1);
+    expect(reciteEvents(s, 's1')).toHaveLength(1);
+    expect(reciteEvents(s, 's1')[0]).toMatchObject({ tt: 'student', tid: 's1', g: 'g1', d: 1, createdAt: at });
+  });
+
+  it('「背完部分」「没背」不加分', () => {
+    let s = boot();
+    s = reducer(s, { type: 'setRecite', sid: 's1', v: '背完部分', at });
+    s = reducer(s, { type: 'setRecite', sid: 's2', v: '没背', at });
+    expect(s.events).toHaveLength(0);
+  });
+
+  it('离开「已背完」收回自动分，反复切换净效果恒为当前状态，绝不累积', () => {
+    let s = boot();
+    s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完', at });
+    s = reducer(s, { type: 'setRecite', sid: 's1', v: null, at: at2 }); // 清回未检查 → 收回
+    expect(sScore(s.events, 's1')).toBe(0);
+    s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完', at: at2 }); // 再标 → 重新发
+    s = reducer(s, { type: 'setRecite', sid: 's1', v: '背完部分', at: at2 }); // 降级 → 收回
+    s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完', at: at2 });
+    expect(sScore(s.events, 's1')).toBe(1); // 多轮往返后仍只有 1 分
+    expect(reciteEvents(s, 's1')).toHaveLength(1);
+    expect(gScore(s.events, 'g1')).toBe(1);
+  });
+
+  it('收回只删背书来源的事件，手动加减分不受影响', () => {
+    let s = boot();
+    s = reducer(s, { type: 'scoreStudent', sid: 's1', d: 1, at });
+    s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完', at });
+    s = reducer(s, { type: 'scoreStudent', sid: 's1', d: 1, at });
+    expect(sScore(s.events, 's1')).toBe(3);
+    s = reducer(s, { type: 'setRecite', sid: 's1', v: '没背', at: at2 });
+    expect(sScore(s.events, 's1')).toBe(2); // 只收回自动分那 1 分
+    expect(reciteEvents(s, 's1')).toHaveLength(0);
+  });
+
+  it('老师手动撤销自动分（undoEvent）后，状态保持「已背完」；重新往返可再次发分', () => {
+    let s = boot();
+    s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完', at });
+    const eid = reciteEvents(s, 's1')[0].id;
+    s = reducer(s, { type: 'undoEvent', eventId: eid });
+    expect(s.students.find((x) => x.id === 's1')!.r).toBe('已背完');
+    expect(sScore(s.events, 's1')).toBe(0);
+    s = reducer(s, { type: 'setRecite', sid: 's1', v: null, at: at2 }); // 无自动分可收 → 只改状态
+    s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完', at: at2 });
+    expect(sScore(s.events, 's1')).toBe(1);
+  });
+
+  it('自动分作为普通事件进 commit payload，src 标记不外泄（向后兼容）', () => {
+    let s = boot();
+    s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完', at });
+    const p = buildCommitPayload(s, '2026-07-02 21:00:00');
+    expect(p.events).toHaveLength(1);
+    expect(p.events[0]).toEqual({
+      targetType: 'student',
+      targetId: 's1',
+      clientGroupId: 'g1',
+      delta: 1,
+      createdAt: at,
+    });
+    expect('src' in p.events[0]).toBe(false);
+  });
+
+  it('课中调组后再标背书，自动分记在当前组头上', () => {
+    let s = boot();
+    s = reducer(s, { type: 'moveStudent', sid: 's1', gid: 'g2' });
+    s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完', at });
+    expect(gScore(s.events, 'g2')).toBe(1);
+    expect(gScore(s.events, 'g1')).toBe(0);
   });
 });
 
@@ -509,8 +591,8 @@ describe('buildCommitPayload', () => {
       attendance: 'present',
     });
 
-    // events carry the group they fired in
-    expect(p.events).toHaveLength(2);
+    // events carry the group they fired in（第三条 = 背书自动加分，以普通事件下发）
+    expect(p.events).toHaveLength(3);
     expect(p.events[0]).toEqual({
       targetType: 'student',
       targetId: 's1',
@@ -519,6 +601,13 @@ describe('buildCommitPayload', () => {
       createdAt: '2026-07-02 19:05:00',
     });
     expect(p.events[1]).toMatchObject({ targetType: 'group', targetId: 'g2', clientGroupId: 'g2', delta: 1 });
+    expect(p.events[2]).toEqual({
+      targetType: 'student',
+      targetId: 's1',
+      clientGroupId: 'g1',
+      delta: 1,
+      createdAt: '2026-07-02 19:07:00',
+    });
 
     // only meaningful checks are sent: recite 非 null；作业非默认「没交」
     // （不发没交 = server 读侧「缺记录=没交」fallback，语义等价、payload 不膨胀）

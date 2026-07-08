@@ -31,6 +31,8 @@ export function buildLogLines(s: Pick<ClassroomSession, 'students' | 'groups' | 
   const lines: LogLine[] = s.events.map((e) => {
     const sign = e.d > 0 ? '+1' : '−1';
     const tone = e.d > 0 ? ('plus' as const) : ('minus' as const);
+    // 背书自动加分标注来源；未分组学生的事件不计任何组分 → 没有同步说明
+    const parts = [...(e.src === 'recite' ? ['背书自动加分'] : []), ...(e.g ? [`${groupName(e.g)} 同步 ${sign}`] : [])];
     return e.tt === 'student'
       ? {
           id: e.id,
@@ -38,8 +40,7 @@ export function buildLogLines(s: Pick<ClassroomSession, 'students' | 'groups' | 
           icon: '⭐',
           who: studentName(e.tid),
           action: sign,
-          // 未分组学生的事件不计任何组分 → 没有同步说明
-          detail: e.g ? `${groupName(e.g)} 同步 ${sign}` : undefined,
+          detail: parts.length ? parts.join(' · ') : undefined,
           eventId: e.id,
           tone,
         }

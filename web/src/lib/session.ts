@@ -41,6 +41,9 @@ export interface SEvent {
   g: string; // the group the target belonged to when the event fired
   d: 1 | -1;
   createdAt: string; // 'YYYY-MM-DD HH:mm:ss' — carried into the commit payload
+  // 背书自动加分的来源标记：「已背完」绑定唯一 1 分，离开该状态时按此标记收回。
+  // Optional (persisted-shape compat)，仅本地，不进 commit payload。
+  src?: 'recite';
 }
 
 export interface SessionState {

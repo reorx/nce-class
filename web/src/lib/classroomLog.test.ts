@@ -63,7 +63,8 @@ describe('buildLogLines', () => {
 
   it('renders status lines as record-only (no eventId): 背书 / 作业 / 出勤两个方向', () => {
     let s = boot();
-    s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完', at: at(5) });
+    // 「背完部分」不触发自动加分 → 本用例只看 record-only 状态行
+    s = reducer(s, { type: 'setRecite', sid: 's1', v: '背完部分', at: at(5) });
     s = reducer(s, { type: 'setHomework', sid: 's2', v: '完成', at: at(6) });
     s = reducer(s, { type: 'setHomework', sid: 's2', v: '没交', at: at(7) });
     s = reducer(s, { type: 'toggleAttendance', sid: 's5', at: at(8) }); // → absent
@@ -75,8 +76,17 @@ describe('buildLogLines', () => {
       ['丽丽', '标记未到'],
       ['小红', '作业 → 没交'],
       ['小红', '作业 → 完成'],
-      ['小明', '背书 → 已背完'],
+      ['小明', '背书 → 背完部分'],
     ]);
+  });
+
+  it('背书自动加分显示为可撤销的加分行，detail 标注来源', () => {
+    let s = boot();
+    s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完', at: at(5) }); // log id 1 + 事件 id 2
+    const [point, status] = buildLogLines(s);
+    expect(status).toMatchObject({ who: '小明', action: '背书 → 已背完', tone: 'neutral' });
+    expect(point).toMatchObject({ who: '小明', action: '+1', eventId: 2, tone: 'plus' });
+    expect(point.detail).toBe('背书自动加分 · 第1组 同步 +1');
   });
 
   it('falls back gracefully when the event group was deleted, and omits detail for ungrouped students', () => {
