@@ -206,6 +206,12 @@ describe('statSections', () => {
     expect(recite.chips[2].groupEmoji).toBeNull();
   });
 
+  it('drops 背书/作业 sections when the corresponding check is disabled', () => {
+    expect(statSections(r, { showRecitation: false }).map((s) => s.title)).toEqual(['作业未完成', '被老师提醒']);
+    expect(statSections(r, { showHomework: false }).map((s) => s.title)).toEqual(['背书未完成', '被老师提醒']);
+    expect(statSections(r, { showRecitation: false, showHomework: false }).map((s) => s.title)).toEqual(['被老师提醒']);
+  });
+
   it('reports empty sections with a celebration text', () => {
     const clean = mkRecap({
       groups: [grp('第1组', { members: [mem('小明', { recitation: '已背完', homework: '完成' })] })],

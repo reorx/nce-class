@@ -12,9 +12,10 @@ import {
   type PodiumStar,
 } from '../lib/recapV3';
 
-// 课堂战报 v3，还原设计稿「Recap v3.dc.html」（414 宽移动端画板）：
+// 课堂报告 v3，还原设计稿「Recap v3.dc.html」（414 宽移动端画板）：
 // 今日之星领奖台 + 各组成员明细表 + 分类统计 + 课后作业。
-// showScores=false 时隐藏所有分数（领奖台奖牌与名次保留）。
+// showScores=false 时隐藏所有分数（领奖台奖牌与名次保留）；
+// showRecitation / showHomework=false 时对应的明细列与分类统计分区整体不出现。
 
 const BALOO = "'Baloo 2', 'Nunito', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif";
 
@@ -49,17 +50,21 @@ export function RecapCardV3({
   year,
   homework,
   showScores = true,
+  showRecitation = true,
+  showHomework = true,
 }: {
   recap: Recap;
   className: string;
   year?: string | null;
   homework?: string | null;
   showScores?: boolean;
+  showRecitation?: boolean;
+  showHomework?: boolean;
 }) {
   const stars = podiumStars(recap);
   const cards = groupCards(recap);
   const noGroupNote = ungroupedNote(recap);
-  const stats = statSections(recap);
+  const stats = statSections(recap, { showRecitation, showHomework });
   const hwText = (homework ?? '').trim();
 
   return (
@@ -87,7 +92,7 @@ export function RecapCardV3({
           {className} · {dateLabel(year, recap.date)}
         </div>
         <div style={{ marginTop: 9, fontFamily: BALOO, fontWeight: 800, fontSize: 27, color: '#a87f24' }}>
-          🏆 {recap.lessonNumber != null ? `Lesson ${recap.lessonNumber} ` : ''}课堂战报
+          🏆 {recap.lessonNumber != null ? `Lesson ${recap.lessonNumber} ` : ''}课堂报告
         </div>
         {recap.lessonTitle && (
           <div style={{ marginTop: 5, fontWeight: 700, fontSize: 14, color: '#8a7f63' }}>{recap.lessonTitle}</div>
@@ -202,11 +207,18 @@ export function RecapCardV3({
               >
                 <ColHead style={{ flex: 1 }}>学生</ColHead>
                 {showScores && <ColHead style={{ width: 40, textAlign: 'center' }}>得分</ColHead>}
-                <ColHead style={{ width: 72 }}>背书</ColHead>
-                <ColHead style={{ width: 52 }}>作业</ColHead>
+                {showRecitation && <ColHead style={{ width: 72 }}>背书</ColHead>}
+                {showHomework && <ColHead style={{ width: 52 }}>作业</ColHead>}
               </div>
               {g.members.map((m, idx) => (
-                <MemberLine key={m.name + idx} m={m} last={idx === g.members.length - 1} showScores={showScores} />
+                <MemberLine
+                  key={m.name + idx}
+                  m={m}
+                  last={idx === g.members.length - 1}
+                  showScores={showScores}
+                  showRecitation={showRecitation}
+                  showHomework={showHomework}
+                />
               ))}
               {g.absentText && (
                 <div
@@ -357,7 +369,7 @@ export function RecapCardV3({
           lineHeight: 1.6,
         }}
       >
-        本战报由老师在课堂结束时一键生成 · NCE Class
+        本报告由老师在课堂结束时一键生成 · NCE Class
       </div>
     </div>
   );
@@ -369,7 +381,19 @@ function ColHead({ children, style }: { children: string; style?: CSSProperties 
   );
 }
 
-function MemberLine({ m, last, showScores }: { m: MemberRow; last: boolean; showScores: boolean }) {
+function MemberLine({
+  m,
+  last,
+  showScores,
+  showRecitation,
+  showHomework,
+}: {
+  m: MemberRow;
+  last: boolean;
+  showScores: boolean;
+  showRecitation: boolean;
+  showHomework: boolean;
+}) {
   return (
     <div
       style={{
@@ -443,8 +467,10 @@ function MemberLine({ m, last, showScores }: { m: MemberRow; last: boolean; show
           {fmtSigned(m.score)}
         </span>
       )}
-      <StatusCell width={72} dot={m.recitation.dot} color={m.recitation.color} text={m.recitation.text} />
-      <StatusCell width={52} dot={m.homework.dot} color={m.homework.color} text={m.homework.text} />
+      {showRecitation && (
+        <StatusCell width={72} dot={m.recitation.dot} color={m.recitation.color} text={m.recitation.text} />
+      )}
+      {showHomework && <StatusCell width={52} dot={m.homework.dot} color={m.homework.color} text={m.homework.text} />}
     </div>
   );
 }

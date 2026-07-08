@@ -6,7 +6,7 @@ import type { Recap } from '../lib/api';
 import { dateLabel } from '../lib/recapCard';
 import { GREEN } from '../lib/theme';
 
-// 课堂战报面板（session 详情页 Recap tab）：左=移动端预览（手机边框），右=下载/复制/推送操作。
+// 课堂报告面板（session 详情页 Recap tab）：左=移动端预览（手机边框），右=下载/复制/推送操作。
 
 const PREVIEW_W = 414; // 对齐设计稿「Recap v3.dc.html」画板宽度
 const SNAP_OPTS = { pixelRatio: 2, backgroundColor: '#faf7f0' };
@@ -26,9 +26,11 @@ export function RecapPanel({
   const [downloading, setDownloading] = useState(false);
   const [copying, setCopying] = useState(false);
   const [showScores, setShowScores] = useState(true);
+  const [showRecitation, setShowRecitation] = useState(true);
+  const [showHomework, setShowHomework] = useState(true);
   const cardRef = useRef<HTMLDivElement>(null);
 
-  const fileName = () => `课堂战报-${className}-${dateLabel(year, recap.date)}.png`;
+  const fileName = () => `课堂报告-${className}-${dateLabel(year, recap.date)}.png`;
 
   async function download() {
     if (!cardRef.current || downloading) return;
@@ -88,9 +90,17 @@ export function RecapPanel({
         }}
       >
         <div style={{ borderRadius: 28, overflow: 'hidden', background: '#faf7f0', minHeight: 320 }}>
-          {/* 截图只取战报本体（ref 在此层），不带手机边框 */}
+          {/* 截图只取报告本体（ref 在此层），不带手机边框 */}
           <div ref={cardRef}>
-            <RecapCardV3 recap={recap} className={className} year={year} homework={homework} showScores={showScores} />
+            <RecapCardV3
+              recap={recap}
+              className={className}
+              year={year}
+              homework={homework}
+              showScores={showScores}
+              showRecitation={showRecitation}
+              showHomework={showHomework}
+            />
           </div>
         </div>
       </div>
@@ -99,23 +109,17 @@ export function RecapPanel({
       <div style={{ width: 300, display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 8 }}>
         <div style={{ fontWeight: 700, fontSize: 14.5, color: '#1e2430' }}>分享操作</div>
         <div style={{ fontSize: 12.5, color: '#8a929e', lineHeight: 1.7, marginTop: -4 }}>
-          左侧即家长在手机上看到的课堂战报（全班版，不含个人表现）。可导出为图片发到班级群。
+          左侧即家长在手机上看到的课堂报告（全班版，不含个人表现）。可导出为图片发到班级群。
         </div>
-        <label
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            fontSize: 13,
-            fontWeight: 600,
-            color: '#3c4451',
-            cursor: 'pointer',
-            userSelect: 'none',
-          }}
-        >
-          <input type="checkbox" checked={showScores} onChange={(e) => setShowScores(e.target.checked)} />
-          显示得分（关闭后战报只展示名次与检查结果）
-        </label>
+        <ToggleRow checked={showScores} onChange={setShowScores}>
+          显示得分（关闭后报告只展示名次与检查结果）
+        </ToggleRow>
+        <ToggleRow checked={showRecitation} onChange={setShowRecitation}>
+          包含背书检查（关闭后隐藏背书列与背书统计）
+        </ToggleRow>
+        <ToggleRow checked={showHomework} onChange={setShowHomework}>
+          包含作业检查（关闭后隐藏作业列与作业统计）
+        </ToggleRow>
         <button style={actionBtn(true)} disabled={downloading} onClick={download}>
           ⬇️ {downloading ? '生成图片中…' : '下载图片'}
         </button>
@@ -143,6 +147,34 @@ export function RecapPanel({
         </button>
       </div>
     </div>
+  );
+}
+
+function ToggleRow({
+  checked,
+  onChange,
+  children,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  children: string;
+}) {
+  return (
+    <label
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        fontSize: 13,
+        fontWeight: 600,
+        color: '#3c4451',
+        cursor: 'pointer',
+        userSelect: 'none',
+      }}
+    >
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      {children}
+    </label>
   );
 }
 

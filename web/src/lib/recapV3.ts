@@ -185,7 +185,13 @@ export interface StatSection {
   emptyText: string;
 }
 
-export function statSections(recap: Recap): StatSection[] {
+/** 背书/作业检查开关：关闭后对应列与统计分区整体不出现（默认都开）。 */
+export interface RecapCheckOptions {
+  showRecitation?: boolean;
+  showHomework?: boolean;
+}
+
+export function statSections(recap: Recap, opts: RecapCheckOptions = {}): StatSection[] {
   const present = presentWithGroup(recap);
   const chip = (m: (typeof present)[number], tag: string, tone: ChipTone): StatChip => ({
     name: m.name,
@@ -211,9 +217,23 @@ export function statSections(recap: Recap): StatSection[] {
     .sort((a, b) => b.warns - a.warns)
     .map((m) => chip(m, `提醒 ×${m.warns}`, 'red'));
 
-  return [
-    { icon: '📖', title: '背书未完成', hint: '含背完部分', chips: recite, emptyText: '🎉 全员背书过关！' },
-    { icon: '📝', title: '作业未完成', hint: '需课后补交', chips: hw, emptyText: '🎉 全员作业过关！' },
-    { icon: '⚠️', title: '被老师提醒', hint: '每次扣分记一次', chips: warn, emptyText: '🎉 无人被提醒，课堂纪律很棒！' },
-  ];
+  const sections: StatSection[] = [];
+  if (opts.showRecitation !== false)
+    sections.push({
+      icon: '📖',
+      title: '背书未完成',
+      hint: '含背完部分',
+      chips: recite,
+      emptyText: '🎉 全员背书过关！',
+    });
+  if (opts.showHomework !== false)
+    sections.push({ icon: '📝', title: '作业未完成', hint: '需课后补交', chips: hw, emptyText: '🎉 全员作业过关！' });
+  sections.push({
+    icon: '⚠️',
+    title: '被老师提醒',
+    hint: '每次扣分记一次',
+    chips: warn,
+    emptyText: '🎉 无人被提醒，课堂纪律很棒！',
+  });
+  return sections;
 }
