@@ -1,4 +1,5 @@
-import { useState, type CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
+import { Modal } from './Modal';
 import { useToast } from './Toast';
 
 // 作业模板卡片（NotesTab 同款编辑/查看切换）：班级管理「作业模板」tab 与
@@ -91,6 +92,66 @@ export function HomeworkTemplateEditor({
         </div>
       )}
     </div>
+  );
+}
+
+// 作业模板弹窗版：session 详情页「作业布置」tab 用，从「作业内容」右上角「模板设置」
+// 打开。与卡片版共用 DEFAULT_TEMPLATE / 保存注入 / 变量说明，去掉查看态直接编辑。
+export function HomeworkTemplateDialog({
+  open,
+  onClose,
+  template,
+  onSave,
+}: {
+  open: boolean;
+  onClose: () => void;
+  template: string | null;
+  onSave: (value: string) => Promise<unknown>;
+}) {
+  const toast = useToast();
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  // 每次打开都以当前模板（或默认模板）重新填充草稿
+  useEffect(() => {
+    if (open) setDraft(template ?? DEFAULT_TEMPLATE);
+  }, [open, template]);
+
+  async function save() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await onSave(draft);
+      toast('作业模板已保存');
+      onClose();
+    } catch {
+      toast('保存失败，请重试', 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="作业模板设置" width={520}>
+      <div style={{ fontSize: 12.5, color: '#aab1bc', marginBottom: 12 }}>
+        绑定本班级 · 生成时替换 {'{lesson_number}'} {'{date}'} {'{class_name}'}
+      </div>
+      <textarea
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        placeholder={DEFAULT_TEMPLATE}
+        autoFocus
+        style={textareaStyle}
+      />
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+        <button style={ghostBtn} onClick={onClose} disabled={busy}>
+          取消
+        </button>
+        <button style={{ ...primaryBtn, opacity: busy ? 0.6 : 1 }} onClick={save} disabled={busy}>
+          {busy ? '保存中…' : '保存'}
+        </button>
+      </div>
+    </Modal>
   );
 }
 

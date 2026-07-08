@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { HomeworkTemplateEditor } from '../components/HomeworkTemplateEditor';
+import { HomeworkTemplateDialog } from '../components/HomeworkTemplateEditor';
 import { OverviewTab } from '../components/OverviewTab';
 import { RecapPanel } from '../components/RecapPanel';
 import { TopBar } from '../components/TopBar';
@@ -104,6 +104,7 @@ function HomeworkTab({ d, onSaved }: { d: SessionData; onSaved: (fresh: SessionD
   const [book, setBook] = useState<number | null>(null);
   const [lesson, setLesson] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  const [templateOpen, setTemplateOpen] = useState(false);
 
   const generate = () =>
     renderHomeworkTemplate(d.homeworkTemplate ?? '', {
@@ -142,14 +143,6 @@ function HomeworkTab({ d, onSaved }: { d: SessionData; onSaved: (fresh: SessionD
 
   return (
     <div style={{ maxWidth: 760, display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <HomeworkTemplateEditor
-        template={d.homeworkTemplate}
-        onSave={async (v) => {
-          await api.updateHomeworkTemplate(d.classId, v);
-          onSaved(await api.sessionDetail(d.id));
-        }}
-      />
-
       {d.prevHomework && <PrevHomeworkCard p={d.prevHomework} classId={d.classId} />}
 
       <div style={cardStyle}>
@@ -158,7 +151,14 @@ function HomeworkTab({ d, onSaved }: { d: SessionData; onSaved: (fresh: SessionD
           <div style={{ fontSize: 12.5, color: '#aab1bc' }}>发给家长的最终作业 · 可手动修改</div>
           <button
             style={{ ...ghostBtn, marginLeft: 'auto', height: 34, fontSize: 12.5 }}
-            title="按上方模板重新生成，覆盖当前内容"
+            title="修改本班级作业模板"
+            onClick={() => setTemplateOpen(true)}
+          >
+            ⚙ 模板设置
+          </button>
+          <button
+            style={{ ...ghostBtn, height: 34, fontSize: 12.5 }}
+            title="按模板重新生成，覆盖当前内容"
             onClick={() => setContent(generate())}
           >
             ⟳ 生成
@@ -244,6 +244,16 @@ function HomeworkTab({ d, onSaved }: { d: SessionData; onSaved: (fresh: SessionD
           {busy ? '保存中…' : d.hasHomework ? '更新布置' : '完成布置'}
         </button>
       </div>
+
+      <HomeworkTemplateDialog
+        open={templateOpen}
+        onClose={() => setTemplateOpen(false)}
+        template={d.homeworkTemplate}
+        onSave={async (v) => {
+          await api.updateHomeworkTemplate(d.classId, v);
+          onSaved(await api.sessionDetail(d.id));
+        }}
+      />
     </div>
   );
 }
