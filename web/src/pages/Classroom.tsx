@@ -46,7 +46,9 @@ import {
   RECITE_MAP,
   byScoreDesc,
   gScore,
+  gScoreBreakdown,
   sScore,
+  type GroupScoreBreakdown,
   type Homework,
   type Recitation,
   type SEvent,
@@ -807,14 +809,17 @@ export function Classroom() {
           const g = groupById.get(openGid);
           if (!g) return null;
           const c = colorOf(g.id);
+          const close = () => setOpenGid(null);
           return (
             <GroupPopup
               group={g}
               headFg={c.headFg}
-              score={gScore(events, g.id)}
-              onMinus={() => addGroupScore(g.id, -1)}
-              onPlus={() => addGroupScore(g.id, 1)}
-              onClose={() => setOpenGid(null)}
+              breakdown={gScoreBreakdown(events, g.id)}
+              onScore={(d) => {
+                addGroupScore(g.id, d);
+                close();
+              }}
+              onClose={close}
             />
           );
         })()}
@@ -2544,21 +2549,42 @@ const inputBase: CSSProperties = {
 };
 
 // ===== group popup =========================================================
+// 与学生浮窗同一套交互：点 +1/−1 直接计分并关闭（连击去看板再点组头）。
+// 下方明细把组总分拆成 组员个人加分累计 / 小组独立加分 / 扣分累计 三笔
+// （口径见 lib/session 的 gScoreBreakdown，total = 前两笔之和 − 扣分）。
 function GroupPopup({
   group,
   headFg,
-  score,
-  onMinus,
-  onPlus,
+  breakdown,
+  onScore,
   onClose,
 }: {
   group: SGroup;
   headFg: string;
-  score: number;
-  onMinus: () => void;
-  onPlus: () => void;
+  breakdown: GroupScoreBreakdown;
+  onScore: (d: 1 | -1) => void;
   onClose: () => void;
 }) {
+  const { total, studentPlus, groupPlus, minus } = breakdown;
+  const detailRow = (dot: string, label: string, note: string, value: string, valueColor: string) => (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        padding: '11px 16px',
+        borderRadius: 14,
+        background: '#f8f9fb',
+      }}
+    >
+      <span style={{ width: 10, height: 10, borderRadius: '50%', background: dot, flexShrink: 0 }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 15, fontWeight: 800, color: '#2c3340' }}>{label}</div>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#98a2b0', marginTop: 1 }}>{note}</div>
+      </div>
+      <span style={{ fontFamily: NUM, fontWeight: 800, fontSize: 22, color: valueColor }}>{value}</span>
+    </div>
+  );
   return (
     <Overlay z={55} onClose={onClose}>
       <div style={popupCard(420)} onClick={stop}>
@@ -2575,7 +2601,7 @@ function GroupPopup({
 
         <div style={{ background: '#f6f9f2', borderRadius: 20, padding: 16 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <button onClick={onMinus} style={minusBtn}>
+            <button onClick={() => onScore(-1)} style={minusBtn}>
               −1
             </button>
             <div style={{ flex: 1, textAlign: 'center' }}>
@@ -2593,11 +2619,11 @@ function GroupPopup({
                 }}
               >
                 <span style={{ fontSize: 30 }}>⭐</span>
-                {score}
+                {total}
               </div>
               <div style={{ fontSize: 12, fontWeight: 700, color: '#98a2b0', marginTop: 5 }}>本节小组总分</div>
             </div>
-            <button onClick={onPlus} style={plusBtn}>
+            <button onClick={() => onScore(1)} style={plusBtn}>
               +1
             </button>
           </div>
@@ -2606,9 +2632,32 @@ function GroupPopup({
           </div>
         </div>
 
-        <button onClick={onClose} style={{ ...doneBtn, marginTop: 18 }}>
-          完成
-        </button>
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontWeight: 800, fontSize: 15, color: '#5b6672', marginBottom: 9 }}>📊 得分明细</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {detailRow(
+              '#6fb1fc',
+              '组员个人加分',
+              '组内学生的个人 +1 同步累计',
+              `+${studentPlus}`,
+              studentPlus > 0 ? '#1e9e4a' : '#98a2b0',
+            )}
+            {detailRow(
+              '#f5a623',
+              '小组独立加分',
+              '直接给小组的 +1，不进个人分',
+              `+${groupPlus}`,
+              groupPlus > 0 ? '#1e9e4a' : '#98a2b0',
+            )}
+            {detailRow(
+              '#fb7a5c',
+              '扣分累计',
+              '组员个人与小组的 −1 合计',
+              minus > 0 ? `−${minus}` : '0',
+              minus > 0 ? '#e0454a' : '#98a2b0',
+            )}
+          </div>
+        </div>
       </div>
     </Overlay>
   );

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { byScoreDesc, gScore, initialSession, sScore, stars, warned } from './session';
+import { byScoreDesc, gScore, gScoreBreakdown, initialSession, sScore, stars, warned } from './session';
 
 // Behaviour of the event-stream scoring rules (§5/§6 of the M1 PRD), pinned to
 // the Lesson-3 demo scenario that the classroom mockups render.
@@ -42,6 +42,43 @@ describe('classroom scoring (Lesson 3 scenario)', () => {
   it('drops a group point when the last event is undone', () => {
     const undone = events.slice(0, -1); // last event is 组 g3 +1
     expect(gScore(undone, 'g3')).toBe(2);
+  });
+});
+
+// 小组分明细：总分拆成 学生加分累计 / 小组独立加分累计 / 扣分累计 三部分，
+// total = studentPlus + groupPlus − minus 恒成立（供小组浮窗展示）。
+describe('group score breakdown (gScoreBreakdown)', () => {
+  const { events } = initialSession();
+  const at = '2026-05-29 19:30:00';
+
+  it('splits student-earned vs group-own plus, all clean-positive groups', () => {
+    // g1: 小明+2 小红+1（学生）、组+1、无扣分
+    expect(gScoreBreakdown(events, 'g1')).toEqual({ total: 4, studentPlus: 3, groupPlus: 1, minus: 0 });
+  });
+
+  it('accumulates deductions separately instead of netting them away', () => {
+    // g3: 军军+3（学生）、组+1、婷婷−1 → 明细里扣分单列
+    expect(gScoreBreakdown(events, 'g3')).toEqual({ total: 3, studentPlus: 3, groupPlus: 1, minus: 1 });
+  });
+
+  it('counts group-level −1 into minus, not into groupPlus', () => {
+    const withGroupMinus = events.concat({ id: 98, tt: 'group', tid: 'g3', g: 'g3', d: -1, createdAt: at });
+    expect(gScoreBreakdown(withGroupMinus, 'g3')).toEqual({ total: 2, studentPlus: 3, groupPlus: 1, minus: 2 });
+  });
+
+  it('attributes student events by the group carried on the event (调组不改写历史)', () => {
+    // 小明（历史在 g1）调入 g3 后再 +1：只有新事件计入 g3 的学生累计
+    const moved = events.concat({ id: 99, tt: 'student', tid: '1', g: 'g3', d: 1, createdAt: at });
+    expect(gScoreBreakdown(moved, 'g1')).toEqual({ total: 4, studentPlus: 3, groupPlus: 1, minus: 0 });
+    expect(gScoreBreakdown(moved, 'g3')).toEqual({ total: 4, studentPlus: 4, groupPlus: 1, minus: 1 });
+  });
+
+  it('always satisfies total = studentPlus + groupPlus − minus and matches gScore', () => {
+    for (const gid of ['g1', 'g2', 'g3']) {
+      const b = gScoreBreakdown(events, gid);
+      expect(b.total).toBe(b.studentPlus + b.groupPlus - b.minus);
+      expect(b.total).toBe(gScore(events, gid));
+    }
   });
 });
 

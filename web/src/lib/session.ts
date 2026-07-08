@@ -96,6 +96,31 @@ export function gScore(events: SEvent[], gid: string): number {
     .reduce((a, e) => a + e.d, 0);
 }
 
+/**
+ * 小组分明细（浮窗展示用）：把 gScore 的同一批事件拆成三笔——
+ * 组内学生个人加分累计 / 小组独立加分累计 / 扣分累计（学生+小组的负分，取正数）。
+ * 恒有 total = studentPlus + groupPlus − minus，且 total === gScore。
+ */
+export interface GroupScoreBreakdown {
+  total: number;
+  studentPlus: number;
+  groupPlus: number;
+  minus: number;
+}
+
+export function gScoreBreakdown(events: SEvent[], gid: string): GroupScoreBreakdown {
+  const b = { total: 0, studentPlus: 0, groupPlus: 0, minus: 0 };
+  for (const e of events) {
+    const own = e.tt === 'group' && e.tid === gid;
+    if (!own && !(e.tt === 'student' && e.g === gid)) continue;
+    b.total += e.d;
+    if (e.d < 0) b.minus -= e.d;
+    else if (own) b.groupPlus += e.d;
+    else b.studentPlus += e.d;
+  }
+  return b;
+}
+
 /** Board view ordering: members by personal score desc; ties keep roster order. */
 export function byScoreDesc(students: SStudent[], events: SEvent[]): SStudent[] {
   return students
