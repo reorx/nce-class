@@ -206,6 +206,30 @@ describe('statSections', () => {
     expect(recite.chips[2].groupEmoji).toBeNull();
   });
 
+  it('appends 整组提醒 chips (group-target deductions) after student chips', () => {
+    const r2 = mkRecap({
+      groups: [
+        grp('第1组', { emoji: '🦁', warns: 1, members: [mem('小明', { warns: 2 })] }),
+        grp('第2组', { emoji: '🐯', warns: 3, members: [mem('思思')] }),
+        grp('第3组', { emoji: '🐰', warns: 0 }),
+      ],
+    });
+    const warn = statSections(r2).find((s) => s.title === '被老师提醒')!;
+    expect(warn.chips.map((c) => [c.name, c.groupEmoji, c.tag, c.tone])).toEqual([
+      ['小明', '🦁', '提醒 ×2', 'red'],
+      ['第2组', '🐯', '整组提醒 ×3', 'red'],
+      ['第1组', '🦁', '整组提醒 ×1', 'red'],
+    ]);
+    expect(warn.countLabel).toBe('1 人 · 2 组');
+  });
+
+  it('labels section counts (人/组), tolerating legacy payloads without group warns', () => {
+    const sections = statSections(r); // fixture groups carry no warns field
+    expect(sections.map((s) => s.countLabel)).toEqual(['3 人', '3 人', '2 人']);
+    const onlyGroup = mkRecap({ groups: [grp('第1组', { warns: 2, members: [mem('小明')] })] });
+    expect(statSections(onlyGroup).find((s) => s.title === '被老师提醒')!.countLabel).toBe('1 组');
+  });
+
   it('drops 背书/作业 sections when the corresponding check is disabled', () => {
     expect(statSections(r, { showRecitation: false }).map((s) => s.title)).toEqual(['作业未完成', '被老师提醒']);
     expect(statSections(r, { showHomework: false }).map((s) => s.title)).toEqual(['背书未完成', '被老师提醒']);

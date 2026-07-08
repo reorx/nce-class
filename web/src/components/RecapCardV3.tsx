@@ -279,7 +279,7 @@ export function RecapCardV3({
                     flexShrink: 0,
                   }}
                 >
-                  {t.chips.length} 人
+                  {t.countLabel}
                 </span>
                 <span style={{ marginLeft: 'auto', fontWeight: 700, fontSize: 11, color: '#c2b48f' }}>{t.hint}</span>
               </div>

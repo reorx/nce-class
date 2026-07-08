@@ -182,6 +182,7 @@ export interface StatSection {
   title: string;
   hint: string;
   chips: StatChip[];
+  countLabel: string; // "3 人" / "1 人 · 2 组"
   emptyText: string;
 }
 
@@ -212,10 +213,19 @@ export function statSections(recap: Recap, opts: RecapCheckOptions = {}): StatSe
   const hw = present
     .filter((m) => m.homework !== '完成')
     .map((m) => (m.homework === '需补' ? chip(m, '需补', 'amber') : chip(m, '没交', 'red')));
-  const warn = present
+  const warnStudents = present
     .filter((m) => m.warns > 0)
     .sort((a, b) => b.warns - a.warns)
     .map((m) => chip(m, `提醒 ×${m.warns}`, 'red'));
+  // 整组扣分（target=group 的负分事件）单独成 chip，排在个人之后；组员个人扣分不计入
+  const warnGroups = recap.groups
+    .filter((g) => (g.warns ?? 0) > 0)
+    .sort((a, b) => (b.warns ?? 0) - (a.warns ?? 0) || a.orderIndex - b.orderIndex)
+    .map((g): StatChip => ({ name: g.name, groupEmoji: g.emoji, tag: `整组提醒 ×${g.warns}`, tone: 'red' }));
+  const warnCount = [
+    ...(warnStudents.length || !warnGroups.length ? [`${warnStudents.length} 人`] : []),
+    ...(warnGroups.length ? [`${warnGroups.length} 组`] : []),
+  ].join(' · ');
 
   const sections: StatSection[] = [];
   if (opts.showRecitation !== false)
@@ -224,15 +234,24 @@ export function statSections(recap: Recap, opts: RecapCheckOptions = {}): StatSe
       title: '背书未完成',
       hint: '含背完部分',
       chips: recite,
+      countLabel: `${recite.length} 人`,
       emptyText: '🎉 全员背书过关！',
     });
   if (opts.showHomework !== false)
-    sections.push({ icon: '📝', title: '作业未完成', hint: '需课后补交', chips: hw, emptyText: '🎉 全员作业过关！' });
+    sections.push({
+      icon: '📝',
+      title: '作业未完成',
+      hint: '需课后补交',
+      chips: hw,
+      countLabel: `${hw.length} 人`,
+      emptyText: '🎉 全员作业过关！',
+    });
   sections.push({
     icon: '⚠️',
     title: '被老师提醒',
     hint: '每次扣分记一次',
-    chips: warn,
+    chips: [...warnStudents, ...warnGroups],
+    countLabel: warnCount,
     emptyText: '🎉 无人被提醒，课堂纪律很棒！',
   });
   return sections;

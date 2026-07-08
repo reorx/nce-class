@@ -114,9 +114,11 @@ const q = {
   ),
   sessionGroups: sqlite.prepare(`SELECT * FROM session_groups WHERE session_id=? ORDER BY order_index`),
   // Per-session-group score (nested, §5): group events on the group + student
-  // events tagged with that group at the time they fired.
+  // events tagged with that group at the time they fired. warns counts only
+  // group-target deductions — member deductions surface on the member rows.
   sessionGroupScores: sqlite.prepare(
-    `SELECT sg.id gid, COALESCE(SUM(e.delta),0) score
+    `SELECT sg.id gid, COALESCE(SUM(e.delta),0) score,
+       COALESCE(SUM(CASE WHEN e.target_type='group' AND e.delta<0 THEN 1 ELSE 0 END),0) warns
      FROM session_groups sg
      LEFT JOIN score_events e
        ON e.session_id = sg.session_id
@@ -351,7 +353,7 @@ function classDetailPayload(id: string) {
 
 /** Full recap derived from one ended session's ledger (group ranking + 亮眼/被提醒 + 出勤 + 成员明细). */
 function buildRecap(s: any) {
-  const scoreByGid = new Map((q.sessionGroupScores.all(s.id) as any[]).map((r) => [r.gid, r.score]));
+  const scoreRowByGid = new Map((q.sessionGroupScores.all(s.id) as any[]).map((r) => [r.gid, r]));
   // Per-member rows (roster order; missing check record = null, read side maps
   // to 没交/未检查 per PRD §8). warns = 该节被扣分的事件次数.
   const roster = q.sessionRoster.all(s.id) as any[];
@@ -380,7 +382,8 @@ function buildRecap(s: any) {
       name: g.name,
       emoji: g.emoji,
       orderIndex: g.order_index,
-      score: scoreByGid.get(g.id) ?? 0,
+      score: scoreRowByGid.get(g.id)?.score ?? 0,
+      warns: scoreRowByGid.get(g.id)?.warns ?? 0,
       members: roster.filter((m) => m.gid === g.id).map(memberOf),
     }))
     .sort((a, b) => b.score - a.score);

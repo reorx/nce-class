@@ -99,6 +99,7 @@ export interface RecapGroup {
   emoji: string | null;
   orderIndex: number;
   score: number;
+  warns?: number; // 该节整组被扣分的事件次数（不含组员个人扣分）; absent on legacy payloads
   members?: RecapMember[]; // roster order; absent on legacy payloads
 }
 

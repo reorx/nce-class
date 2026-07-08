@@ -735,6 +735,27 @@ describe('session recap', () => {
     ]);
   });
 
+  it('counts group-target deductions as group warns (member deductions excluded)', async () => {
+    const { agent } = await login();
+    // baseline: 小刚's personal −1 stays a member warn, never the group's
+    const before = (await agent.get('/api/sessions/sess1/recap')).body;
+    expect(before.groups.map((g: any) => [g.name, g.warns])).toEqual([
+      ['第1组', 0],
+      ['第2组', 0],
+    ]);
+    sqlite
+      .prepare(
+        `INSERT INTO score_events (id, session_id, target_type, target_id, session_group_id, delta, created_by)
+         VALUES ('e-gw1','sess1','group','sg2','sg2',-1,'t-wangli'),
+                ('e-gw2','sess1','group','sg2','sg2',-1,'t-wangli')`,
+      )
+      .run();
+    const after = (await agent.get('/api/sessions/sess1/recap')).body;
+    const g2 = after.groups.find((g: any) => g.name === '第2组');
+    expect(g2.warns).toBe(2);
+    expect(g2.score).toBe(-2); // deductions still flow into the nested group score
+  });
+
   it('reflects 请假 (attendance correction) in the member rows', async () => {
     const { agent } = await login();
     await agent.put('/api/sessions/sess1/attendance/s2').send({ status: 'leave' });
