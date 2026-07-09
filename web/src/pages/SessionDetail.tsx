@@ -58,15 +58,42 @@ export function SessionDetail({ me }: { me: Me | null }) {
           <span style={{ fontSize: 14 }}>←</span>返回上课记录
         </Link>
 
-        <div style={{ marginBottom: 20 }}>
-          <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, letterSpacing: '-.3px' }}>
-            {d ? lessonLabel(d.lessonNumber, d.lessonTitle) : ' '}
-          </h1>
+        <div style={{ marginBottom: 20, display: 'flex', alignItems: 'flex-start', gap: 16 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, letterSpacing: '-.3px' }}>
+              {d ? lessonLabel(d.lessonNumber, d.lessonTitle) : ' '}
+            </h1>
+            {d && (
+              <div style={{ marginTop: 8, fontSize: 13.5, color: '#7a828f' }}>
+                {d.className} · {d.year}-{d.date} {d.weekday} · {d.durationLabel}
+                {d.teacherName ? ` · 主讲 ${d.teacherName}` : ''}
+              </div>
+            )}
+          </div>
           {d && (
-            <div style={{ marginTop: 8, fontSize: 13.5, color: '#7a828f' }}>
-              {d.className} · {d.year}-{d.date} {d.weekday} · {d.durationLabel}
-              {d.teacherName ? ` · 主讲 ${d.teacherName}` : ''}
-            </div>
+            // 编辑本节课: reopen this committed session in the classroom (得分/背书作业/
+            // 出勤/奖章/分组), then 覆盖保存 overwrites it in place.
+            <Link
+              to={`/classes/${id}/classroom?edit_id=${sid}`}
+              title="在课堂界面重新编辑本节课，保存后覆盖当前记录"
+              style={{
+                flexShrink: 0,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                height: 38,
+                padding: '0 16px',
+                borderRadius: 9,
+                background: '#fff',
+                color: GREEN,
+                border: `1px solid ${GREEN}`,
+                fontWeight: 600,
+                fontSize: 13.5,
+                textDecoration: 'none',
+              }}
+            >
+              ✏️ 编辑本节课
+            </Link>
           )}
         </div>
 

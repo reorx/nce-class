@@ -11,7 +11,7 @@
 // gScore / stars / warned) and are reused verbatim.
 // ---------------------------------------------------------------------------
 
-import type { CommitPayload } from './api';
+import type { CommitPayload, SessionDetail } from './api';
 import type { Homework, Recitation, SEvent, SGroup, SStudent } from './session';
 import type { SessionConfig } from './setup';
 import { normalizeTagName, tagKey } from './tags';
@@ -55,6 +55,13 @@ export interface ClassroomSession {
   // live 计时（右上角静态「补录」标签），结束时 endedAt = startedAt + 时长（endSql）
   // 而非 nowSql()。可选字段 → 老存档/旧代码读成普通实时课（persisted-shape compat）。
   backfill?: boolean;
+  // 编辑上课记录：this local session OVERWRITES an existing committed session (its
+  // server id) on 结束课堂 instead of creating a new one. Optional → old存档/普通
+  // 课 read as a normal create (persisted-shape compat).
+  editOfSessionId?: string;
+  // Original ended_at carried through an edit, so overwrite keeps the recorded
+  // duration instead of recomputing startedAt + 时长. Optional (compat).
+  endedAt?: string;
   defaultGrouping: DefaultGroup[];
   groups: SGroup[];
   students: ClassroomStudent[];
@@ -118,6 +125,91 @@ export function buildClassroomSession(
     events: [],
     log: [],
     nid: 1,
+  };
+}
+
+/**
+ * Rebuild an editable ClassroomSession from a committed session's ledger (编辑
+ * 上课记录, GET /api/sessions/:id → detail.ledger). `defaultGrouping` is the
+ * class's CURRENT default grouping — carried only to satisfy the commit payload's
+ * validation; the overwrite endpoint ignores it (editing a past class never
+ * reshuffles the live default grouping).
+ *
+ * Two things never persisted are re-derived: the 课堂日志 restarts empty (like an
+ * old存档 without a log), and the 背书自动分 marker (SEvent.src:'recite') is put
+ * back on each 已背完 student's last own +1 event so toggling 背书 stays
+ * exactly-once. Runs as a 补录-style frozen-timer session (not happening now).
+ */
+export function buildEditSession(detail: SessionDetail, defaultGrouping: DefaultGroup[]): ClassroomSession {
+  const L = detail.ledger;
+  const groups: SGroup[] = L.sessionGroups
+    .slice()
+    .sort((a, b) => a.orderIndex - b.orderIndex)
+    .map((g) => ({ id: g.id, name: g.name, emoji: g.emoji ?? '' }));
+
+  const reciteBy = new Map<string, Recitation>();
+  const hwBy = new Map<string, Homework>();
+  for (const c of L.checks) {
+    if (c.type === 'recitation') reciteBy.set(c.studentId, c.status as Recitation);
+    else if (c.type === 'homework') hwBy.set(c.studentId, c.status as Homework);
+  }
+  const tagsBy = new Map<string, string[]>();
+  for (const t of L.tags) tagsBy.set(t.studentId, [...(tagsBy.get(t.studentId) ?? []), t.tag]);
+
+  const students: ClassroomStudent[] = L.memberships.map((m) => ({
+    id: m.studentId,
+    // Keep the snapshot group even for absentees (they render under it as 未到,
+    // like buildClassroomSession); ungrouped → ''. Commit still nulls absent groups.
+    g: m.sessionGroupId ?? '',
+    name: m.name,
+    r: reciteBy.get(m.studentId) ?? null,
+    h: hwBy.get(m.studentId) ?? '没交', // 缺记录 = 没交 (server 口径)
+    tags: tagsBy.get(m.studentId) ?? [],
+    attendance: m.attendance === 'present' ? 'present' : 'absent', // leave → absent (板上无请假态)
+  }));
+
+  let nid = 1;
+  const events: SEvent[] = L.events.map((e) => ({
+    id: nid++,
+    tt: e.targetType,
+    tid: e.targetId,
+    g: e.sessionGroupId ?? '',
+    d: e.delta,
+    createdAt: e.createdAt,
+  }));
+  // Re-mark the recitation bonus: tag each 已背完 student's LAST own +1 event as
+  // src:'recite' so reconcileRecitePoint removes/re-adds exactly that point on a
+  // 背书 toggle. Re-labels an existing event → totals are unchanged.
+  for (const st of students) {
+    if (st.r !== '已背完') continue;
+    for (let i = events.length - 1; i >= 0; i--) {
+      const e = events[i];
+      if (e.tt === 'student' && e.tid === st.id && e.d === 1 && e.src !== 'recite') {
+        events[i] = { ...e, src: 'recite' };
+        break;
+      }
+    }
+  }
+
+  return {
+    clientSessionId: L.clientSessionId ?? newClientSessionId(),
+    classId: detail.classId,
+    className: detail.className,
+    lessonNumber: detail.lessonNumber != null ? String(detail.lessonNumber) : undefined,
+    lessonTitle: detail.lessonTitle ?? undefined,
+    teacherId: detail.teacherId ?? undefined,
+    teacherName: detail.teacherName ?? undefined,
+    plannedDurationMin: detail.plannedDurationMin,
+    startedAt: detail.startedAt ?? `${detail.year}-${detail.date} 00:00:00`, // legacy rows lack startedAt
+    backfill: true, // past class → frozen timer + static badge (reuses the 补录 path)
+    editOfSessionId: detail.id,
+    endedAt: detail.endedAt ?? undefined,
+    defaultGrouping,
+    groups,
+    students,
+    events,
+    log: [],
+    nid,
   };
 }
 
@@ -525,6 +617,19 @@ export function endSql(startedAt: string, durationMin: number): string {
   const ms = Date.parse(startedAt.replace(' ', 'T'));
   if (Number.isNaN(ms)) return nowSql(); // malformed startedAt — last-resort fallback
   return nowSql(new Date(ms + Math.max(1, durationMin) * 60000));
+}
+
+/** The non-live endedAt of a 补录/编辑 session (undefined for a live class, which
+ *  stamps nowSql() at 结束). 编辑 keeps the session's recorded endedAt unless a
+ *  startedAt edit pushed it past that time; 补录 = 开始 + 时长. Single-sourced so
+ *  the commit and the 结束确认 preview never drift. */
+export function previewEndedAt(
+  s: Pick<ClassroomSession, 'editOfSessionId' | 'endedAt' | 'startedAt' | 'backfill' | 'plannedDurationMin'>,
+): string | undefined {
+  if (s.editOfSessionId) {
+    return s.endedAt && s.endedAt > s.startedAt ? s.endedAt : endSql(s.startedAt, s.plannedDurationMin);
+  }
+  return s.backfill ? endSql(s.startedAt, s.plannedDurationMin) : undefined;
 }
 
 /** The 'HH:MM' slice of a stored startedAt for the dialog's time input

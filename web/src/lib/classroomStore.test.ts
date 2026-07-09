@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { gScore, sScore } from './session';
 import type { SessionConfig } from './setup';
+import type { SessionDetail } from './api';
 import {
   applyStartTime,
   buildClassroomSession,
   buildCommitPayload,
+  buildEditSession,
   clearCommitBackup,
   clearSession,
   endSql,
@@ -746,6 +748,131 @@ describe('sqlFromParts / endSql (补录 time helpers)', () => {
   it('endSql adds the duration in minutes, rolling across the hour/day boundary', () => {
     expect(endSql('2026-07-02 19:00:00', 120)).toBe('2026-07-02 21:00:00');
     expect(endSql('2026-07-02 23:30:00', 60)).toBe('2026-07-03 00:30:00');
+  });
+});
+
+describe('buildEditSession (编辑上课记录: reopen a committed session)', () => {
+  // A committed sess1-shaped ledger: 小明 +2 (背书 已背完), 小红 +1, 组 sg1 +1;
+  // 小刚 请假(leave), 浩浩 缺席. Only the fields buildEditSession reads are set.
+  function detail(): SessionDetail {
+    return {
+      id: 'sess1',
+      classId: 'c1',
+      className: '三年级A班',
+      year: '2026',
+      date: '06-26',
+      lessonNumber: 7,
+      lessonTitle: 'Too late',
+      teacherId: 't-wangli',
+      teacherName: '王莉',
+      plannedDurationMin: 120,
+      startedAt: '2026-06-26 19:00:00',
+      endedAt: '2026-06-26 20:58:00',
+      ledger: {
+        clientSessionId: 'cs-orig',
+        sessionGroups: [
+          { id: 'sg2', name: '第2组', emoji: '🐯', orderIndex: 1 }, // out of order → sorted by orderIndex
+          { id: 'sg1', name: '第1组', emoji: '🦁', orderIndex: 0 },
+        ],
+        memberships: [
+          { studentId: 's1', name: '小明', sessionGroupId: 'sg1', attendance: 'present' },
+          { studentId: 's2', name: '小红', sessionGroupId: 'sg1', attendance: 'present' },
+          { studentId: 's3', name: '小刚', sessionGroupId: 'sg2', attendance: 'leave' },
+          { studentId: 's4', name: '浩浩', sessionGroupId: null, attendance: 'absent' },
+        ],
+        events: [
+          { targetType: 'student', targetId: 's1', sessionGroupId: 'sg1', delta: 1, createdAt: '2026-06-26 19:05:00' },
+          { targetType: 'student', targetId: 's1', sessionGroupId: 'sg1', delta: 1, createdAt: '2026-06-26 19:06:00' },
+          { targetType: 'student', targetId: 's2', sessionGroupId: 'sg1', delta: 1, createdAt: '2026-06-26 19:07:00' },
+          { targetType: 'group', targetId: 'sg1', sessionGroupId: 'sg1', delta: 1, createdAt: '2026-06-26 19:08:00' },
+        ],
+        checks: [
+          { studentId: 's1', type: 'recitation', status: '已背完' },
+          { studentId: 's1', type: 'homework', status: '完成' },
+          { studentId: 's2', type: 'recitation', status: '背完部分' },
+        ],
+        tags: [{ studentId: 's1', tag: '进步之星' }],
+      },
+    } as unknown as SessionDetail;
+  }
+
+  const def = () => [
+    { clientId: 'g1', name: '第1组', emoji: '🦁', orderIndex: 0, memberIds: ['s1', 's2'] },
+    { clientId: 'g2', name: '第2组', emoji: '🐯', orderIndex: 1, memberIds: ['s3'] },
+  ];
+
+  it('reconstructs meta + groups + students + score stream', () => {
+    const s = buildEditSession(detail(), def());
+    expect(s.editOfSessionId).toBe('sess1');
+    expect(s.clientSessionId).toBe('cs-orig'); // original id preserved for the overwrite
+    expect(s.backfill).toBe(true); // frozen timer (past class)
+    expect(s.endedAt).toBe('2026-06-26 20:58:00'); // original duration kept
+    expect(s.lessonNumber).toBe('7');
+    expect(s.plannedDurationMin).toBe(120);
+    expect(s.defaultGrouping).toEqual(def());
+    // groups sorted by orderIndex, emoji '' when null
+    expect(s.groups).toEqual([
+      { id: 'sg1', name: '第1组', emoji: '🦁' },
+      { id: 'sg2', name: '第2组', emoji: '🐯' },
+    ]);
+    // scores derived from the rebuilt event stream match the committed ledger
+    expect(sScore(s.events, 's1')).toBe(2);
+    expect(sScore(s.events, 's2')).toBe(1);
+    expect(gScore(s.events, 'sg1')).toBe(4); // 小明2 + 小红1 + 组1
+    expect(s.nid).toBe(s.events.length + 1);
+  });
+
+  it('maps checks / tags / attendance per student (leave → absent, 缺记录 = 没交)', () => {
+    const byId = new Map(buildEditSession(detail(), def()).students.map((x) => [x.id, x]));
+    expect(byId.get('s1')).toMatchObject({
+      g: 'sg1',
+      r: '已背完',
+      h: '完成',
+      tags: ['进步之星'],
+      attendance: 'present',
+    });
+    expect(byId.get('s2')).toMatchObject({ r: '背完部分', h: '没交', attendance: 'present' });
+    expect(byId.get('s3')).toMatchObject({ g: 'sg2', attendance: 'absent' }); // leave folded to absent, keeps group
+    expect(byId.get('s4')).toMatchObject({ g: '', attendance: 'absent' });
+  });
+
+  it('re-marks the 已背完 bonus so a 背书 toggle removes/re-adds exactly one point', () => {
+    const s = buildEditSession(detail(), def());
+    const recite = s.events.filter((e) => e.src === 'recite');
+    expect(recite).toHaveLength(1);
+    expect(recite[0]).toMatchObject({ tt: 'student', tid: 's1', d: 1 });
+
+    // toggle 背书 off → the bonus point is withdrawn (net 2 → 1)
+    const off = reducer(s, { type: 'setRecite', sid: 's1', v: '没背', at: '2026-06-26 19:10:00' });
+    expect(sScore(off.events, 's1')).toBe(1);
+    // toggle back on → the point is re-issued exactly once (net 1 → 2)
+    const on = reducer(off, { type: 'setRecite', sid: 's1', v: '已背完', at: '2026-06-26 19:11:00' });
+    expect(sScore(on.events, 's1')).toBe(2);
+  });
+
+  it('round-trips through buildCommitPayload without losing scores/checks/tags/attendance', () => {
+    const s = buildEditSession(detail(), def());
+    const payload = buildCommitPayload(s, '2026-06-26 20:58:00');
+    expect(payload.clientSessionId).toBe('cs-orig');
+    expect(payload.events).toHaveLength(4);
+    // per-target net deltas survive the rebuild
+    const net = (tid: string) => payload.events.filter((e) => e.targetId === tid).reduce((a, e) => a + e.delta, 0);
+    expect(net('s1')).toBe(2);
+    expect(net('s2')).toBe(1);
+    expect(payload.checks).toEqual(
+      expect.arrayContaining([
+        { studentId: 's1', type: 'recitation', status: '已背完' },
+        { studentId: 's1', type: 'homework', status: '完成' },
+        { studentId: 's2', type: 'recitation', status: '背完部分' },
+      ]),
+    );
+    expect(payload.tags).toEqual([{ studentId: 's1', tag: '进步之星' }]);
+    const att = new Map(payload.memberships.map((m) => [m.studentId, m.attendance]));
+    expect(att.get('s1')).toBe('present');
+    expect(att.get('s3')).toBe('absent');
+    expect(att.get('s4')).toBe('absent');
+    // absent students commit with a null group regardless of the board-side g
+    expect(payload.memberships.find((m) => m.studentId === 's3')?.clientGroupId).toBeNull();
   });
 });
 

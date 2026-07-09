@@ -10,12 +10,13 @@ import {
   applyStartTime,
   buildClassroomSession,
   buildCommitPayload,
+  buildEditSession,
   clearCommitBackup,
   clearSession,
-  endSql,
   loadSession,
   newClientSessionId,
   nowSql,
+  previewEndedAt,
   reducer,
   saveCommitBackup,
   saveSession,
@@ -75,8 +76,9 @@ export function Classroom() {
   const toast = useToast();
 
   const [session, setSession] = useState<ClassroomSession | null>(null);
-  // 'loading' until we know whether to resume / boot / redirect (decision 13).
-  const [phase, setPhase] = useState<'loading' | 'ready' | 'redirect'>('loading');
+  // 'loading' until we know whether to resume / boot / redirect (decision 13);
+  // 'conflict' = 编辑 blocked because another in-progress session holds the slot.
+  const [phase, setPhase] = useState<'loading' | 'ready' | 'redirect' | 'conflict'>('loading');
   const [view, setView] = useState<View>('board');
   const [openId, setOpenId] = useState<string | null>(null);
   const [openGid, setOpenGid] = useState<string | null>(null);
@@ -104,15 +106,47 @@ export function Classroom() {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  // ---- boot: resume from store · else URL-param boot · else → 课前配置 -------
+  // ---- boot: resume from store · else edit_id / URL-param boot · else → 课前配置 -------
   useEffect(() => {
+    const sp = new URLSearchParams(loc.search);
+    const editId = sp.get('edit_id');
     const stored = loadSession(id);
     if (stored) {
+      // The per-class slot holds at most one in-progress session. If we're asked
+      // to edit a DIFFERENT one than what's stored, that's a conflict — block it
+      // so we never clobber a live class (or another edit) mid-flight.
+      if (editId && stored.editOfSessionId !== editId) {
+        setPhase('conflict');
+        return;
+      }
       setSession(stored);
       setPhase('ready');
       return;
     }
-    const sp = new URLSearchParams(loc.search);
+    // 编辑上课记录: reopen a committed session by fetching its ledger + the class's
+    // current default grouping, then rebuild the editable local session.
+    if (editId) {
+      Promise.all([api.sessionDetail(editId), api.classDetail(id)])
+        .then(([detail, d]) => {
+          if (detail.classId !== id) {
+            setPhase('redirect');
+            return;
+          }
+          const defaultGrouping = d.groups.map((g) => ({
+            clientId: g.id,
+            name: g.name,
+            emoji: g.emoji,
+            orderIndex: g.orderIndex,
+            memberIds: g.memberIds,
+          }));
+          const fresh = buildEditSession(detail, defaultGrouping);
+          saveSession(fresh);
+          setSession(fresh);
+          setPhase('ready');
+        })
+        .catch(() => setPhase('redirect'));
+      return;
+    }
     const lesson = sp.get('lesson');
     const title = sp.get('title');
     const duration = sp.get('duration');
@@ -175,6 +209,7 @@ export function Classroom() {
   const dispatch = (a: CAction) => setSession((s) => (s ? reducer(s, a) : s));
 
   if (phase === 'redirect') return <Navigate to={`/classes/${id}/setup`} replace />;
+  if (phase === 'conflict') return <EditConflict classId={id} nav={nav} />;
   if (phase === 'loading' || !session) return <Splash />;
 
   const { students, groups, events } = session;
@@ -226,28 +261,52 @@ export function Classroom() {
   const className = session.className ?? '班级';
   const lessonLabel = fmtLessonLabel(session.lessonNumber, session.lessonTitle);
   const isBoard = view === 'board' || view === 'regroup';
+  // 编辑上课记录 reuses the 补录 frozen-timer path but shows a distinct header badge.
+  const pastBadge = session.editOfSessionId
+    ? {
+        title: '编辑上课记录：修改一节已保存的课，不实时计时',
+        bg: '#e7f0ff',
+        fg: '#2a6fb0',
+        dot: '#a9c6ea',
+        icon: '✏️',
+        label: '编辑课堂',
+      }
+    : {
+        title: '补录课堂：补充一节过去的课，不实时计时',
+        bg: '#fff6e0',
+        fg: '#b9791a',
+        dot: '#d9b877',
+        icon: '📝',
+        label: '补录课堂',
+      };
 
   // ---- end class: commit the whole session once, then to 上课记录 ----------
+  const editId = session.editOfSessionId;
   const confirmEnd = () => {
     if (submitting) return;
     setSubmitting(true);
-    // Live class ⇒ endedAt is the wall clock at 结束; 补录课堂 ⇒ a fixed
-    // startedAt + 时长 (the class isn't happening now, so "now" is meaningless).
-    const endedAt = session.backfill ? endSql(session.startedAt, session.plannedDurationMin) : nowSql();
+    // Live class ⇒ endedAt is the wall clock at 结束; 补录/编辑 use their fixed
+    // preview time (single-sourced with the 结束确认 dialog).
+    const endedAt = previewEndedAt(session) ?? nowSql();
     const payload = buildCommitPayload(session, endedAt);
     // Copy to the collision-free backup slot BEFORE the POST: a failed or
     // interrupted submit must never lose the lesson, even if a new session for
     // this class later overwrites nce.classroom.<classId>. Cleared only after
     // the server confirms; clientSessionId keeps any later re-POST idempotent.
     saveCommitBackup({ session, payload });
-    api
-      .commitSession(id, payload)
+    // 编辑上课记录 overwrites the existing session in place; a normal 结束课堂 creates one.
+    (editId ? api.overwriteSession(editId, payload) : api.commitSession(id, payload))
       .then((result) => {
         clearCommitBackup(payload.clientSessionId);
         clearSession(id);
-        toast('本节课已保存 · 请布置作业', 'success');
-        // land on 作业布置 (overview is now the default tab); the toast nudges homework
-        nav(`/classes/${id}/sessions/${result.sessionId}?tab=homework`);
+        if (editId) {
+          toast('本节课已更新', 'success');
+          nav(`/classes/${id}/sessions/${editId}`);
+        } else {
+          toast('本节课已保存 · 请布置作业', 'success');
+          // land on 作业布置 (overview is now the default tab); the toast nudges homework
+          nav(`/classes/${id}/sessions/${result.sessionId}?tab=homework`);
+        }
       })
       .catch((e) => {
         setSubmitting(false);
@@ -365,22 +424,22 @@ export function Classroom() {
           <PrevLessonButton classId={id} />
           {backfill ? (
             <div
-              title="补录课堂：补充一节过去的课，不实时计时"
+              title={pastBadge.title}
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: 8,
                 padding: '7px 15px',
                 borderRadius: 12,
-                background: '#fff6e0',
-                color: '#b9791a',
+                background: pastBadge.bg,
+                color: pastBadge.fg,
                 fontWeight: 800,
                 fontSize: 16,
               }}
             >
-              <span style={{ fontSize: 17 }}>📝</span>
-              补录课堂
-              <span style={{ color: '#d9b877' }}>·</span>
+              <span style={{ fontSize: 17 }}>{pastBadge.icon}</span>
+              {pastBadge.label}
+              <span style={{ color: pastBadge.dot }}>·</span>
               <span style={{ fontFamily: NUM, fontVariantNumeric: 'tabular-nums' }}>
                 {dateLabelCn(session.startedAt)}
               </span>
@@ -759,7 +818,7 @@ export function Classroom() {
               boxShadow: '0 5px 14px rgba(255,90,95,.34)',
             }}
           >
-            结束课堂
+            {editId ? '保存修改' : '结束课堂'}
           </button>
         </div>
       </div>
@@ -850,7 +909,8 @@ export function Classroom() {
           lesson={lessonLabel}
           startedAt={session.startedAt}
           backfill={backfill}
-          endedAt={backfill ? endSql(session.startedAt, session.plannedDurationMin) : undefined}
+          edit={!!editId}
+          endedAt={previewEndedAt(session)}
           students={students}
           submitting={submitting}
           onClose={() => !submitting && setShowEnd(false)}
@@ -963,6 +1023,65 @@ function Splash() {
       }}
     >
       加载课堂…
+    </div>
+  );
+}
+
+// Shown when 编辑上课记录 is blocked: the per-class classroom slot already holds a
+// live class (or a different session's edit). We never silently clobber it.
+function EditConflict({ classId, nav }: { classId: string; nav: (to: string) => void }) {
+  const btn: CSSProperties = {
+    height: 46,
+    padding: '0 22px',
+    borderRadius: 14,
+    fontWeight: 800,
+    fontSize: 16,
+    fontFamily: 'inherit',
+    cursor: 'pointer',
+  };
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: '#e9f3e4',
+        fontFamily: FONT,
+        padding: 24,
+      }}
+    >
+      <div
+        style={{
+          maxWidth: 460,
+          background: '#fff',
+          borderRadius: 24,
+          padding: '32px 30px',
+          boxShadow: '0 12px 32px rgba(60,90,55,.12)',
+          textAlign: 'center',
+        }}
+      >
+        <div style={{ fontSize: 40, marginBottom: 10 }}>✋</div>
+        <div style={{ fontWeight: 900, fontSize: 21, color: '#2c3340', marginBottom: 10 }}>有正在进行的课堂</div>
+        <div style={{ fontSize: 15, fontWeight: 600, color: '#66756c', lineHeight: 1.7, marginBottom: 24 }}>
+          这个班级还有一节未结束的课堂（或另一节课的编辑）。请先把它结束或放弃，再来编辑这节课。
+        </div>
+        <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+          <button
+            onClick={() => nav(`/classes/${classId}`)}
+            style={{ ...btn, background: '#fff', color: '#5b6672', border: '2px solid #e2e5ea' }}
+          >
+            返回班级
+          </button>
+          <button
+            onClick={() => nav(`/classes/${classId}/classroom`)}
+            style={{ ...btn, background: '#2fb457', color: '#fff', border: 'none' }}
+          >
+            去当前课堂 →
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -2673,6 +2792,7 @@ function EndConfirm({
   lesson,
   startedAt,
   backfill,
+  edit,
   endedAt,
   students,
   submitting,
@@ -2684,6 +2804,7 @@ function EndConfirm({
   lesson: string;
   startedAt: string;
   backfill: boolean;
+  edit?: boolean;
   endedAt?: string;
   students: ClassroomStudent[];
   submitting: boolean;
@@ -2703,18 +2824,48 @@ function EndConfirm({
       <div style={{ ...popupCard(500), maxHeight: '88vh', overflow: 'auto' }} onClick={stop}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
           <span style={{ fontSize: 28 }}>⚠️</span>
-          <span style={{ fontWeight: 900, fontSize: 23, color: '#2c3340' }}>结束课堂？</span>
+          <span style={{ fontWeight: 900, fontSize: 23, color: '#2c3340' }}>{edit ? '保存修改？' : '结束课堂？'}</span>
           <button onClick={onClose} style={{ ...closeBtn, marginLeft: 'auto' }}>
             ✕
           </button>
         </div>
 
         <div style={{ fontSize: 15, fontWeight: 600, color: '#5b6672', lineHeight: 1.7, marginBottom: 16 }}>
-          结束后本节课将整体存档入库、生成课堂战报，<b style={{ color: '#e0454a' }}>该操作不可撤销</b>
-          。请确认以下信息无误：
+          {edit ? (
+            <>
+              保存后将<b style={{ color: '#e0454a' }}>覆盖</b>
+              这节课已有的记录（得分、背书作业、出勤、奖章），原记录不可恢复。请确认以下信息无误：
+            </>
+          ) : (
+            <>
+              结束后本节课将整体存档入库、生成课堂战报，<b style={{ color: '#e0454a' }}>该操作不可撤销</b>
+              。请确认以下信息无误：
+            </>
+          )}
         </div>
 
-        {backfill && (
+        {edit && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '10px 14px',
+              borderRadius: 12,
+              background: '#e7f0ff',
+              color: '#2a6fb0',
+              fontWeight: 700,
+              fontSize: 13.5,
+              lineHeight: 1.5,
+              marginBottom: 14,
+            }}
+          >
+            <span style={{ fontSize: 16 }}>✏️</span>
+            正在编辑一节已保存的课 · 覆盖保存，不改动班级当前默认分组
+          </div>
+        )}
+
+        {backfill && !edit && (
           <div
             style={{
               display: 'flex',
@@ -2797,7 +2948,7 @@ function EndConfirm({
               boxShadow: '0 5px 14px rgba(47,180,87,.3)',
             }}
           >
-            {submitting ? '保存中…' : '确认结束'}
+            {submitting ? '保存中…' : edit ? '确认保存' : '确认结束'}
           </button>
         </div>
         <div style={{ textAlign: 'center', marginTop: 14 }}>
@@ -2817,7 +2968,7 @@ function EndConfirm({
               opacity: submitting ? 0.5 : 1,
             }}
           >
-            丢弃本次上课，不计入记录
+            {edit ? '放弃这次编辑（不改动已保存的记录）' : '丢弃本次上课，不计入记录'}
           </button>
         </div>
       </div>

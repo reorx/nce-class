@@ -28,11 +28,11 @@ miniapp/ Taro 4 + React（weapp 正式产物 / h5 开发调试；appid wx19490e2
 
 ## 页面与 API
 
-web 路由：`/`、`/classes/:id`（?tab=students|groups|notes|homework|invite|sessions）、`/classes/:id/students/:sid`、`/classes/:id/sessions/:sid`（?tab=homework|recap|info）、`/classes/:id/attendance`、`/classes/:id/setup`、`/classes/:id/classroom`、`/sessions`、`/teachers`、`/login`。课堂直连判定：本地 store 有该班进行中课堂→恢复；URL 带 `?lesson=4&title=...&duration=120`→boot 新课；否则跳 setup。
+web 路由：`/`、`/classes/:id`（?tab=students|groups|notes|homework|invite|sessions）、`/classes/:id/students/:sid`、`/classes/:id/sessions/:sid`（?tab=homework|recap|info）、`/classes/:id/attendance`、`/classes/:id/setup`、`/classes/:id/classroom`、`/sessions`、`/teachers`、`/login`。课堂直连判定：本地 store 有该班进行中课堂→恢复（若 URL `?edit_id` 与本地态不符则弹冲突拦截页）；`?edit_id=<sid>`→拉 `GET /sessions/:id` 的 `ledger` 反向还原为可编辑课堂（编辑上课记录）；`?lesson=4&title=...&duration=120`→boot 新课；否则跳 setup。
 
 API 全在 `server/src/app.ts`，除 `/api/health`、`/api/auth/login`、`/api/wx/login` 外均过认证中间件，orgId 取自当前登录者、跨组织一律 404。字段校验细节以代码为准，速览：
 
-- 老师 cookie 会话：auth（login/logout/me/verify-password）、teachers 增改、classes 增改 + students（增删改名改状态）+ groups（整套 replace）+ notes / homework-template（整篇 replace）、`POST /classes/:id/sessions`（结束课堂一次性提交，见下方兼容纪律）、sessions（详情 / `PUT /sessions/:id` 部分更新课堂信息 / homework / attendance 更正 / 删除 / recap）、attendance 矩阵、tags（org 奖章库）、join-requests 只读镜像。
+- 老师 cookie 会话：auth（login/logout/me/verify-password）、teachers 增改、classes 增改 + students（增删改名改状态）+ groups（整套 replace）+ notes / homework-template（整篇 replace）、`POST /classes/:id/sessions`（结束课堂一次性提交，见下方兼容纪律）、sessions（详情含 `ledger` 还原块 / `PUT /sessions/:id` 部分更新课堂信息 / `PUT /sessions/:id/commit` 覆盖重提交=编辑上课记录 / homework / attendance 更正 / 删除 / recap）、attendance 矩阵、tags（org 奖章库）、join-requests 只读镜像。
 - 小程序 `/api/wx/*`（Bearer，与 cookie 互不通用）：me / bind-teacher；老师侧（需已绑 teacher，否则 403）classes/sessions/invites/join-requests 关联与驳回/students；家长侧 invites 预览 + join（只建 join_request）+ upload/photo + students recap（binding 守卫）。
 
 ## 开发与测试
@@ -104,8 +104,8 @@ localStorage.removeItem('nce.wxToken'); localStorage.removeItem('nce.currentChil
 ## 须知 / 约定
 
 - **计分是事件流**：个人分、组分均由 `score_events`(±1) 派生，不落地存储。奖章 tag 同理本地存名字、结束课堂随 commit 入库（`org_tags` 按名幂等 upsert + `session_tags` 快照）。
-- **课堂本地优先**：整节课跑在浏览器本地（`classroomStore.ts`，localStorage `nce.classroom.<classId>`），仅「结束课堂」一次性 POST，后端单事务落库。幂等键 `client_session_id` 重试不变，重复提交返回既有 sessionId。默认分组回写用**下课态**分组（课中调组持久化到默认分组）。提交前 payload 自动备份到 `nce.classroom.backup.<clientSessionId>`（成功才清，留最新 10 条，可原样重 POST）。补录课堂（backfill）复用同一套，payload 零改动。
-- **⚠️ 结束课堂 schema 向后兼容（protobuf 式，不可破坏）**：课堂进行中服务端可能发新版，旧页面 commit payload 必须照常入库。纪律：①服务端永不新增必填字段，新字段一律可选带默认；②不收紧校验、不改名、不改语义；③未知字段静默忽略（`buildCommitInput` 显式挑字段）。web 端 localStorage 的 `ClassroomSession` shape 同理只加可选字段（先例：teacherId/startedAt/tags/backfill）。守卫用例在 `server/tests/api.test.ts`「向后/向前兼容」——挂了改契约不改测试。
+- **课堂本地优先**：整节课跑在浏览器本地（`classroomStore.ts`，localStorage `nce.classroom.<classId>`），仅「结束课堂」一次性 POST，后端单事务落库。幂等键 `client_session_id` 重试不变，重复提交返回既有 sessionId。默认分组回写用**下课态**分组（课中调组持久化到默认分组）。提交前 payload 自动备份到 `nce.classroom.backup.<clientSessionId>`（成功才清，留最新 10 条，可原样重 POST）。补录课堂（backfill）复用同一套，payload 零改动。编辑上课记录（`?edit_id`）同样复用：`GET /sessions/:id` 的 `ledger`（id 维度原始快照：sessionGroups/memberships/逐条 events/checks/tags）经 `buildEditSession` 反向还原为带 `editOfSessionId` 标记的本地课堂（复用同一 `nce.classroom.<classId>` 槽位，故进行中课堂时编辑会被冲突拦截），结束时走 `PUT /sessions/:id/commit`→`overwriteSession` 原地覆盖同一 session（删 5 张子表→UPDATE 保留 id/client_session_id/作业字段→重写 ledger），**不回写默认分组**，并保留已有 leave/补课更正（含其分组座位）。
+- **⚠️ 结束课堂 schema 向后兼容（protobuf 式，不可破坏）**：课堂进行中服务端可能发新版，旧页面 commit payload 必须照常入库。纪律：①服务端永不新增必填字段，新字段一律可选带默认；②不收紧校验、不改名、不改语义；③未知字段静默忽略（`buildCommitInput` 显式挑字段）。web 端 localStorage 的 `ClassroomSession` shape 同理只加可选字段（先例：teacherId/startedAt/tags/backfill/editOfSessionId/endedAt）。守卫用例在 `server/tests/api.test.ts`「向后/向前兼容」——挂了改契约不改测试。
 - **鉴权双轨**：老师 = 无状态签名 cookie（HMAC/`AUTH_SECRET`，dev 有 fallback）；小程序 = wx Bearer token（subject=wechatAccountId），互不通用。写接口的 teacherId/orgId 取自当前登录者。
 - **学生状态** `students.status`：active 在读 / suspended 停课 / archived 归档。非 active 不进课前配置、课堂与 session 快照（缺席也不算）；人数口径 = 在读+停课；停课/归档即清默认分组 membership，恢复后需手动拖回组；已绑定家长的历史 recap 不受影响。
 - **账户体系**：student（教学实体）与 wechat_account（微信身份）分离。teacher↔account 走 credentials（bind 页一次绑定）；student↔account 走 `student_wechat_bindings`（N:M）；家长注册只建 `join_requests`（pending 唯一、重复提交覆盖），由老师在小程序关联（回填空字段不覆盖）。邀请 = 一次性 7 天 token（`class_invites`，可并存）。

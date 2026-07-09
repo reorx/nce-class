@@ -314,6 +314,17 @@ export function deleteStudent(sqlite: DB, studentId: string): void {
   tx(studentId);
 }
 
+/** Delete the 5 session-scoped child tables (everything but the class_sessions
+ *  row). Shared by deleteSession (full rollback) and overwriteSession (re-commit).
+ *  Not a transaction itself — the caller wraps it. */
+function deleteSessionLedger(sqlite: DB, sessionId: string): void {
+  sqlite.prepare(`DELETE FROM score_events WHERE session_id=?`).run(sessionId);
+  sqlite.prepare(`DELETE FROM session_memberships WHERE session_id=?`).run(sessionId);
+  sqlite.prepare(`DELETE FROM check_records WHERE session_id=?`).run(sessionId);
+  sqlite.prepare(`DELETE FROM session_tags WHERE session_id=?`).run(sessionId);
+  sqlite.prepare(`DELETE FROM session_groups WHERE session_id=?`).run(sessionId);
+}
+
 /**
  * Hard-delete an ended session and everything it committed (single transaction).
  * The default-grouping writeback is intentionally NOT reverted — the class keeps
@@ -321,11 +332,7 @@ export function deleteStudent(sqlite: DB, studentId: string): void {
  */
 export function deleteSession(sqlite: DB, sessionId: string): void {
   const tx = sqlite.transaction((sid: string) => {
-    sqlite.prepare(`DELETE FROM score_events WHERE session_id=?`).run(sid);
-    sqlite.prepare(`DELETE FROM session_memberships WHERE session_id=?`).run(sid);
-    sqlite.prepare(`DELETE FROM check_records WHERE session_id=?`).run(sid);
-    sqlite.prepare(`DELETE FROM session_tags WHERE session_id=?`).run(sid);
-    sqlite.prepare(`DELETE FROM session_groups WHERE session_id=?`).run(sid);
+    deleteSessionLedger(sqlite, sid);
     sqlite.prepare(`DELETE FROM class_sessions WHERE id=?`).run(sid);
   });
   tx(sessionId);
@@ -405,14 +412,104 @@ export function saveGrouping(sqlite: DB, classId: string, groups: GroupInput[]):
 }
 
 /**
- * Commit a finished classroom session in one transaction (§7.2/§7.3, decision 3):
- * ① write back the default grouping (reuses saveGrouping — the nested
- *    transaction auto-degrades to a savepoint), ② create the ended class_session,
+ * Write one session's ledger rows against an EXISTING class_sessions id:
  * ③ snapshot session_groups (building a clientId→sessionGroupId map),
  * ④ session_memberships (absent ⇒ null group, decision 8), ⑤ score_events
  * (group events' target_id + every event's session_group_id resolved via the
- * map so buildRecap's nested query matches), ⑥ check_records. Returns the new
- * session id.
+ * map so buildRecap's nested query matches), ⑥ check_records, ⑦ 奖章 tags.
+ * Shared by the end-class commit (fresh id) and 编辑上课记录 overwrite (preserved
+ * id). NOT a transaction itself — the caller wraps it.
+ *
+ * `corrections` (overwrite only) restores post-commit 考勤 fixes: a student the
+ * new payload still marks not-present keeps their prior leave / 补课 (made_up)
+ * instead of collapsing back to a plain absent row. Omitted → a plain commit.
+ */
+function writeSessionLedger(
+  sqlite: DB,
+  sessionId: string,
+  input: CommitInput,
+  corrections?: Map<string, { attendance: string; madeUp: number; groupId: string | null }>,
+): void {
+  // ③ session_groups + clientId → sessionGroupId map
+  const groupIdByClient = new Map<string, string>();
+  const insSg = sqlite.prepare(
+    `INSERT INTO session_groups (id, session_id, name, emoji, order_index) VALUES (?,?,?,?,?)`,
+  );
+  input.sessionGroups.forEach((g, i) => {
+    const sgid = `sg-${nanoid(10)}`;
+    insSg.run(sgid, sessionId, g.name, g.emoji, g.orderIndex ?? i);
+    groupIdByClient.set(g.clientId, sgid);
+  });
+  const mapGid = (clientId: string | null): string | null =>
+    clientId ? (groupIdByClient.get(clientId) ?? null) : null;
+
+  // ④ session_memberships (absent ⇒ null group; a preserved correction keeps leave/made_up)
+  const insMem = sqlite.prepare(
+    `INSERT INTO session_memberships (id, session_id, student_id, session_group_id, attendance, made_up) VALUES (?,?,?,?,?,?)`,
+  );
+  for (const m of input.memberships) {
+    let attendance = m.attendance;
+    let madeUp = 0;
+    let sgid = m.attendance === 'absent' ? null : mapGid(m.clientGroupId);
+    const corr = m.attendance !== 'present' ? corrections?.get(m.studentId) : undefined;
+    if (corr) {
+      attendance = corr.attendance; // 'leave' or 'absent'
+      madeUp = corr.madeUp;
+      // Restore the seat the 考勤 correction preserved (setAttendance keeps the
+      // group when flipping present→leave), remapped onto the freshly re-inserted
+      // session_groups; null if that group no longer exists in this payload.
+      sgid = corr.groupId ? mapGid(corr.groupId) : null;
+    }
+    insMem.run(nanoid(), sessionId, m.studentId, sgid, attendance, madeUp);
+  }
+
+  // ⑤ score_events (group events' target_id resolves to the session group id)
+  const insEv = sqlite.prepare(
+    `INSERT INTO score_events (id, session_id, target_type, target_id, session_group_id, delta, created_at, created_by)
+     VALUES (?,?,?,?,?,?,?,?)`,
+  );
+  for (const e of input.events) {
+    const targetId = e.targetType === 'group' ? (mapGid(e.targetId) ?? e.targetId) : e.targetId;
+    insEv.run(
+      nanoid(),
+      sessionId,
+      e.targetType,
+      targetId,
+      mapGid(e.clientGroupId),
+      e.delta,
+      e.createdAt,
+      input.teacherId,
+    );
+  }
+
+  // ⑥ check_records
+  const insCk = sqlite.prepare(
+    `INSERT INTO check_records (id, session_id, student_id, type, status) VALUES (?,?,?,?,?)`,
+  );
+  for (const c of input.checks) insCk.run(nanoid(), sessionId, c.studentId, c.type, c.status);
+
+  // ⑦ 奖章 tags: upsert the org library by name (INSERT OR IGNORE rides the
+  // NOCASE unique index), then snapshot tag_name per award like session_groups
+  // snapshots names — a future library rename never rewrites history.
+  if (input.tags.length) {
+    const insTag = sqlite.prepare(`INSERT OR IGNORE INTO org_tags (id, org_id, name, created_by) VALUES (?,?,?,?)`);
+    const selTag = sqlite.prepare(`SELECT id FROM org_tags WHERE org_id=? AND name=? COLLATE NOCASE`);
+    const insSt = sqlite.prepare(
+      `INSERT INTO session_tags (id, session_id, student_id, tag_id, tag_name, created_by) VALUES (?,?,?,?,?,?)`,
+    );
+    for (const t of input.tags) {
+      insTag.run(`tag-${nanoid(10)}`, input.orgId, t.tag, input.teacherId);
+      const row = selTag.get(input.orgId, t.tag) as any;
+      insSt.run(nanoid(), sessionId, t.studentId, row.id, t.tag, input.teacherId);
+    }
+  }
+}
+
+/**
+ * Commit a finished classroom session in one transaction (§7.2/§7.3, decision 3):
+ * ① write back the default grouping (reuses saveGrouping — the nested
+ *    transaction auto-degrades to a savepoint), ② create the ended class_session,
+ * then ③-⑦ writeSessionLedger. Returns the new session id.
  */
 export function commitSession(sqlite: DB, input: CommitInput): string {
   const tx = sqlite.transaction((): string => {
@@ -442,70 +539,63 @@ export function commitSession(sqlite: DB, input: CommitInput): string {
         input.clientSessionId,
       );
 
-    // ③ session_groups + clientId → sessionGroupId map
-    const groupIdByClient = new Map<string, string>();
-    const insSg = sqlite.prepare(
-      `INSERT INTO session_groups (id, session_id, name, emoji, order_index) VALUES (?,?,?,?,?)`,
-    );
-    input.sessionGroups.forEach((g, i) => {
-      const sgid = `sg-${nanoid(10)}`;
-      insSg.run(sgid, sessionId, g.name, g.emoji, g.orderIndex ?? i);
-      groupIdByClient.set(g.clientId, sgid);
-    });
-    const mapGid = (clientId: string | null): string | null =>
-      clientId ? (groupIdByClient.get(clientId) ?? null) : null;
-
-    // ④ session_memberships (absent ⇒ null group)
-    const insMem = sqlite.prepare(
-      `INSERT INTO session_memberships (id, session_id, student_id, session_group_id, attendance) VALUES (?,?,?,?,?)`,
-    );
-    for (const m of input.memberships) {
-      const sgid = m.attendance === 'absent' ? null : mapGid(m.clientGroupId);
-      insMem.run(nanoid(), sessionId, m.studentId, sgid, m.attendance);
-    }
-
-    // ⑤ score_events (group events' target_id resolves to the session group id)
-    const insEv = sqlite.prepare(
-      `INSERT INTO score_events (id, session_id, target_type, target_id, session_group_id, delta, created_at, created_by)
-       VALUES (?,?,?,?,?,?,?,?)`,
-    );
-    for (const e of input.events) {
-      const targetId = e.targetType === 'group' ? (mapGid(e.targetId) ?? e.targetId) : e.targetId;
-      insEv.run(
-        nanoid(),
-        sessionId,
-        e.targetType,
-        targetId,
-        mapGid(e.clientGroupId),
-        e.delta,
-        e.createdAt,
-        input.teacherId,
-      );
-    }
-
-    // ⑥ check_records
-    const insCk = sqlite.prepare(
-      `INSERT INTO check_records (id, session_id, student_id, type, status) VALUES (?,?,?,?,?)`,
-    );
-    for (const c of input.checks) insCk.run(nanoid(), sessionId, c.studentId, c.type, c.status);
-
-    // ⑦ 奖章 tags: upsert the org library by name (INSERT OR IGNORE rides the
-    // NOCASE unique index), then snapshot tag_name per award like session_groups
-    // snapshots names — a future library rename never rewrites history.
-    if (input.tags.length) {
-      const insTag = sqlite.prepare(`INSERT OR IGNORE INTO org_tags (id, org_id, name, created_by) VALUES (?,?,?,?)`);
-      const selTag = sqlite.prepare(`SELECT id FROM org_tags WHERE org_id=? AND name=? COLLATE NOCASE`);
-      const insSt = sqlite.prepare(
-        `INSERT INTO session_tags (id, session_id, student_id, tag_id, tag_name, created_by) VALUES (?,?,?,?,?,?)`,
-      );
-      for (const t of input.tags) {
-        insTag.run(`tag-${nanoid(10)}`, input.orgId, t.tag, input.teacherId);
-        const row = selTag.get(input.orgId, t.tag) as any;
-        insSt.run(nanoid(), sessionId, t.studentId, row.id, t.tag, input.teacherId);
-      }
-    }
-
+    writeSessionLedger(sqlite, sessionId, input); // ③-⑦
     return sessionId;
   });
   return tx();
+}
+
+/**
+ * Overwrite an existing ended session's ledger in place (编辑上课记录). One
+ * transaction: capture post-commit 考勤 corrections, delete the same 5 child
+ * tables deleteSession clears (but NOT the class_sessions row), UPDATE the
+ * session's scalar fields (id / client_session_id / homework_content preserved),
+ * then re-run writeSessionLedger against the SAME id so /sessions/:id links,
+ * 考勤 history and parent recaps stay valid.
+ *
+ * Deliberately does NOT write back the default grouping — editing a historical
+ * session must never reshuffle the class's current default grouping.
+ * input.defaultGrouping is validated (shared buildCommitInput) but ignored here.
+ */
+export function overwriteSession(sqlite: DB, sessionId: string, input: CommitInput): void {
+  const tx = sqlite.transaction(() => {
+    const corrections = new Map(
+      (
+        sqlite
+          .prepare(
+            `SELECT student_id sid, attendance, made_up, session_group_id FROM session_memberships
+             WHERE session_id=? AND (attendance='leave' OR made_up=1)`,
+          )
+          .all(sessionId) as any[]
+      ).map((r) => [
+        r.sid as string,
+        {
+          attendance: r.attendance as string,
+          madeUp: r.made_up as number,
+          groupId: (r.session_group_id as string) ?? null,
+        },
+      ]),
+    );
+
+    deleteSessionLedger(sqlite, sessionId);
+
+    sqlite
+      .prepare(
+        `UPDATE class_sessions SET teacher_id=?, date=?, lesson_number=?, lesson_title=?,
+           planned_duration_min=?, started_at=?, ended_at=? WHERE id=?`,
+      )
+      .run(
+        input.teacherId,
+        input.date,
+        input.lessonNumber,
+        input.lessonTitle,
+        input.plannedDurationMin,
+        input.startedAt,
+        input.endedAt,
+        sessionId,
+      );
+
+    writeSessionLedger(sqlite, sessionId, input, corrections); // ③-⑦ against the preserved id
+  });
+  tx();
 }

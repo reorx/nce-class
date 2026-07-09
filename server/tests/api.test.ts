@@ -617,6 +617,42 @@ describe('session detail (GET /api/sessions/:id)', () => {
     expect((await agent.get('/api/sessions/sess1')).body.prevHomework).toBeNull();
   });
 
+  it('embeds a raw id-keyed ledger for reopening the session in the classroom (编辑)', async () => {
+    const { agent } = await login();
+    const { ledger } = (await agent.get('/api/sessions/sess1')).body;
+    expect(ledger.clientSessionId).toBeNull(); // seed row committed without one
+    expect(ledger.sessionGroups).toEqual([
+      { id: 'sg1', name: '第1组', emoji: '🦁', orderIndex: 0 },
+      { id: 'sg2', name: '第2组', emoji: '🐯', orderIndex: 1 },
+    ]);
+    // memberships carry real student ids (recap/overview only expose names) + group + attendance
+    expect(ledger.memberships).toEqual([
+      { studentId: 's1', name: '小明', sessionGroupId: 'sg1', attendance: 'present' },
+      { studentId: 's2', name: '小红', sessionGroupId: 'sg1', attendance: 'present' },
+      { studentId: 's3', name: '小刚', sessionGroupId: 'sg2', attendance: 'present' },
+      { studentId: 's4', name: '浩浩', sessionGroupId: null, attendance: 'absent' },
+    ]);
+    // raw per-event ledger (not aggregated); a group event's target is the session group id
+    expect(ledger.events).toHaveLength(6);
+    expect(ledger.events.filter((e: any) => e.targetType === 'student' && e.targetId === 's1')).toHaveLength(2);
+    expect(ledger.events.find((e: any) => e.targetType === 'group')).toMatchObject({
+      targetType: 'group',
+      targetId: 'sg1',
+      sessionGroupId: 'sg1',
+      delta: 1,
+    });
+    // checks + tags keyed by student id
+    expect(ledger.checks).toEqual(
+      expect.arrayContaining([
+        { studentId: 's1', type: 'homework', status: '完成' },
+        { studentId: 's1', type: 'recitation', status: '已背完' },
+        { studentId: 's2', type: 'recitation', status: '背完部分' },
+      ]),
+    );
+    expect(ledger.checks).toHaveLength(3);
+    expect(ledger.tags).toEqual([{ studentId: 's1', tag: '进步之星' }]);
+  });
+
   it('401 unauthenticated, 404 unknown and cross-org sessions', async () => {
     expect((await request(app).get('/api/sessions/sess1')).status).toBe(401);
     const { agent } = await login();
@@ -1601,6 +1637,196 @@ describe('end-class commit', () => {
       .get(row.id) as any;
     expect(s2mem.c).toBe(0);
     expect(s2ev.c).toBe(0);
+  });
+});
+
+describe('session overwrite (PUT /api/sessions/:id/commit — 编辑上课记录)', () => {
+  // Commit a "before" session over c1 (client_session_id set so we can assert it
+  // survives the overwrite). Baseline ledger: 小明 +1, s1 homework 完成, tag 旧奖章.
+  async function commitBefore(csid = 'cs-before') {
+    const { agent } = await login();
+    const create = {
+      clientSessionId: csid,
+      lessonNumber: 8,
+      lessonTitle: 'Before',
+      plannedDurationMin: 120,
+      startedAt: '2026-07-02 19:00:00',
+      endedAt: '2026-07-02 21:00:00',
+      defaultGrouping: {
+        groups: [
+          { clientId: 'g1', name: '第1组', emoji: '🦁', orderIndex: 0, memberIds: ['s1', 's2'] },
+          { clientId: 'g2', name: '第2组', emoji: '🐯', orderIndex: 1, memberIds: ['s3'] },
+        ],
+      },
+      sessionGroups: [
+        { clientId: 'g1', name: '第1组', emoji: '🦁', orderIndex: 0 },
+        { clientId: 'g2', name: '第2组', emoji: '🐯', orderIndex: 1 },
+      ],
+      memberships: [
+        { studentId: 's1', clientGroupId: 'g1', attendance: 'present' },
+        { studentId: 's2', clientGroupId: 'g1', attendance: 'present' },
+        { studentId: 's3', clientGroupId: 'g2', attendance: 'present' },
+        { studentId: 's4', clientGroupId: null, attendance: 'absent' },
+      ],
+      events: [
+        { targetType: 'student', targetId: 's1', clientGroupId: 'g1', delta: 1, createdAt: '2026-07-02 19:05:00' },
+      ],
+      checks: [{ studentId: 's1', type: 'homework', status: '完成' }],
+      tags: [{ studentId: 's1', tag: '旧奖章' }],
+    };
+    const sid = (await agent.post('/api/classes/c1/sessions').send(create)).body.sessionId;
+    return { agent, sid };
+  }
+
+  // The rewritten payload sent to the overwrite endpoint. Merges s1/s2 into one
+  // group, scores 小红 +2, and its defaultGrouping deliberately moves s3 into g1
+  // (used to prove the writeback is skipped).
+  function body(over: Record<string, any> = {}) {
+    return {
+      clientSessionId: 'cs-ow-ignored', // overwrite is keyed by the URL :id, not this
+      lessonNumber: 9,
+      lessonTitle: 'Rewritten',
+      plannedDurationMin: 90,
+      startedAt: '2026-06-26 18:00:00',
+      endedAt: '2026-06-26 19:30:00',
+      defaultGrouping: {
+        groups: [
+          { clientId: 'g1', name: '第1组', emoji: '🦁', orderIndex: 0, memberIds: ['s1', 's2', 's3'] },
+          { clientId: 'g2', name: '第2组', emoji: '🐯', orderIndex: 1, memberIds: [] },
+        ],
+      },
+      sessionGroups: [{ clientId: 'k1', name: '合并组', emoji: '🐻', orderIndex: 0 }],
+      memberships: [
+        { studentId: 's1', clientGroupId: 'k1', attendance: 'present' },
+        { studentId: 's2', clientGroupId: 'k1', attendance: 'present' },
+        { studentId: 's3', clientGroupId: null, attendance: 'absent' },
+        { studentId: 's4', clientGroupId: null, attendance: 'absent' },
+      ],
+      events: [
+        { targetType: 'student', targetId: 's2', clientGroupId: 'k1', delta: 1, createdAt: '2026-06-26 18:05:00' },
+        { targetType: 'student', targetId: 's2', clientGroupId: 'k1', delta: 1, createdAt: '2026-06-26 18:06:00' },
+      ],
+      checks: [{ studentId: 's2', type: 'homework', status: '完成' }],
+      tags: [{ studentId: 's2', tag: '飞跃奖' }],
+      ...over,
+    };
+  }
+
+  it('overwrites the ledger in place, keeping id / client_session_id / 作业布置', async () => {
+    const { agent, sid } = await commitBefore('cs-keep');
+    await agent.put(`/api/sessions/${sid}/homework`).send({ content: '第8课作业' });
+
+    const res = await agent.put(`/api/sessions/${sid}/commit`).send(body());
+    expect(res.status).toBe(200);
+    expect(res.body.sessionId).toBe(sid); // same id echoed back (external links stay valid)
+
+    const row = sqlite.prepare(`SELECT * FROM class_sessions WHERE id=?`).get(sid) as any;
+    expect(row.client_session_id).toBe('cs-keep'); // preserved, not overwritten
+    expect(row.homework_content).toBe('第8课作业'); // 作业布置 untouched by the classroom commit
+    expect(row.lesson_number).toBe(9); // scalar fields updated
+    expect(row.lesson_title).toBe('Rewritten');
+    expect(row.started_at).toBe('2026-06-26 18:00:00');
+    expect(row.date).toBe('2026-06-26'); // follows startedAt
+
+    // child rows fully replaced by the new payload, old ones gone
+    const groups = sqlite.prepare(`SELECT name FROM session_groups WHERE session_id=?`).all(sid) as any[];
+    expect(groups.map((g) => g.name)).toEqual(['合并组']);
+    const tags = sqlite.prepare(`SELECT tag_name FROM session_tags WHERE session_id=?`).all(sid) as any[];
+    expect(tags.map((t) => t.tag_name)).toEqual(['飞跃奖']); // 旧奖章 gone
+    // recap reflects the new ledger: 小红 net +2 → the only star
+    expect(res.body.recap.stars.map((s: any) => s.name)).toEqual(['小红']);
+    // no duplicate session row minted
+    const cnt = sqlite.prepare(`SELECT COUNT(*) c FROM class_sessions WHERE id=?`).get(sid) as any;
+    expect(cnt.c).toBe(1);
+  });
+
+  it('does NOT write the payload default grouping back to the class', async () => {
+    const { agent, sid } = await commitBefore('cs-nog');
+    // baseline class grouping after commit = g1:[s1,s2], g2:[s3]
+    await agent.put(`/api/sessions/${sid}/commit`).send(body()); // payload defaultGrouping moves s3 → g1
+    const mem = sqlite
+      .prepare(
+        `SELECT cg.id gid, m.student_id sid FROM class_group_memberships m
+         JOIN class_groups cg ON cg.id=m.class_group_id WHERE cg.class_id='c1' ORDER BY cg.id, m.student_id`,
+      )
+      .all() as any[];
+    // unchanged — s3 stays in g2, the edit never touches the live class default grouping
+    expect(mem.map((r) => `${r.gid}:${r.sid}`)).toEqual(['g1:s1', 'g1:s2', 'g2:s3']);
+  });
+
+  it('preserves leave / 补课 corrections for students who stay absent', async () => {
+    const { agent, sid } = await commitBefore('cs-leave');
+    await agent.put(`/api/sessions/${sid}/attendance/s3`).send({ status: 'leave', madeUp: true });
+    await agent.put(`/api/sessions/${sid}/commit`).send(body()); // body keeps s3 absent
+    const s3 = sqlite
+      .prepare(`SELECT attendance, made_up FROM session_memberships WHERE session_id=? AND student_id='s3'`)
+      .get(sid) as any;
+    expect(s3.attendance).toBe('leave'); // survives the overwrite
+    expect(s3.made_up).toBe(1);
+  });
+
+  it('drops a correction when the edit marks that student present again', async () => {
+    const { agent, sid } = await commitBefore('cs-leave2');
+    await agent.put(`/api/sessions/${sid}/attendance/s3`).send({ status: 'leave', madeUp: true });
+    await agent.put(`/api/sessions/${sid}/commit`).send(
+      body({
+        memberships: [
+          { studentId: 's1', clientGroupId: 'k1', attendance: 'present' },
+          { studentId: 's2', clientGroupId: 'k1', attendance: 'present' },
+          { studentId: 's3', clientGroupId: 'k1', attendance: 'present' }, // present again
+          { studentId: 's4', clientGroupId: null, attendance: 'absent' },
+        ],
+      }),
+    );
+    const s3 = sqlite
+      .prepare(`SELECT attendance, made_up FROM session_memberships WHERE session_id=? AND student_id='s3'`)
+      .get(sid) as any;
+    expect(s3.attendance).toBe('present');
+    expect(s3.made_up).toBe(0);
+  });
+
+  it('preserves the group placement of a 请假 student across an overwrite', async () => {
+    const { agent, sid } = await commitBefore('cs-leave-grp');
+    // committed session groups (server ids); s3 sits in 第2组
+    const sgs = sqlite
+      .prepare(`SELECT id, name FROM session_groups WHERE session_id=? ORDER BY order_index`)
+      .all(sid) as any[];
+    // correct s3 → 请假 (setAttendance keeps his session_group_id pointing at 第2组)
+    await agent.put(`/api/sessions/${sid}/attendance/s3`).send({ status: 'leave' });
+    // overwrite mimicking the edit flow: sessionGroups clientIds ARE the committed
+    // sg ids (like buildEditSession), s3 still absent on the board (leave folds to absent)
+    await agent.put(`/api/sessions/${sid}/commit`).send(
+      body({
+        sessionGroups: sgs.map((g, i) => ({ clientId: g.id, name: g.name, emoji: '🦁', orderIndex: i })),
+        memberships: [
+          { studentId: 's1', clientGroupId: sgs[0].id, attendance: 'present' },
+          { studentId: 's2', clientGroupId: sgs[0].id, attendance: 'present' },
+          { studentId: 's3', clientGroupId: null, attendance: 'absent' },
+          { studentId: 's4', clientGroupId: null, attendance: 'absent' },
+        ],
+        events: [],
+        checks: [],
+        tags: [],
+      }),
+    );
+    // s3 stays in 第2组 (attendance leave, group NOT nulled — the correction's seat survives)
+    const s3 = sqlite
+      .prepare(
+        `SELECT sm.attendance, sg.name gname FROM session_memberships sm
+         LEFT JOIN session_groups sg ON sg.id = sm.session_group_id
+         WHERE sm.session_id=? AND sm.student_id='s3'`,
+      )
+      .get(sid) as any;
+    expect(s3.attendance).toBe('leave');
+    expect(s3.gname).toBe('第2组');
+  });
+
+  it('404 unknown / cross-org session; 400 invalid payload', async () => {
+    const { agent, sid } = await commitBefore('cs-404');
+    expect((await agent.put('/api/sessions/nope/commit').send(body())).status).toBe(404);
+    const out = (await login('waiguo')).agent;
+    expect((await out.put(`/api/sessions/${sid}/commit`).send(body())).status).toBe(404);
+    expect((await agent.put(`/api/sessions/${sid}/commit`).send(body({ startedAt: 'nope' }))).status).toBe(400);
   });
 });
 

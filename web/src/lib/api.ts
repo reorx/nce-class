@@ -189,7 +189,29 @@ export interface PrevHomework {
   reviewLesson: number | null;
 }
 
-/** GET /api/sessions/:id — session summary + owning-class context + 作业布置 + embedded recap + 课堂情况. */
+/** Raw id-keyed snapshot of a committed session, for reopening it in the classroom (编辑上课记录).
+ *  Unlike recap/overview (name-keyed, aggregated) this keeps student ids and the per-event ledger. */
+export interface SessionLedger {
+  clientSessionId: string | null;
+  sessionGroups: { id: string; name: string; emoji: string | null; orderIndex: number }[];
+  memberships: {
+    studentId: string;
+    name: string;
+    sessionGroupId: string | null;
+    attendance: 'present' | 'absent' | 'leave';
+  }[];
+  events: {
+    targetType: 'student' | 'group';
+    targetId: string; // student id, or session group id for group events
+    sessionGroupId: string | null; // group at fire time
+    delta: 1 | -1;
+    createdAt: string;
+  }[];
+  checks: { studentId: string; type: 'recitation' | 'homework'; status: string }[];
+  tags: { studentId: string; tag: string }[];
+}
+
+/** GET /api/sessions/:id — session summary + owning-class context + 作业布置 + embedded recap + 课堂情况 + 编辑 ledger. */
 export interface SessionDetail extends Session {
   classId: string;
   className: string;
@@ -201,6 +223,7 @@ export interface SessionDetail extends Session {
   prevHomework: PrevHomework | null;
   recap: Recap;
   overview: SessionOverview;
+  ledger: SessionLedger;
 }
 
 // ---- student growth profile (§7.4, read-only) ------------------------------
@@ -414,6 +437,9 @@ export const api = {
   getJoinRequests: (classId: string) => get<JoinRequestItem[]>(`/api/classes/${classId}/join-requests`),
   commitSession: (classId: string, payload: CommitPayload) =>
     req<CommitResult>('POST', `/api/classes/${classId}/sessions`, payload),
+  // 编辑上课记录: re-commit the whole ledger onto an existing session (same payload shape).
+  overwriteSession: (sessionId: string, payload: CommitPayload) =>
+    req<CommitResult>('PUT', `/api/sessions/${sessionId}/commit`, payload),
   classAttendance: (classId: string) => get<ClassAttendance>(`/api/classes/${classId}/attendance`),
   updateAttendance: (sessionId: string, studentId: string, p: { status: AttendanceStatus; madeUp?: boolean }) =>
     req<AttendanceRecord>('PUT', `/api/sessions/${sessionId}/attendance/${studentId}`, p),

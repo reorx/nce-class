@@ -27,6 +27,7 @@ import {
   deleteStudent,
   dismissJoinRequest,
   linkJoinRequest,
+  overwriteSession,
   renameStudent,
   saveGrouping,
   setAttendance,
@@ -153,6 +154,14 @@ const q = {
      FROM score_events WHERE session_id=? AND target_type='student' GROUP BY target_id`,
   ),
   sessionChecks: sqlite.prepare(`SELECT student_id sid, type, status FROM check_records WHERE session_id=?`),
+  // Raw id-keyed ledger for reopening a session in the classroom (编辑上课记录):
+  // the per-event stream + per-student tags that the aggregated recap/overview
+  // discard. Ordered so the reconstructed local event id sequence is stable.
+  sessionEventsRaw: sqlite.prepare(
+    `SELECT target_type, target_id, session_group_id, delta, created_at
+     FROM score_events WHERE session_id=? ORDER BY created_at, rowid`,
+  ),
+  sessionTagsRaw: sqlite.prepare(`SELECT student_id, tag_name FROM session_tags WHERE session_id=? ORDER BY rowid`),
   orgById: sqlite.prepare(`SELECT * FROM organizations WHERE id=?`),
   countStudentsOfClass: sqlite.prepare(`SELECT COUNT(*) c FROM students WHERE class_id=? AND status != 'archived'`),
   endedSessionsOfClass: sqlite.prepare(
@@ -503,7 +512,39 @@ function prevHomeworkPayload(s: any, classId: string) {
   };
 }
 
-/** Session detail page payload: summary + owning-class context + 作业布置 + embedded recap + 课堂情况. */
+/**
+ * Raw id-keyed snapshot of a committed session, for reopening it in the
+ * classroom (编辑上课记录). Unlike recap/overview this keeps student ids and the
+ * per-event ledger so the web can rebuild the exact local ClassroomSession.
+ */
+function sessionLedger(s: any) {
+  return {
+    clientSessionId: s.client_session_id ?? null,
+    sessionGroups: (q.sessionGroups.all(s.id) as any[]).map((g) => ({
+      id: g.id,
+      name: g.name,
+      emoji: g.emoji ?? null,
+      orderIndex: g.order_index,
+    })),
+    memberships: (q.sessionRoster.all(s.id) as any[]).map((m) => ({
+      studentId: m.sid,
+      name: m.name,
+      sessionGroupId: m.gid ?? null,
+      attendance: m.attendance,
+    })),
+    events: (q.sessionEventsRaw.all(s.id) as any[]).map((e) => ({
+      targetType: e.target_type,
+      targetId: e.target_id,
+      sessionGroupId: e.session_group_id ?? null,
+      delta: e.delta,
+      createdAt: e.created_at,
+    })),
+    checks: (q.sessionChecks.all(s.id) as any[]).map((c) => ({ studentId: c.sid, type: c.type, status: c.status })),
+    tags: (q.sessionTagsRaw.all(s.id) as any[]).map((t) => ({ studentId: t.student_id, tag: t.tag_name })),
+  };
+}
+
+/** Session detail page payload: summary + owning-class context + 作业布置 + embedded recap + 课堂情况 + 编辑 ledger. */
 function sessionDetailPayload(s: any, c: any) {
   return {
     ...sessionSummary(s, (q.sessionGroupCountOf.get(s.id) as any).c),
@@ -517,6 +558,7 @@ function sessionDetailPayload(s: any, c: any) {
     prevHomework: prevHomeworkPayload(s, c.id),
     recap: buildRecap(s),
     overview: buildOverview(s),
+    ledger: sessionLedger(s),
   };
 }
 
@@ -1430,6 +1472,23 @@ export function createApp() {
     }
     updateSessionInfo(sqlite, s.id, patch);
     res.json(sessionDetailPayload(q.sessionById.get(s.id) as any, c));
+  });
+
+  // ---- session overwrite (编辑上课记录: re-commit the whole ledger onto an existing session) ----
+  // Keyed by the existing session id (like every other session route), reuses the
+  // end-class buildCommitInput contract verbatim, and preserves the session id so
+  // /sessions/:sid links, 考勤 history and parent recaps stay valid. Unlike POST
+  // it never writes back the default grouping (see overwriteSession).
+  app.put('/api/sessions/:id/commit', (req, res) => {
+    const teacher = res.locals.teacher;
+    const s = q.sessionById.get(req.params.id) as any;
+    const c = s ? classInOrg(s.class_id, teacher.org_id) : null;
+    if (!s || !c) return res.status(404).json({ error: 'session not found' });
+    const built = buildCommitInput(req.body, s.class_id, teacher);
+    if ('error' in built) return res.status(400).json({ error: built.error });
+    overwriteSession(sqlite, s.id, built.input);
+    const row = q.sessionById.get(s.id) as any;
+    res.json({ sessionId: s.id, recap: buildRecap(row), created: false });
   });
 
   // ---- session detail (summary + class context + 作业布置 + embedded recap) ----
