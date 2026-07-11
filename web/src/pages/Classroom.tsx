@@ -30,6 +30,7 @@ import { weekdayCN } from '../lib/attendance';
 import { buildLogLines, type LogLine } from '../lib/classroomLog';
 import { allSelected, dragTargets, someSelected, toggleAll, toggleOne } from '../lib/multiSelect';
 import { lessonLabel as fmtLessonLabel } from '../lib/lesson';
+import { HomeworkSidebar } from '../components/HomeworkSidebar';
 import { PrevLessonContent } from '../components/PrevLessonContent';
 import { configFromDetail } from '../lib/setup';
 import { displayZoom } from '../lib/zoom';
@@ -227,6 +228,7 @@ export function Classroom() {
   const undoEvent = (eventId: number) => dispatch({ type: 'undoEvent', eventId });
   const setRecite = (sid: string, v: Recitation) => dispatch({ type: 'setRecite', sid, v, at: nowSql() });
   const setHomework = (sid: string, v: Homework) => dispatch({ type: 'setHomework', sid, v, at: nowSql() });
+  const setHomeworkContent = (content: string) => dispatch({ type: 'setHomeworkContent', content });
   const addTag = (sid: string, tag: string) => dispatch({ type: 'addTag', sid, tag });
   const removeTag = (sid: string, tag: string) => dispatch({ type: 'removeTag', sid, tag });
   const toggleAbsent = (sid: string) => dispatch({ type: 'toggleAttendance', sid, at: nowSql() });
@@ -295,6 +297,10 @@ export function Classroom() {
         if (editId) {
           toast('本节课已更新', 'success');
           nav(`/classes/${id}/sessions/${editId}`);
+        } else if (session.homeworkContent?.trim()) {
+          // 课堂里已写好作业（随 commit 落库）→ 不再引导去作业 tab
+          toast('本节课已保存 · 作业已布置', 'success');
+          nav(`/classes/${id}/sessions/${result.sessionId}`);
         } else {
           toast('本节课已保存 · 请布置作业', 'success');
           // land on 作业布置 (overview is now the default tab); the toast nudges homework
@@ -750,22 +756,41 @@ export function Classroom() {
 
         {view === 'log' && <LogView session={session} onUndo={undoEvent} />}
 
-        {(view === 'recite' || view === 'homework' || view === 'attendance') && (
-          // key=view：切视图整体重挂载，多选集/拖拽 ref/高亮一并归零
-          <SegmentView
-            key={view}
-            view={view}
-            students={students}
-            groups={groups}
-            colorOf={colorOf}
-            onBadge={(sid) => (view === 'attendance' ? toggleAbsent(sid) : setOpenId(sid))}
-            onMove={(sids, v) =>
-              // 多选拖拽 = 逐个 dispatch：每人一条日志，同状态者由 reducer no-op 兜底
-              sids.forEach((sid) =>
-                view === 'recite' ? setRecite(sid, v as Recitation) : setHomework(sid, v as Homework),
-              )
-            }
-          />
+        {view === 'homework' ? (
+          // 作业检查 + 右侧 30% 作业侧栏（上：上节课作业对照；下：本节课作业输入）
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 16 }}>
+            <SegmentView
+              key={view}
+              view={view}
+              students={students}
+              groups={groups}
+              colorOf={colorOf}
+              onBadge={(sid) => setOpenId(sid)}
+              onMove={(sids, v) => sids.forEach((sid) => setHomework(sid, v as Homework))}
+            />
+            <HomeworkSidebar
+              classId={id}
+              content={session.homeworkContent ?? ''}
+              readOnly={!!session.editOfSessionId}
+              onChange={setHomeworkContent}
+            />
+          </div>
+        ) : (
+          (view === 'recite' || view === 'attendance') && (
+            // key=view：切视图整体重挂载，多选集/拖拽 ref/高亮一并归零
+            <SegmentView
+              key={view}
+              view={view}
+              students={students}
+              groups={groups}
+              colorOf={colorOf}
+              onBadge={(sid) => (view === 'attendance' ? toggleAbsent(sid) : setOpenId(sid))}
+              onMove={(sids, v) =>
+                // 多选拖拽 = 逐个 dispatch：每人一条日志，同状态者由 reducer no-op 兜底
+                sids.forEach((sid) => setRecite(sid, v as Recitation))
+              }
+            />
+          )
         )}
       </div>
 

@@ -319,6 +319,9 @@ export interface CommitPayload {
   }[];
   checks: { studentId: string; type: 'recitation' | 'homework'; status: string }[];
   tags: { studentId: string; tag: string }[]; // 奖章 (server upserts the org library by name)
+  // 课堂内提前布置的作业（post-release optional field, 缺省/空白 → 不布置）。
+  // 仅创建路径落库；编辑上课记录的 overwrite 忽略它（改作业走详情页 PUT）。
+  homeworkContent?: string | null;
 }
 
 export interface CommitResult {

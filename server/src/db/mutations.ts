@@ -60,6 +60,9 @@ export interface CommitInput {
   events: CommitEvent[];
   checks: CommitCheck[];
   tags: CommitTag[]; // 奖章 (absent on old-client payloads → [])
+  // 课堂内提前布置的作业 (absent on old-client payloads → null)。只在 commitSession
+  // 创建时写入；overwriteSession 不读它（编辑上课记录不改作业，见其注释）。
+  homeworkContent: string | null;
 }
 
 /**
@@ -523,8 +526,8 @@ export function commitSession(sqlite: DB, input: CommitInput): string {
       .prepare(
         `INSERT INTO class_sessions
            (id, class_id, teacher_id, date, lesson_number, lesson_title, status,
-            planned_duration_min, started_at, ended_at, client_session_id)
-         VALUES (?,?,?,?,?,?, 'ended', ?,?,?,?)`,
+            planned_duration_min, started_at, ended_at, client_session_id, homework_content)
+         VALUES (?,?,?,?,?,?, 'ended', ?,?,?,?,?)`,
       )
       .run(
         sessionId,
@@ -537,6 +540,7 @@ export function commitSession(sqlite: DB, input: CommitInput): string {
         input.startedAt,
         input.endedAt,
         input.clientSessionId,
+        input.homeworkContent,
       );
 
     writeSessionLedger(sqlite, sessionId, input); // ③-⑦

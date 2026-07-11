@@ -1291,6 +1291,33 @@ describe('end-class commit', () => {
     expect(s.teacherName).toBe('王莉');
   });
 
+  it('persists 课堂内布置的作业 verbatim and surfaces hasHomework', async () => {
+    const { agent } = await login();
+    const content = '  第9课作业\n背诵课文第一段  '; // 保留内部换行与首尾空白（同 PUT /homework 口径：只判空，不 trim）
+    const res = await agent
+      .post('/api/classes/c1/sessions')
+      .send(body({ clientSessionId: 'cs-hw', homeworkContent: content }));
+    expect(res.status).toBe(201);
+    const row = sqlite
+      .prepare(`SELECT homework_content FROM class_sessions WHERE client_session_id='cs-hw'`)
+      .get() as any;
+    expect(row.homework_content).toBe(content);
+    const detail = (await agent.get('/api/classes/c1')).body;
+    expect(detail.sessions.find((x: any) => x.id === res.body.sessionId).hasHomework).toBe(true);
+  });
+
+  it('normalises a blank 作业 to null (缺省=不布置)', async () => {
+    const { agent } = await login();
+    const res = await agent
+      .post('/api/classes/c1/sessions')
+      .send(body({ clientSessionId: 'cs-hw-blank', homeworkContent: '  \n ' }));
+    expect(res.status).toBe(201);
+    const row = sqlite
+      .prepare(`SELECT homework_content FROM class_sessions WHERE client_session_id='cs-hw-blank'`)
+      .get() as any;
+    expect(row.homework_content).toBe(null);
+  });
+
   it('stores the chosen 主讲老师 when a same-org teacherId is sent', async () => {
     const { agent } = await login();
     await agent.post('/api/teachers').send({ name: '李芳', username: 'lifang', password: 'secret66' });
@@ -1439,6 +1466,7 @@ describe('end-class commit', () => {
     expect(row.lesson_title).toBe(null);
     expect(row.planned_duration_min).toBe(120);
     expect(row.teacher_id).toBe('t-wangli'); // committing teacher fallback
+    expect(row.homework_content).toBe(null); // homeworkContent absent → 不布置
     const ev = sqlite.prepare(`SELECT created_at FROM score_events WHERE session_id=?`).get(row.id) as any;
     expect(ev.created_at).toBe('2026-07-02 19:00:00'); // createdAt falls back to startedAt
     const mem = sqlite
@@ -1716,7 +1744,8 @@ describe('session overwrite (PUT /api/sessions/:id/commit — 编辑上课记录
     const { agent, sid } = await commitBefore('cs-keep');
     await agent.put(`/api/sessions/${sid}/homework`).send({ content: '第8课作业' });
 
-    const res = await agent.put(`/api/sessions/${sid}/commit`).send(body());
+    // 即使 payload 显式带了 homeworkContent（编辑课堂照常发它），overwrite 也结构性忽略
+    const res = await agent.put(`/api/sessions/${sid}/commit`).send(body({ homeworkContent: '企图覆盖' }));
     expect(res.status).toBe(200);
     expect(res.body.sessionId).toBe(sid); // same id echoed back (external links stay valid)
 

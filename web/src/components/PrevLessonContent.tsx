@@ -13,7 +13,7 @@ import {
 // popover 与课前配置页的「上节课回顾」卡共用。数据在服务端（不在离线课堂
 // 快照里），挂载时自取：classDetail 定位上节课，sessionDetail 一并带回
 // 作业文本与 recap（每组分数/今日之星）。
-type State =
+export type PrevLessonState =
   | { status: 'loading' | 'error' }
   | {
       status: 'ready';
@@ -23,8 +23,10 @@ type State =
       stars: PrevLessonStar[];
     };
 
-export function PrevLessonContent({ classId }: { classId: string }) {
-  const [state, setState] = useState<State>({ status: 'loading' });
+/** 取「上节课」数据（严格紧邻的上一节已结束课）。popover 与课堂作业侧栏共用；
+ *  各调用点独立请求一次，渲染各自写（错误/空态文案不同）。 */
+export function usePrevLessonData(classId: string): PrevLessonState {
+  const [state, setState] = useState<PrevLessonState>({ status: 'loading' });
 
   useEffect(() => {
     let alive = true;
@@ -53,6 +55,12 @@ export function PrevLessonContent({ classId }: { classId: string }) {
       alive = false;
     };
   }, [classId]);
+
+  return state;
+}
+
+export function PrevLessonContent({ classId }: { classId: string }) {
+  const state = usePrevLessonData(classId);
 
   const row = (label: string, value: ReactNode) => (
     <div key={label} style={{ display: 'flex', alignItems: 'baseline', gap: 12, padding: '5px 0' }}>

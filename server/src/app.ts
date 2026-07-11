@@ -572,6 +572,10 @@ function lastRecapPayload(classId: string) {
 // ---- request helpers ------------------------------------------------------
 const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null);
 
+/** 作业内容归一：空/纯空白 → null，否则原样保留（内部换行/首尾空白是排版）。
+ *  PUT /sessions/:id/homework 与 buildCommitInput 共用，两条写入路径判空口径一致。 */
+const contentOrNull = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v : null);
+
 /** The class row if it exists and belongs to the acting teacher's org, else null. */
 function classInOrg(classId: string, orgId: string): any | null {
   const c = q.classById.get(classId) as any;
@@ -769,6 +773,9 @@ function buildCommitInput(body: any, classId: string, teacher: any): { input: Co
       events,
       checks,
       tags,
+      // 课堂内提前布置的作业（lenient tier: optional, absent/blank → null = 不布置）。
+      // 仅创建路径落库；overwriteSession 结构性忽略（编辑作业只走详情页 PUT）。
+      homeworkContent: contentOrNull(body?.homeworkContent),
     },
   };
 }
@@ -1510,7 +1517,7 @@ export function createApp() {
     const rawContent = req.body?.content;
     if (rawContent != null && typeof rawContent !== 'string')
       return res.status(400).json({ error: 'content 必须是字符串' });
-    const content = typeof rawContent === 'string' && rawContent.trim() ? rawContent : null;
+    const content = contentOrNull(rawContent);
     const reviewBook = bookOr(req.body?.reviewBook);
     if (reviewBook === 'invalid') return res.status(400).json({ error: '课文复习册数必须是 1-4' });
     let reviewLesson: number | null = null;

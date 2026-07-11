@@ -137,6 +137,19 @@ describe('classroom reducer', () => {
     expect(s.students.find((x) => x.id === 's2')!.h).toBe('没交');
   });
 
+  it('sets the 本节课作业 draft without logging or consuming event ids', () => {
+    let s = boot();
+    expect(s.homeworkContent).toBeUndefined();
+    const nid = s.nid;
+    s = reducer(s, { type: 'setHomeworkContent', content: '背诵第4课' });
+    expect(s.homeworkContent).toBe('背诵第4课');
+    s = reducer(s, { type: 'setHomeworkContent', content: '背诵第4课\n抄写单词' });
+    expect(s.homeworkContent).toBe('背诵第4课\n抄写单词');
+    expect(s.nid).toBe(nid); // 逐字符输入不进日志、不占事件 id
+    expect(s.log ?? []).toHaveLength(0);
+    expect(s.events).toHaveLength(0);
+  });
+
   it('toggles attendance', () => {
     let s = boot();
     s = reducer(s, { type: 'toggleAttendance', sid: 's1', at });
@@ -643,6 +656,14 @@ describe('buildCommitPayload', () => {
     const s = buildClassroomSession(cfg, META);
     expect(buildCommitPayload(s, '2026-07-02 20:00:00').lessonNumber).toBeNull();
   });
+
+  it('passes the 本节课作业 draft through verbatim, null when never typed', () => {
+    let s = boot();
+    expect(buildCommitPayload(s, '2026-07-02 20:00:00').homeworkContent).toBeNull();
+    s = reducer(s, { type: 'setHomeworkContent', content: ' 背诵第4课\n抄写单词 ' });
+    // 原样直通（不 trim）——空白归一化交给 server 端 contentOrNull
+    expect(buildCommitPayload(s, '2026-07-02 20:00:00').homeworkContent).toBe(' 背诵第4课\n抄写单词 ');
+  });
 });
 
 describe('主讲老师 (lead teacher)', () => {
@@ -848,6 +869,13 @@ describe('buildEditSession (编辑上课记录: reopen a committed session)', ()
     // toggle back on → the point is re-issued exactly once (net 1 → 2)
     const on = reducer(off, { type: 'setRecite', sid: 's1', v: '已背完', at: '2026-06-26 19:11:00' });
     expect(sScore(on.events, 's1')).toBe(2);
+  });
+
+  it('carries the committed 作业布置 into the local session (侧栏只读展示)', () => {
+    const withHw = { ...detail(), homeworkContent: '第7课作业' } as SessionDetail;
+    expect(buildEditSession(withHw, def()).homeworkContent).toBe('第7课作业');
+    // 未布置 → undefined（可选字段惯例，不存 null）
+    expect(buildEditSession(detail(), def()).homeworkContent).toBeUndefined();
   });
 
   it('round-trips through buildCommitPayload without losing scores/checks/tags/attendance', () => {

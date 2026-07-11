@@ -178,8 +178,10 @@ export const classSessions = sqliteTable('class_sessions', {
   // client's local session id, so a retried submit returns the existing row
   // instead of double-inserting. Null for legacy/seeded sessions.
   clientSessionId: text('client_session_id').unique(),
-  // 作业布置 — authored on the session detail page AFTER the commit (own PUT,
-  // never part of the commit payload/compat contract).
+  // 作业布置 — written either mid-class in the classroom's 作业检查 sidebar (rides
+  // the commit payload as an optional field, CREATE path only) or afterwards on
+  // the session detail page (own PUT). overwriteSession (编辑上课记录) never
+  // touches this column — a re-commit payload's homeworkContent is ignored.
   homeworkContent: text('homework_content'),
   reviewBook: integer('review_book'), // 课文复习: 第几册 (1-4)
   reviewLesson: integer('review_lesson'), // 课文复习: 第几课

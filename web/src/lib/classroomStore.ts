@@ -62,6 +62,10 @@ export interface ClassroomSession {
   // Original ended_at carried through an edit, so overwrite keeps the recorded
   // duration instead of recomputing startedAt + 时长. Optional (compat).
   endedAt?: string;
+  // 本节课作业草稿（作业检查侧栏 textarea 受控值），随 commit payload 一次性提交。
+  // undefined = 没填过；编辑上课记录时预填已有作业但侧栏只读（overwrite 忽略该字段）。
+  // Optional → 老存档/旧代码照常读写 (persisted-shape compat)。
+  homeworkContent?: string;
   defaultGrouping: DefaultGroup[];
   groups: SGroup[];
   students: ClassroomStudent[];
@@ -204,6 +208,7 @@ export function buildEditSession(detail: SessionDetail, defaultGrouping: Default
     backfill: true, // past class → frozen timer + static badge (reuses the 补录 path)
     editOfSessionId: detail.id,
     endedAt: detail.endedAt ?? undefined,
+    homeworkContent: detail.homeworkContent ?? undefined, // 侧栏只读展示已布置的作业
     defaultGrouping,
     groups,
     students,
@@ -222,6 +227,7 @@ export type CAction =
   | { type: 'undoEvent'; eventId: number }
   | { type: 'setRecite'; sid: string; v: Recitation; at: string }
   | { type: 'setHomework'; sid: string; v: Homework; at: string }
+  | { type: 'setHomeworkContent'; content: string }
   | { type: 'addTag'; sid: string; tag: string }
   | { type: 'removeTag'; sid: string; tag: string }
   | { type: 'toggleAttendance'; sid: string; at: string }
@@ -281,6 +287,9 @@ export function reducer(s: ClassroomSession, a: CAction): ClassroomSession {
         a.at,
       );
     }
+    case 'setHomeworkContent':
+      // 本节课作业草稿：逐字符 dispatch，不进日志、不占事件 id。
+      return s.homeworkContent === a.content ? s : { ...s, homeworkContent: a.content };
     case 'addTag': {
       // 奖章：直接字段修改（同 r/h），不进 events（不联动加分、不受 undo 影响）。
       // 重复打同一 tag（含大小写/空白变体）= 纯 no-op；`tags ?? []` 兼容旧存档。
@@ -589,6 +598,8 @@ export function buildCommitPayload(s: ClassroomSession, endedAt: string): Commit
     events,
     checks,
     tags,
+    // 原样直通（不 trim）——空白归一化交给 server 端（与详情页 PUT 同口径）
+    homeworkContent: s.homeworkContent ?? null,
   };
 }
 
