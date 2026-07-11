@@ -7,6 +7,7 @@ import { api, type ClassListItem, type Me } from '../lib/api';
 import { loadSession } from '../lib/classroomStore';
 import { BOOK_LABELS } from '../lib/homework';
 import { lessonLabel } from '../lib/lesson';
+import { relativeSessionLabel } from '../lib/relativeTime';
 import { GREEN, GREEN_DARK, PAL } from '../lib/theme';
 
 const ORANGE = '#f0862a';
@@ -332,7 +333,7 @@ function ClassCard({ c, ci }: { c: ClassListItem; ci: number }) {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ fontSize: 11.5, color: '#a6adb8' }}>上次上课</span>
               <span style={{ marginLeft: 'auto', fontSize: 11.5, fontWeight: 600, color: '#8b93a0' }}>
-                {c.lastSession.relative}
+                {relativeSessionLabel(c.lastSession.startedAt) ?? c.lastSession.relative}
               </span>
             </div>
             <div
