@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { GroupEditPopover } from '../components/GroupEditMenu';
-import { api, type ClassDetail, type LastRecap, type TeacherItem } from '../lib/api';
+import { PrevLessonContent } from '../components/PrevLessonContent';
+import { api, type ClassDetail, type TeacherItem } from '../lib/api';
 import {
   buildClassroomSession,
   loadSession,
@@ -15,8 +16,6 @@ import {
   addGroup,
   buildSessionConfig,
   buildSetup,
-  fmtDurationCN,
-  MEDALS,
   membersOf,
   moveStudent,
   removeGroup,
@@ -35,12 +34,6 @@ const NUM = "'Baloo 2','Nunito','PingFang SC',sans-serif";
 const TODAY = '2026年7月1日 · 周三'; // demo reference (server REFERENCE_TODAY = 2026-07-01)
 
 const color = (ci: number) => GROUP_COLORS[ci % GROUP_COLORS.length];
-
-/** "06-26" -> "6月26日" (drop leading zeros, match the mockups). */
-function fmtMonthDay(mmdd: string): string {
-  const [mm, dd] = mmdd.split('-').map(Number);
-  return `${mm}月${dd}日`;
-}
 
 export function Setup() {
   const { id = 'c1' } = useParams();
@@ -217,7 +210,7 @@ export function Setup() {
             onDuration={(v) => setDurationMin(v.replace(/[^0-9]/g, '').slice(0, 3))}
             onTeacher={setTeacherId}
           />
-          <LastRecapCard recap={detail?.lastRecap ?? null} />
+          <LastRecapCard classId={id} />
         </div>
 
         {/* right: grouping */}
@@ -696,110 +689,16 @@ function Field({ children, last }: { children: React.ReactNode; last?: boolean }
 }
 
 // ===== last-class recap card ===============================================
-function LastRecapCard({ recap }: { recap: LastRecap | null }) {
-  const ranked = useMemo(
-    () => (recap ? recap.groups.map((g, i) => ({ ...g, medal: MEDALS[i] ?? '', c: color(g.orderIndex) })) : []),
-    [recap],
-  );
+// 内容体与课堂右上角「上节课」popover 共用 (components/PrevLessonContent)。
+function LastRecapCard({ classId }: { classId: string }) {
   return (
     <div style={{ background: '#fff', borderRadius: 24, padding: 22, boxShadow: '0 10px 28px rgba(60,90,55,.08)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 6 }}>
         <span style={{ fontSize: 22 }}>📖</span>
         <span style={{ fontWeight: 900, fontSize: 20, color: '#2c3340' }}>上节课回顾</span>
-        <span
-          style={{
-            marginLeft: 'auto',
-            fontWeight: 700,
-            fontSize: 13,
-            color: '#8a94a0',
-            background: '#f0f3ed',
-            padding: '5px 12px',
-            borderRadius: 10,
-          }}
-        >
-          {recap ? `${fmtMonthDay(recap.date)} ${recap.weekday}` : '—'}
-        </span>
       </div>
-      <div style={{ fontSize: 13, fontWeight: 600, color: '#a7b0bb', marginBottom: 14 }}>填本节课次 / 课题时可参考</div>
-
-      {!recap && (
-        <div style={{ fontSize: 14, fontWeight: 700, color: '#b7c0c9', padding: '4px 2px' }}>暂无上课记录</div>
-      )}
-      {recap && (
-        <>
-          <div style={{ background: '#f8faf5', borderRadius: 16, padding: '14px 16px', border: '2px solid #eef3e8' }}>
-            <div style={{ fontFamily: NUM, fontWeight: 800, fontSize: 21, color: '#2c3340' }}>
-              {recap.lessonNumber != null ? `第 ${recap.lessonNumber} 课` : '未编号'}
-            </div>
-            <div style={{ fontWeight: 700, fontSize: 15, color: '#66756c', marginTop: 3 }}>
-              {recap.lessonTitle ?? '—'}
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', gap: 10, margin: '14px 0 18px' }}>
-            <Stat icon="⏱" value={fmtDurationCN(recap.actualDurationMin)} label="实际上课" />
-            <Stat icon="📋" value={`${recap.attendancePresent} / ${recap.attendanceTotal}`} label="出勤" />
-          </div>
-
-          <div style={{ fontWeight: 800, fontSize: 14, color: '#5b6672', marginBottom: 10 }}>🏆 每组得分</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {ranked.map((g) => (
-              <div
-                key={g.name + g.orderIndex}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 10,
-                  padding: '9px 13px',
-                  borderRadius: 13,
-                  background: g.c.headBg,
-                }}
-              >
-                <span style={{ fontSize: 16, width: 20, textAlign: 'center' }}>{g.medal}</span>
-                <span style={{ fontSize: 19 }}>{g.emoji}</span>
-                <span style={{ fontWeight: 800, fontSize: 15, color: g.c.headFg }}>{g.name}</span>
-                <div
-                  style={{
-                    marginLeft: 'auto',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 3,
-                    fontFamily: NUM,
-                    fontWeight: 800,
-                    fontSize: 18,
-                    color: g.c.headFg,
-                  }}
-                >
-                  <span style={{ fontSize: 14 }}>⭐</span>
-                  {g.score}
-                </div>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function Stat({ icon, value, label }: { icon: string; value: string; label: string }) {
-  return (
-    <div
-      style={{
-        flex: 1,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 9,
-        background: '#f6f9f2',
-        borderRadius: 14,
-        padding: '11px 13px',
-      }}
-    >
-      <span style={{ fontSize: 18 }}>{icon}</span>
-      <div style={{ display: 'flex', flexDirection: 'column' }}>
-        <span style={{ fontWeight: 800, fontSize: 15, color: '#3a4350' }}>{value}</span>
-        <span style={{ fontWeight: 700, fontSize: 11, color: '#a7b0bb' }}>{label}</span>
-      </div>
+      <div style={{ fontSize: 13, fontWeight: 600, color: '#a7b0bb', marginBottom: 10 }}>填本节课次 / 课题时可参考</div>
+      <PrevLessonContent classId={classId} />
     </div>
   );
 }
