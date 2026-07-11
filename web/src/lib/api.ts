@@ -423,7 +423,13 @@ export const api = {
   // Partial 课堂信息 update — only keys present in `p` are written server-side.
   updateSessionInfo: (
     id: string,
-    p: { lessonNumber?: number | null; lessonTitle?: string | null; teacherId?: string | null; startedAt?: string },
+    p: {
+      lessonNumber?: number | null;
+      lessonTitle?: string | null;
+      teacherId?: string | null;
+      startedAt?: string;
+      endedAt?: string;
+    },
   ) => req<SessionDetail>('PUT', `/api/sessions/${id}`, p),
   saveGrouping: (classId: string, groups: GroupSave[]) =>
     req<ClassDetail>('PUT', `/api/classes/${classId}/groups`, { groups }),

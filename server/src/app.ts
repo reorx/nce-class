@@ -1441,7 +1441,7 @@ export function createApp() {
     res.json({ ok: true });
   });
 
-  // ---- session info edit (课堂信息: 课次/课题/主讲老师/开始时间 record fix-up) ----
+  // ---- session info edit (课堂信息: 课次/课题/主讲老师/起止时间 record fix-up) ----
   // Partial update: only keys present in the body are validated and written, so
   // the older {startedAt}-only caller (上课记录 改时间) keeps working unchanged.
   app.put('/api/sessions/:id', (req, res) => {
@@ -1455,10 +1455,20 @@ export function createApp() {
       const startedAt = str(b.startedAt);
       if (!startedAt || !TIME_RE.test(startedAt))
         return res.status(400).json({ error: 'startedAt 必须是 YYYY-MM-DD HH:mm:ss' });
-      // Same naive format on both sides, so plain string order IS chronological order.
-      if (s.ended_at && startedAt >= s.ended_at) return res.status(400).json({ error: '开始时间必须早于结束时间' });
       patch.startedAt = startedAt;
     }
+    if ('endedAt' in b) {
+      const endedAt = str(b.endedAt);
+      if (!endedAt || !TIME_RE.test(endedAt))
+        return res.status(400).json({ error: 'endedAt 必须是 YYYY-MM-DD HH:mm:ss' });
+      patch.endedAt = endedAt;
+    }
+    // Same naive format on both sides, so plain string order IS chronological
+    // order. Patched values pair with each other first, then with stored ones.
+    const effStart = patch.startedAt ?? s.started_at;
+    const effEnd = patch.endedAt ?? s.ended_at;
+    if ((patch.startedAt || patch.endedAt) && effStart && effEnd && effStart >= effEnd)
+      return res.status(400).json({ error: patch.endedAt ? '结束时间必须晚于开始时间' : '开始时间必须早于结束时间' });
     if ('lessonNumber' in b) {
       if (b.lessonNumber != null && (!Number.isInteger(b.lessonNumber) || b.lessonNumber < 1))
         return res.status(400).json({ error: '课次号必须是正整数' });

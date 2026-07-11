@@ -350,7 +350,13 @@ export function deleteSession(sqlite: DB, sessionId: string): void {
 export function updateSessionInfo(
   sqlite: DB,
   sessionId: string,
-  p: { lessonNumber?: number | null; lessonTitle?: string | null; teacherId?: string | null; startedAt?: string },
+  p: {
+    lessonNumber?: number | null;
+    lessonTitle?: string | null;
+    teacherId?: string | null;
+    startedAt?: string;
+    endedAt?: string;
+  },
 ): void {
   const sets: string[] = [];
   const vals: unknown[] = [];
@@ -369,6 +375,10 @@ export function updateSessionInfo(
   if (p.startedAt !== undefined) {
     sets.push('started_at=?', 'date=?');
     vals.push(p.startedAt, p.startedAt.slice(0, 10));
+  }
+  if (p.endedAt !== undefined) {
+    sets.push('ended_at=?');
+    vals.push(p.endedAt);
   }
   if (!sets.length) return;
   sqlite.prepare(`UPDATE class_sessions SET ${sets.join(', ')} WHERE id=?`).run(...vals, sessionId);

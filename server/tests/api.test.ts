@@ -1139,7 +1139,9 @@ describe('session start-time update', () => {
 describe('session info edit (课堂信息 tab: 课次/课题/主讲老师)', () => {
   const row = () =>
     sqlite
-      .prepare(`SELECT lesson_number, lesson_title, teacher_id, date, started_at FROM class_sessions WHERE id='sess1'`)
+      .prepare(
+        `SELECT lesson_number, lesson_title, teacher_id, date, started_at, ended_at FROM class_sessions WHERE id='sess1'`,
+      )
       .get() as any;
 
   it('updates 课次/课题/主讲老师/开始时间 in one PUT and echoes the detail payload', async () => {
@@ -1207,6 +1209,49 @@ describe('session info edit (课堂信息 tab: 课次/课题/主讲老师)', () 
     const { agent } = await login();
     expect((await agent.put('/api/sessions/sess1').send({})).status).toBe(200);
     expect(row()).toMatchObject({ lesson_number: 7, lesson_title: 'Too late', teacher_id: 't-wangli' });
+  });
+
+  // seed sess1: started 19:00, ended 20:58 → 结束时间可改且实际时长随之重派生
+  it('updates 结束时间 and re-derives actualDurationMin', async () => {
+    const { agent } = await login();
+    const res = await agent.put('/api/sessions/sess1').send({ endedAt: '2026-06-26 20:30:00' });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ endedAt: '2026-06-26 20:30:00', actualDurationMin: 90 });
+    expect(row()).toMatchObject({ started_at: '2026-06-26 19:00:00', ended_at: '2026-06-26 20:30:00' });
+  });
+
+  it('rejects a malformed endedAt with 400', async () => {
+    const { agent } = await login();
+    for (const bad of ['nope', '2026-06-26', '2026-06-26 25:00:00', null]) {
+      expect((await agent.put('/api/sessions/sess1').send({ endedAt: bad })).status).toBe(400);
+    }
+    expect(row()).toMatchObject({ ended_at: '2026-06-26 20:58:00' });
+  });
+
+  it('rejects a 结束时间 not after the stored 开始时间', async () => {
+    const { agent } = await login();
+    expect((await agent.put('/api/sessions/sess1').send({ endedAt: '2026-06-26 19:00:00' })).status).toBe(400);
+    expect((await agent.put('/api/sessions/sess1').send({ endedAt: '2026-06-26 18:00:00' })).status).toBe(400);
+    expect(row()).toMatchObject({ ended_at: '2026-06-26 20:58:00' });
+  });
+
+  it('validates startedAt/endedAt in the same PUT against each other, not stored values', async () => {
+    const { agent } = await login();
+    // 整体后移：新 startedAt 晚于旧 ended_at，但同批 endedAt 更晚 → 通过
+    const res = await agent
+      .put('/api/sessions/sess1')
+      .send({ startedAt: '2026-06-26 21:00:00', endedAt: '2026-06-26 22:00:00' });
+    expect(res.status).toBe(200);
+    expect(row()).toMatchObject({ started_at: '2026-06-26 21:00:00', ended_at: '2026-06-26 22:00:00' });
+    // 同批倒挂 → 400，且两个字段都不落库
+    expect(
+      (
+        await agent
+          .put('/api/sessions/sess1')
+          .send({ startedAt: '2026-06-26 15:00:00', endedAt: '2026-06-26 15:00:00' })
+      ).status,
+    ).toBe(400);
+    expect(row()).toMatchObject({ started_at: '2026-06-26 21:00:00', ended_at: '2026-06-26 22:00:00' });
   });
 });
 

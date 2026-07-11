@@ -6,9 +6,10 @@ import { RecapPanel } from '../components/RecapPanel';
 import { TopBar } from '../components/TopBar';
 import { useToast } from '../components/Toast';
 import { api, type Me, type SessionDetail as SessionData, type TeacherItem } from '../lib/api';
-import { applyStartTime, startTimeOf } from '../lib/classroomStore';
+import { applyStartTime, minutesBetweenSql, startTimeOf } from '../lib/classroomStore';
 import { BOOK_LABELS, BOOKS, clampLesson, lessonOptions, renderHomeworkTemplate } from '../lib/homework';
 import { lessonLabel } from '../lib/lesson';
+import { fmtDurationCn } from '../lib/recapCard';
 import { GREEN } from '../lib/theme';
 
 // Session 详情页（结束课堂后落地，也可从上课记录点课名进入）：
@@ -313,9 +314,9 @@ function PrevHomeworkCard({ p, classId }: { p: NonNullable<SessionData['prevHome
 }
 
 // ===== 课堂信息 TAB =========================================================
-// Same fields as the in-classroom LessonInfoDialog (课次/课题/开始时间/主讲老师)
-// but in the management system's plain card style; 课堂时长 stays read-only here
-// since the actual duration is derived from startedAt/endedAt.
+// The in-classroom LessonInfoDialog fields (课次/课题/开始时间/主讲老师) plus
+// 结束时间, in the management system's plain card style; 实际时长 stays
+// read-only since it is derived from startedAt/endedAt.
 function InfoTab({ d, onSaved }: { d: SessionData; onSaved: (fresh: SessionData) => void }) {
   const toast = useToast();
   const [teachers, setTeachers] = useState<TeacherItem[]>([]);
@@ -323,6 +324,8 @@ function InfoTab({ d, onSaved }: { d: SessionData; onSaved: (fresh: SessionData)
   const [title, setTitle] = useState('');
   const [time, setTime] = useState('');
   const [timeErr, setTimeErr] = useState('');
+  const [endTime, setEndTime] = useState('');
+  const [endErr, setEndErr] = useState('');
   const [tid, setTid] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -338,8 +341,10 @@ function InfoTab({ d, onSaved }: { d: SessionData; onSaved: (fresh: SessionData)
     setNo(d.lessonNumber != null ? String(d.lessonNumber) : '');
     setTitle(d.lessonTitle ?? '');
     setTime(d.startedAt ? startTimeOf(d.startedAt) : '');
+    setEndTime(d.endedAt ? startTimeOf(d.endedAt) : '');
     setTid(d.teacherId ?? '');
     setTimeErr('');
+    setEndErr('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [d.id]);
 
@@ -350,18 +355,30 @@ function InfoTab({ d, onSaved }: { d: SessionData; onSaved: (fresh: SessionData)
       lessonTitle: title,
       teacherId: tid || null,
     };
-    // Legacy rows without startedAt keep it untouched (key omitted = no write).
+    // Legacy rows without timestamps keep them untouched (key omitted = no write).
     if (d.startedAt) {
       const next = applyStartTime(d.startedAt, time);
       if (!next) {
         setTimeErr('请输入有效的开始时间');
         return;
       }
-      if (d.endedAt && next >= d.endedAt) {
-        setTimeErr('开始时间必须早于结束时间');
+      patch.startedAt = next;
+    }
+    if (d.endedAt) {
+      const next = applyStartTime(d.endedAt, endTime);
+      if (!next) {
+        setEndErr('请输入有效的结束时间');
         return;
       }
-      patch.startedAt = next;
+      patch.endedAt = next;
+    }
+    // 起止倒挂：错误提示挂在被改动的那个字段下
+    const effStart = patch.startedAt ?? d.startedAt;
+    const effEnd = patch.endedAt ?? d.endedAt;
+    if (effStart && effEnd && effStart >= effEnd) {
+      if (d.endedAt && endTime !== startTimeOf(d.endedAt)) setEndErr('结束时间必须晚于开始时间');
+      else setTimeErr('开始时间必须早于结束时间');
+      return;
     }
     setBusy(true);
     try {
@@ -376,6 +393,11 @@ function InfoTab({ d, onSaved }: { d: SessionData; onSaved: (fresh: SessionData)
 
   // 该老师已不可选（如被移出）时仍显示当前值，避免下拉静默丢主讲人
   const tidUnknown = tid !== '' && !teachers.some((t) => t.id === tid);
+
+  // 起止时间编辑时实时预览实际时长；旧记录（无时间戳）回退服务端派生标签
+  const nextStart = d.startedAt ? applyStartTime(d.startedAt, time) : null;
+  const nextEnd = d.endedAt ? applyStartTime(d.endedAt, endTime) : null;
+  const liveMin = nextStart && nextEnd ? minutesBetweenSql(nextStart, nextEnd) : null;
 
   return (
     <div style={{ maxWidth: 560 }}>
@@ -401,6 +423,12 @@ function InfoTab({ d, onSaved }: { d: SessionData; onSaved: (fresh: SessionData)
             </div>
           </div>
           <div>
+            <label style={infoLabel}>实际时长</label>
+            <div style={{ height: 40, display: 'flex', alignItems: 'center', fontSize: 14, color: '#7a828f' }}>
+              {liveMin != null ? fmtDurationCn(liveMin) : d.durationLabel}
+            </div>
+          </div>
+          <div>
             <label style={infoLabel}>开始时间</label>
             <input
               type="time"
@@ -414,6 +442,21 @@ function InfoTab({ d, onSaved }: { d: SessionData; onSaved: (fresh: SessionData)
               style={{ ...inputStyle, width: '100%', opacity: d.startedAt ? 1 : 0.55 }}
             />
             {timeErr && <div style={{ color: '#e5484d', fontSize: 12.5, marginTop: 6 }}>{timeErr}</div>}
+          </div>
+          <div>
+            <label style={infoLabel}>结束时间</label>
+            <input
+              type="time"
+              value={endTime}
+              disabled={!d.endedAt}
+              title={d.endedAt ? undefined : '旧记录未存结束时间，无法修改'}
+              onChange={(e) => {
+                setEndTime(e.target.value);
+                setEndErr('');
+              }}
+              style={{ ...inputStyle, width: '100%', opacity: d.endedAt ? 1 : 0.55 }}
+            />
+            {endErr && <div style={{ color: '#e5484d', fontSize: 12.5, marginTop: 6 }}>{endErr}</div>}
           </div>
           <div style={{ gridColumn: '1 / -1' }}>
             <label style={infoLabel}>课题</label>

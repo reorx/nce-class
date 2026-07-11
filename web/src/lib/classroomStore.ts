@@ -660,6 +660,17 @@ export function applyStartTime(startedAt: string, hhmm: string): string | null {
   return `${date} ${m[1]}:${m[2]}:00`;
 }
 
+/** Whole minutes from one naive sql timestamp to another — the 课堂信息 tab's
+ *  live 实际时长 hint. Null when either side is malformed or the span is
+ *  non-positive, so callers fall back to the server-derived label. */
+export function minutesBetweenSql(start: string, end: string): number | null {
+  const a = Date.parse(start.replace(' ', 'T'));
+  const b = Date.parse(end.replace(' ', 'T'));
+  if (Number.isNaN(a) || Number.isNaN(b)) return null;
+  const min = Math.round((b - a) / 60000);
+  return min > 0 ? min : null;
+}
+
 /** A fresh idempotency key for a new session (stable across submit retries). */
 export function newClientSessionId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();

@@ -12,6 +12,7 @@ import {
   endSql,
   listCommitBackups,
   loadSession,
+  minutesBetweenSql,
   nowSql,
   reducer,
   saveCommitBackup,
@@ -726,6 +727,20 @@ describe('applyStartTime / startTimeOf (开始时间 dialog helpers)', () => {
 describe('nowSql', () => {
   it('formats a date as naive YYYY-MM-DD HH:mm:ss', () => {
     expect(nowSql(new Date(2026, 6, 2, 9, 5, 3))).toBe('2026-07-02 09:05:03');
+  });
+});
+
+describe('minutesBetweenSql (课堂信息 tab 实际时长 hint)', () => {
+  it('returns whole minutes between two naive sql timestamps', () => {
+    expect(minutesBetweenSql('2026-07-02 19:00:00', '2026-07-02 20:58:00')).toBe(118);
+    expect(minutesBetweenSql('2026-07-02 23:30:00', '2026-07-03 00:30:00')).toBe(60); // 跨午夜
+  });
+
+  it('returns null for a non-positive span or malformed input', () => {
+    expect(minutesBetweenSql('2026-07-02 19:00:00', '2026-07-02 19:00:00')).toBeNull();
+    expect(minutesBetweenSql('2026-07-02 19:00:00', '2026-07-02 18:00:00')).toBeNull();
+    expect(minutesBetweenSql('garbage', '2026-07-02 19:00:00')).toBeNull();
+    expect(minutesBetweenSql('2026-07-02 19:00:00', 'garbage')).toBeNull();
   });
 });
 
