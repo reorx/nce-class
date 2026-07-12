@@ -2,3 +2,14 @@ packages:
   - server
   - web
   - miniapp
+allowBuilds:
+  '@parcel/watcher': false
+  '@swc/core': false
+  '@tarojs/binding': false
+  '@tarojs/cli': false
+  better-sqlite3: true
+  core-js: false
+  core-js-pure: false
+  esbuild: true
+  less: false
+  protobufjs: false

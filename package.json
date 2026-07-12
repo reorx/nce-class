@@ -10,8 +10,5 @@
     "dev:miniapp": "pnpm --filter miniapp dev:h5",
     "db:reset": "pnpm --filter server db:reset",
     "db:generate": "pnpm --filter server db:generate"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": ["better-sqlite3", "esbuild"]
   }
 }
