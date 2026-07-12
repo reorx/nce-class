@@ -56,15 +56,20 @@ export function homeworkStyle(h: string | null): StatusStyle {
 
 export const scoreColor = (n: number) => (n > 0 ? '#3a7a4e' : n < 0 ? '#c4554d' : '#a89a72');
 
-// ---- 今日之星：到堂且净分>0 的前三，讲台式排列 [第2名, 第1名, 第3名] ------------
+// ---- 今日之星：到堂且净分>0，按分数并列成档（dense ranking）取前三档，
+// 讲台式排列 [第2名, 第1名, 第3名]。同分成员同档，渲染层多人档只列名字不画头像。
 
-export interface PodiumStar {
-  rank: number; // 0 = 第1名
+export interface PodiumMember {
   name: string;
-  score: number;
   groupName: string | null;
   groupEmoji: string | null;
   ring: string;
+}
+
+export interface PodiumTier {
+  rank: number; // 0 = 第1名
+  score: number;
+  members: PodiumMember[]; // 同分成员，按原始遍历顺序稳定排列
 }
 
 /** 全体到堂成员（含未分组），附组信息，供领奖台与分类统计遍历。 */
@@ -75,20 +80,34 @@ function presentWithGroup(recap: Recap): (RecapMember & { group: RecapGroup | nu
   return rows.filter(isPresent);
 }
 
-export function podiumStars(recap: Recap): PodiumStar[] {
-  const top3 = presentWithGroup(recap)
+export function podiumTiers(recap: Recap): PodiumTier[] {
+  const scorers = presentWithGroup(recap)
     .filter((m) => m.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 3)
-    .map((m, rank) => ({
-      rank,
+    .sort((a, b) => b.score - a.score);
+  const tiers: PodiumTier[] = [];
+  for (const m of scorers) {
+    let tier = tiers[tiers.length - 1];
+    if (!tier || tier.score !== m.score) {
+      if (tiers.length === 3) break;
+      tier = { rank: tiers.length, score: m.score, members: [] };
+      tiers.push(tier);
+    }
+    tier.members.push({
       name: m.name,
-      score: m.score,
       groupName: m.group?.name ?? null,
       groupEmoji: m.group?.emoji ?? null,
       ring: m.group ? paletteFor(m.group.orderIndex).ring : UNGROUPED_RING,
-    }));
-  return [top3[1], top3[0], top3[2]].filter(Boolean) as PodiumStar[];
+    });
+  }
+  return [tiers[1], tiers[0], tiers[2]].filter(Boolean) as PodiumTier[];
+}
+
+// 多人档名单展示上限：最多列 5 个名字，超出以「等 N 人」收尾（N = 该档总人数）。
+const PODIUM_MAX_NAMES = 5;
+
+export function podiumNameLines(names: string[]): { names: string[]; overflow: string | null } {
+  if (names.length <= PODIUM_MAX_NAMES) return { names, overflow: null };
+  return { names: names.slice(0, PODIUM_MAX_NAMES), overflow: `等 ${names.length} 人` };
 }
 
 // ---- 各组详细表现 ------------------------------------------------------------

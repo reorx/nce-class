@@ -5,7 +5,8 @@ import {
   groupCards,
   homeworkStyle,
   paletteFor,
-  podiumStars,
+  podiumNameLines,
+  podiumTiers,
   recitationStyle,
   statSections,
   ungroupedNote,
@@ -46,7 +47,7 @@ const mkRecap = (over: Partial<Recap> = {}): Recap => ({
   ...over,
 });
 
-describe('podiumStars', () => {
+describe('podiumTiers', () => {
   const recap = mkRecap({
     groups: [
       grp('第1组', {
@@ -62,15 +63,37 @@ describe('podiumStars', () => {
     ],
   });
 
-  it('picks top-3 present scorers and arranges them 讲台式 [2nd, 1st, 3rd]', () => {
-    const stars = podiumStars(recap);
-    expect(stars.map((s) => [s.name, s.rank])).toEqual([
-      ['欣欣', 1],
-      ['小明', 0],
-      ['思思', 2],
+  it('picks top-3 score tiers and arranges them 讲台式 [2nd, 1st, 3rd]', () => {
+    const tiers = podiumTiers(recap);
+    expect(tiers.map((t) => [t.rank, t.score, t.members.map((m) => m.name)])).toEqual([
+      [1, 4, ['欣欣']],
+      [0, 5, ['小明']],
+      [2, 2, ['思思']],
     ]);
-    expect(stars[1].groupName).toBe('第1组');
-    expect(stars[1].groupEmoji).toBe('🦁');
+    expect(tiers[1].members[0].groupName).toBe('第1组');
+    expect(tiers[1].members[0].groupEmoji).toBe('🦁');
+  });
+
+  it('groups same-score members into one tier (dense ranking, top-3 distinct scores)', () => {
+    const r = mkRecap({
+      groups: [
+        grp('第1组', {
+          orderIndex: 0,
+          members: [mem('小明', { score: 5 }), mem('思思', { score: 4 }), mem('乐乐', { score: 3 })],
+        }),
+        grp('第2组', {
+          orderIndex: 1,
+          members: [mem('欣欣', { score: 5 }), mem('大壮', { score: 3 }), mem('多多', { score: 1 })],
+        }),
+      ],
+    });
+    const tiers = podiumTiers(r);
+    expect(tiers.map((t) => [t.rank, t.score, t.members.map((m) => m.name)])).toEqual([
+      [1, 4, ['思思']],
+      [0, 5, ['小明', '欣欣']],
+      [2, 3, ['乐乐', '大壮']],
+    ]);
+    // 第 4 档分数（多多 score=1）不上榜
   });
 
   it('excludes absentees and non-positive scores', () => {
@@ -85,22 +108,36 @@ describe('podiumStars', () => {
         }),
       ],
     });
-    expect(podiumStars(r)).toEqual([]);
+    expect(podiumTiers(r)).toEqual([]);
   });
 
-  it('handles fewer than 3 stars (1st centered-last when only two)', () => {
+  it('handles fewer than 3 tiers (1st centered-last when only two)', () => {
     const r = mkRecap({
       groups: [grp('第1组', { members: [mem('小明', { score: 2 }), mem('思思', { score: 1 })] })],
     });
-    expect(podiumStars(r).map((s) => s.rank)).toEqual([1, 0]);
+    expect(podiumTiers(r).map((t) => t.rank)).toEqual([1, 0]);
   });
 
   it('includes ungrouped present members (no group meta)', () => {
     const r = mkRecap({ ungrouped: [mem('浩浩', { score: 3 })] });
-    const stars = podiumStars(r);
-    expect(stars).toHaveLength(1);
-    expect(stars[0].groupName).toBeNull();
-    expect(stars[0].groupEmoji).toBeNull();
+    const tiers = podiumTiers(r);
+    expect(tiers).toHaveLength(1);
+    expect(tiers[0].members[0].groupName).toBeNull();
+    expect(tiers[0].members[0].groupEmoji).toBeNull();
+  });
+});
+
+describe('podiumNameLines', () => {
+  const names = (n: number) => Array.from({ length: n }, (_, i) => `学生${i + 1}`);
+
+  it('lists all names when the tier has at most 5 members', () => {
+    expect(podiumNameLines(names(5))).toEqual({ names: names(5), overflow: null });
+    expect(podiumNameLines(['小明', '欣欣'])).toEqual({ names: ['小明', '欣欣'], overflow: null });
+  });
+
+  it('caps at 5 names and appends 等N人 when exceeded', () => {
+    expect(podiumNameLines(names(7))).toEqual({ names: names(7).slice(0, 5), overflow: '等 7 人' });
+    expect(podiumNameLines(names(6))).toEqual({ names: names(6).slice(0, 5), overflow: '等 6 人' });
   });
 });
 

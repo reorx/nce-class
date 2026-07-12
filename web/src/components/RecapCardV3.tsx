@@ -3,13 +3,14 @@ import type { Recap } from '../lib/api';
 import { dateLabel, fmtSigned } from '../lib/recapCard';
 import {
   groupCards,
-  podiumStars,
+  podiumNameLines,
+  podiumTiers,
   scoreColor,
   statSections,
   ungroupedNote,
   type ChipTone,
   type MemberRow,
-  type PodiumStar,
+  type PodiumTier,
 } from '../lib/recapV3';
 
 // 课堂报告 v3，还原设计稿「Recap v3.dc.html」（414 宽移动端画板）：
@@ -61,7 +62,7 @@ export function RecapCardV3({
   showRecitation?: boolean;
   showHomework?: boolean;
 }) {
-  const stars = podiumStars(recap);
+  const tiers = podiumTiers(recap);
   const cards = groupCards(recap);
   const noGroupNote = ungroupedNote(recap);
   const stats = statSections(recap, { showRecitation, showHomework });
@@ -103,21 +104,21 @@ export function RecapCardV3({
         {/* 今日之星 */}
         <SectionHead icon="🌟" title="今日之星" hint="本节课表现最棒的三位" />
         <div style={{ ...card, borderRadius: 22, padding: '20px 16px 18px' }}>
-          {stars.length === 0 ? (
+          {tiers.length === 0 ? (
             <div style={{ fontWeight: 700, fontSize: 13, color: '#b5ab8e', textAlign: 'center' }}>
               本节暂无 · 下节课争取上榜！
             </div>
           ) : (
             <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10 }}>
-              {stars.map((s) => (
-                <PodiumSlot key={s.name + s.rank} star={s} showScores={showScores} />
+              {tiers.map((t) => (
+                <PodiumSlot key={t.rank} tier={t} showScores={showScores} />
               ))}
             </div>
           )}
           {recap.studentTags.length > 0 && (
             <div
               style={{
-                marginTop: stars.length === 0 ? 14 : 18,
+                marginTop: tiers.length === 0 ? 14 : 18,
                 paddingTop: 14,
                 borderTop: '1.5px solid #f0e8d5',
               }}
@@ -427,9 +428,8 @@ function MemberLine({
             fontWeight: 800,
             fontSize: 15,
             color: '#3a3628',
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
+            overflowWrap: 'break-word',
+            minWidth: 0,
           }}
         >
           {m.name}
@@ -484,56 +484,99 @@ function StatusCell({ width, dot, color, text }: { width: number; dot: string; c
   );
 }
 
-function PodiumSlot({ star, showScores }: { star: PodiumStar; showScores: boolean }) {
-  const first = star.rank === 0;
+function PodiumSlot({ tier, showScores }: { tier: PodiumTier; showScores: boolean }) {
+  const first = tier.rank === 0;
+  const solo = tier.members.length === 1;
   const avSize = first ? 62 : 48;
-  const barH = star.rank === 0 ? 78 : star.rank === 1 ? 56 : 44;
+  const barH = tier.rank === 0 ? 78 : tier.rank === 1 ? 56 : 44;
   return (
     <div
       style={{ flex: first ? 1.18 : 1, display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 0 }}
     >
       <div style={{ height: 26, fontSize: 22, lineHeight: '26px' }}>{first ? '👑' : ''}</div>
-      <div style={{ position: 'relative', width: avSize, height: avSize, marginTop: 2 }}>
+      {solo ? (
+        <>
+          <div style={{ position: 'relative', width: avSize, height: avSize, marginTop: 2 }}>
+            <div
+              style={{
+                width: '100%',
+                height: '100%',
+                borderRadius: '50%',
+                background: '#efe9db',
+                color: '#8a7f63',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontWeight: 800,
+                fontSize: first ? 24 : 18,
+                border: `3px solid ${tier.members[0].ring}`,
+              }}
+            >
+              {tier.members[0].name[0]}
+            </div>
+            {tier.members[0].groupEmoji && (
+              <span style={{ position: 'absolute', bottom: -3, right: -6, fontSize: 17, lineHeight: 1 }}>
+                {tier.members[0].groupEmoji}
+              </span>
+            )}
+          </div>
+          <div
+            style={{
+              marginTop: 8,
+              fontWeight: 900,
+              fontSize: first ? 17 : 15,
+              color: '#3a3628',
+              textAlign: 'center',
+              overflowWrap: 'break-word',
+              maxWidth: '100%',
+            }}
+          >
+            {tier.members[0].name}
+          </div>
+          <div style={{ margin: '2px 0 8px', fontWeight: 700, fontSize: 11, color: '#a89a72', whiteSpace: 'nowrap' }}>
+            {tier.members[0].groupName ?? '未分组'}
+          </div>
+        </>
+      ) : (
+        // 同分多人：不画头像，只按行列出名字
         <div
           style={{
-            width: '100%',
-            height: '100%',
-            borderRadius: '50%',
-            background: '#efe9db',
-            color: '#8a7f63',
+            marginTop: 2,
+            marginBottom: 8,
             display: 'flex',
+            flexDirection: 'column',
             alignItems: 'center',
-            justifyContent: 'center',
-            fontWeight: 800,
-            fontSize: first ? 24 : 18,
-            border: `3px solid ${star.ring}`,
+            gap: 3,
+            maxWidth: '100%',
           }}
         >
-          {star.name[0]}
+          {(() => {
+            const { names, overflow } = podiumNameLines(tier.members.map((m) => m.name));
+            return (
+              <>
+                {names.map((name) => (
+                  <div
+                    key={name}
+                    style={{
+                      fontWeight: 900,
+                      fontSize: first ? 16 : 14,
+                      color: '#3a3628',
+                      textAlign: 'center',
+                      overflowWrap: 'break-word',
+                      maxWidth: '100%',
+                    }}
+                  >
+                    {name}
+                  </div>
+                ))}
+                {overflow && (
+                  <div style={{ fontWeight: 700, fontSize: first ? 13 : 12, color: '#a89a72' }}>{overflow}</div>
+                )}
+              </>
+            );
+          })()}
         </div>
-        {star.groupEmoji && (
-          <span style={{ position: 'absolute', bottom: -3, right: -6, fontSize: 17, lineHeight: 1 }}>
-            {star.groupEmoji}
-          </span>
-        )}
-      </div>
-      <div
-        style={{
-          marginTop: 8,
-          fontWeight: 900,
-          fontSize: first ? 17 : 15,
-          color: '#3a3628',
-          whiteSpace: 'nowrap',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          maxWidth: '100%',
-        }}
-      >
-        {star.name}
-      </div>
-      <div style={{ margin: '2px 0 8px', fontWeight: 700, fontSize: 11, color: '#a89a72', whiteSpace: 'nowrap' }}>
-        {star.groupName ?? '未分组'}
-      </div>
+      )}
       <div
         style={{
           width: '100%',
@@ -545,9 +588,10 @@ function PodiumSlot({ star, showScores }: { star: PodiumStar; showScores: boolea
           alignItems: 'center',
           justifyContent: 'center',
           gap: 1,
+          flexShrink: 0,
         }}
       >
-        <span style={{ fontSize: 15, lineHeight: 1 }}>{['🥇', '🥈', '🥉'][star.rank]}</span>
+        <span style={{ fontSize: 15, lineHeight: 1 }}>{['🥇', '🥈', '🥉'][tier.rank]}</span>
         {showScores && (
           <span
             style={{
@@ -558,7 +602,7 @@ function PodiumSlot({ star, showScores }: { star: PodiumStar; showScores: boolea
               color: first ? '#4a3808' : '#8a7f63',
             }}
           >
-            {fmtSigned(star.score)}
+            {fmtSigned(tier.score)}
           </span>
         )}
       </div>
