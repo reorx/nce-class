@@ -1,7 +1,9 @@
+# 本地构建/参考用。生产 compose 由 deploy 工作区的 Ansible（nce-class role）下发，
+# 镜像来自 GitHub Actions push 的 ghcr（见 .github/workflows/deploy.yml）。
 services:
   app:
     build: .
-    image: nce-class:latest
+    image: ghcr.io/reorx/nce-class:latest
     container_name: nce-class-app
     restart: unless-stopped
     env_file: .env

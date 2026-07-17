@@ -1,0 +1,72 @@
+name: Build and Deploy
+
+# push master → build 镜像（server + web/dist 同一镜像）→ push ghcr →
+# 用 digest 调服务器 webhook 部署（Ansible webhook role 的 deploy-nce-class.sh：
+# 按 digest 拉镜像、拷 webdist 给宿主 Caddy、compose up）。
+# miniapp 不走 CI：weapp 上传始终在本地跑（密钥在本地 tmp/）。
+on:
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - 'kb/**'
+      - 'miniapp/**'
+      - '**.md'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=,format=short
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      # The digest lets the server pull content-addressed (immune to the ghcr
+      # :latest tag-propagation race). The webhook waits for the deploy script
+      # and returns its output, so this step fails if the deploy fails.
+      # WEBHOOK_URL is a secret too (public repo: keep the infra domain out),
+      # full URL including the /hooks/deploy-nce-class path.
+      - name: Trigger deploy webhook
+        run: |
+          curl -sf -X POST \
+            -H "X-Deploy-Token: ${{ secrets.WEBHOOK_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d '{"digest": "${{ steps.build.outputs.digest }}"}' \
+            "${{ secrets.WEBHOOK_URL }}"

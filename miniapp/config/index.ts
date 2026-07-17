@@ -5,6 +5,13 @@ import prodConfig from './prod';
 
 // https://taro-docs.jd.com/docs/next/config#defineconfig-辅助函数
 export default defineConfig<'webpack5'>(async (merge) => {
+  // 正式小程序构建必须注入生产 API 域名（api.ts 的 BASE）。真值不进仓库：
+  // 放 gitignored 的 miniapp/.env.production.local（TARO_APP_API_BASE=https://...）。
+  if (process.env.NODE_ENV === 'production' && process.env.TARO_ENV !== 'h5' && !process.env.TARO_APP_API_BASE) {
+    throw new Error(
+      'TARO_APP_API_BASE is not set — create miniapp/.env.production.local (see miniapp/README or AGENTS.md)',
+    );
+  }
   const baseConfig: UserConfigExport<'webpack5'> = {
     projectName: 'nce-class-miniapp',
     date: '2026-7-2',

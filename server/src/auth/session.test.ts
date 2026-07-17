@@ -1,5 +1,33 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseCookies, signSession, verifySession } from './session.js';
+
+describe('AUTH_SECRET production guard', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it('refuses to load in production without AUTH_SECRET', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('AUTH_SECRET', '');
+    vi.resetModules();
+    await expect(import('./session.js')).rejects.toThrow(/AUTH_SECRET/);
+  });
+
+  it('loads in production when AUTH_SECRET is set', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('AUTH_SECRET', 'prod-secret');
+    vi.resetModules();
+    await expect(import('./session.js')).resolves.toBeTruthy();
+  });
+
+  it('falls back to the dev secret outside production', async () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('AUTH_SECRET', '');
+    vi.resetModules();
+    await expect(import('./session.js')).resolves.toBeTruthy();
+  });
+});
 
 describe('signed session token', () => {
   const NOW = 1_700_000_000; // fixed reference (seconds)
