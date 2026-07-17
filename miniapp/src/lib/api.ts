@@ -1,13 +1,15 @@
 import Taro from '@tarojs/taro';
 
 // h5 走 devServer 代理（相对路径）；weapp 开发构建（dev:weapp --watch）直连本机 server
-// （开发者工具需关闭域名校验），正式构建（build:weapp）指向生产域名——mp 后台须配好
-// request/uploadFile/downloadFile 三类合法域名 = https://service.domain。
+// （开发者工具需关闭域名校验），正式构建（build:weapp）指向生产域名——由构建时环境变量
+// TARO_APP_API_BASE 注入（真值在 gitignored 的 miniapp/.env.production.local，不进仓库；
+// 缺失时 config/index.ts 直接终止构建）。mp 后台须配好 request/uploadFile/downloadFile
+// 三类合法域名 = 该生产域名。
 export const BASE =
   process.env.TARO_ENV === 'h5'
     ? ''
     : process.env.NODE_ENV === 'production'
-      ? 'https://service.domain'
+      ? (process.env.TARO_APP_API_BASE as string)
       : 'http://localhost:5177';
 
 export class ApiError extends Error {

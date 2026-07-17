@@ -4,6 +4,10 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 // hmac = HMAC-SHA256(`teacherId.exp`, AUTH_SECRET). No session table needed.
 export const SESSION_COOKIE = 'nce_session';
 const MAX_AGE_SEC = 7 * 24 * 60 * 60; // 7 days
+// 生产环境必须显式配置 AUTH_SECRET：仓库公开后 fallback 值人人可见，漏配即可伪造会话。
+if (process.env.NODE_ENV === 'production' && !process.env.AUTH_SECRET) {
+  throw new Error('AUTH_SECRET must be set in production (openssl rand -hex 32)');
+}
 const SECRET = process.env.AUTH_SECRET || 'nce-dev-insecure-secret-change-me';
 
 function sign(payload: string): string {
