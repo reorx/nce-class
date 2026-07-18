@@ -36,6 +36,7 @@ export function RecapPanel({
     if (!cardRef.current || downloading) return;
     setDownloading(true);
     try {
+      await document.fonts.ready;
       const url = await toPng(cardRef.current, SNAP_OPTS);
       const a = document.createElement('a');
       a.href = url;
@@ -57,6 +58,7 @@ export function RecapPanel({
     }
     setCopying(true);
     try {
+      await document.fonts.ready;
       const blob = await toBlob(cardRef.current, SNAP_OPTS);
       if (!blob) throw new Error('empty blob');
       await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
