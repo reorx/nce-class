@@ -1,7 +1,9 @@
 # Build on the server, run via docker compose (see kb/plans/2026-07-02-nce-class-deploy.md).
 # Runtime = server (tsx, no build step) + web/dist (extracted to the host for Caddy by deploy/release.sh).
 FROM node:22-bookworm-slim AS base
-RUN npm install -g pnpm@10.25.0
+# pnpm 11：构建白名单在 pnpm-workspace.yaml 的 allowBuilds（f6a23e9 迁移后
+# pnpm 10 不认它，better-sqlite3 的 native 编译会被静默跳过，migrate 起不来）
+RUN npm install -g pnpm@11.15.1
 WORKDIR /app
 
 FROM base AS build
