@@ -1,8 +1,8 @@
 name: Build and Deploy
 
 # push master → build 镜像（server + web/dist 同一镜像）→ push ghcr →
-# 用 digest 调服务器 webhook 部署（Ansible webhook role 的 deploy-nce-class.sh：
-# 按 digest 拉镜像、拷 webdist 给宿主 Caddy、compose up）。
+# 用 digest 调 hookploy 部署（deploy 工作区 hookploy.yaml 的 nce-class 流水线：
+# 按 digest pin 镜像、抽 webdist 给宿主 Caddy、migrate、compose up、healthcheck）。
 # miniapp 不走 CI：weapp 上传始终在本地跑（密钥在本地 tmp/）。
 on:
   push:
@@ -59,14 +59,14 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
       # The digest lets the server pull content-addressed (immune to the ghcr
-      # :latest tag-propagation race). The webhook waits for the deploy script
-      # and returns its output, so this step fails if the deploy fails.
-      # WEBHOOK_URL is a secret too (public repo: keep the infra domain out),
-      # full URL including the /hooks/deploy-nce-class path.
-      - name: Trigger deploy webhook
+      # :latest tag-propagation race). hookploy returns 202 immediately (async):
+      # CI green ≠ deploy success — check `hookploy deploys nce-class`.
+      # HOOKPLOY_URL is a secret too (public repo: keep the infra domain out),
+      # base URL without path.
+      - name: Trigger hookploy deploy
         run: |
-          curl -sf -X POST \
-            -H "X-Deploy-Token: ${{ secrets.WEBHOOK_SECRET }}" \
+          curl -fsS -X POST \
+            -H "Authorization: Bearer ${{ secrets.HOOKPLOY_TOKEN }}" \
             -H "Content-Type: application/json" \
             -d '{"digest": "${{ steps.build.outputs.digest }}"}' \
-            "${{ secrets.WEBHOOK_URL }}"
+            "${{ secrets.HOOKPLOY_URL }}/hooks/nce-class"
