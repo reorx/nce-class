@@ -100,4 +100,38 @@ CREATE TABLE IF NOT EXISTS session_tags (
   tag_id TEXT NOT NULL, tag_name TEXT NOT NULL,
   created_by TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS class_schedules (
+  id TEXT PRIMARY KEY, class_id TEXT NOT NULL, name TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS schedule_lessons (
+  id TEXT PRIMARY KEY, schedule_id TEXT NOT NULL,
+  date TEXT NOT NULL, start_time TEXT NOT NULL, end_time TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_schedule_lesson
+  ON schedule_lessons(schedule_id, date, start_time);
+CREATE TABLE IF NOT EXISTS billing_batches (
+  id TEXT PRIMARY KEY, class_id TEXT NOT NULL, schedule_id TEXT NOT NULL UNIQUE,
+  unit_price_cents INTEGER NOT NULL,
+  addon_cents INTEGER NOT NULL DEFAULT 0,
+  addon_note TEXT,
+  snapshot_at TEXT, created_by TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS invoices (
+  id TEXT PRIMARY KEY, batch_id TEXT NOT NULL, student_id TEXT NOT NULL,
+  attended_count INTEGER NOT NULL DEFAULT 0,
+  planned_count INTEGER NOT NULL DEFAULT 0,
+  billable_count INTEGER NOT NULL DEFAULT 0,
+  unit_price_cents INTEGER NOT NULL,
+  computed_amount_cents INTEGER NOT NULL DEFAULT 0,
+  final_amount_cents INTEGER NOT NULL DEFAULT 0,
+  adjusted INTEGER NOT NULL DEFAULT 0,
+  note TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  paid_at TEXT, paid_by TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_invoice_batch_student
+  ON invoices(batch_id, student_id);
 `;

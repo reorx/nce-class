@@ -4,6 +4,7 @@ import { ClassInfoModal } from '../components/ClassInfoModal';
 import { HomeworkTemplateEditor } from '../components/HomeworkTemplateEditor';
 import { Markdown } from '../components/Markdown';
 import { Modal } from '../components/Modal';
+import { ScheduleTab } from '../components/ScheduleTab';
 import { SessionsTable } from '../components/SessionsTable';
 import { TopBar } from '../components/TopBar';
 import { useToast } from '../components/Toast';
@@ -19,8 +20,8 @@ import {
 } from '../lib/grouping';
 import { avatarStyle, GREEN, initial, sourceTag, statusTag } from '../lib/theme';
 
-type Tab = 'students' | 'groups' | 'notes' | 'homework' | 'invite' | 'sessions';
-const TABS: Tab[] = ['students', 'groups', 'notes', 'homework', 'invite', 'sessions'];
+type Tab = 'students' | 'groups' | 'notes' | 'homework' | 'invite' | 'schedule' | 'sessions';
+const TABS: Tab[] = ['students', 'groups', 'notes', 'homework', 'invite', 'schedule', 'sessions'];
 
 export function ClassDetail({ me }: { me: Me | null }) {
   const { id = '' } = useParams();
@@ -115,6 +116,7 @@ export function ClassDetail({ me }: { me: Me | null }) {
           />
         )}
         {d && tab === 'invite' && <InviteTab d={d} />}
+        {d && tab === 'schedule' && <ScheduleTab classId={d.id} />}
         {d && tab === 'sessions' && (
           <div>
             <div style={{ display: 'flex', marginBottom: 14 }}>
@@ -167,6 +169,7 @@ const tabLabel = (t: Tab) =>
     notes: '班级资源',
     homework: '作业模板',
     invite: '邀请家长',
+    schedule: '排班',
     sessions: '上课记录',
   })[t];
 const tabStyle = (active: boolean): CSSProperties => ({

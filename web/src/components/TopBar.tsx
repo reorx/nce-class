@@ -13,7 +13,13 @@ const navBtn = (active: boolean): React.CSSProperties => ({
   color: active ? '#1e2430' : '#7a828f',
 });
 
-export function TopBar({ me, active = 'classes' }: { me: Me | null; active?: 'classes' | 'sessions' | 'teachers' }) {
+export function TopBar({
+  me,
+  active = 'classes',
+}: {
+  me: Me | null;
+  active?: 'classes' | 'sessions' | 'billing' | 'teachers';
+}) {
   const [open, setOpen] = useState(false);
   const name = me?.name ?? '王莉';
   return (
@@ -59,6 +65,9 @@ export function TopBar({ me, active = 'classes' }: { me: Me | null; active?: 'cl
         </Link>
         <Link to="/sessions" style={navBtn(active === 'sessions')}>
           课堂
+        </Link>
+        <Link to="/billing" style={navBtn(active === 'billing')}>
+          收银台
         </Link>
         <Link to="/teachers" style={navBtn(active === 'teachers')}>
           老师

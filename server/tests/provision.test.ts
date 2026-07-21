@@ -45,6 +45,10 @@ describe('migrate', () => {
       'student_wechat_bindings',
       'class_invites',
       'join_requests',
+      'class_schedules',
+      'schedule_lessons',
+      'billing_batches',
+      'invoices',
     ]) {
       expect(tables).toContain(t);
     }

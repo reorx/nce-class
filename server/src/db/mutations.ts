@@ -312,6 +312,7 @@ export function deleteStudent(sqlite: DB, studentId: string): void {
     sqlite.prepare(`DELETE FROM score_events WHERE target_type='student' AND target_id=?`).run(sid);
     sqlite.prepare(`DELETE FROM check_records WHERE student_id=?`).run(sid);
     sqlite.prepare(`DELETE FROM session_tags WHERE student_id=?`).run(sid);
+    sqlite.prepare(`DELETE FROM invoices WHERE student_id=?`).run(sid);
     sqlite.prepare(`DELETE FROM students WHERE id=?`).run(sid);
   });
   tx(studentId);
@@ -557,6 +558,223 @@ export function commitSession(sqlite: DB, input: CommitInput): string {
     return sessionId;
   });
   return tx();
+}
+
+export interface ScheduleLessonInput {
+  date: string; // YYYY-MM-DD
+  startTime: string; // HH:MM
+  endTime: string; // HH:MM
+}
+
+/** Create a 课程周期 with its lessons. Returns the schedule id. */
+export function createSchedule(
+  sqlite: DB,
+  p: { classId: string; name: string; lessons: ScheduleLessonInput[] },
+): string {
+  const id = `sch-${nanoid(10)}`;
+  const tx = sqlite.transaction(() => {
+    sqlite.prepare(`INSERT INTO class_schedules (id, class_id, name) VALUES (?,?,?)`).run(id, p.classId, p.name);
+    insertLessons(sqlite, id, p.lessons);
+  });
+  tx();
+  return id;
+}
+
+/**
+ * Patch a schedule: rename and/or replace its lessons wholesale (同分组 replace
+ * 风格). Editing stays allowed after a batch exists — its snapshot never moves
+ * on its own; the teacher refreshes via 重新计算.
+ */
+export function updateSchedule(
+  sqlite: DB,
+  scheduleId: string,
+  p: { name?: string; lessons?: ScheduleLessonInput[] },
+): void {
+  const tx = sqlite.transaction(() => {
+    if (p.name != null) sqlite.prepare(`UPDATE class_schedules SET name=? WHERE id=?`).run(p.name, scheduleId);
+    if (p.lessons) {
+      sqlite.prepare(`DELETE FROM schedule_lessons WHERE schedule_id=?`).run(scheduleId);
+      insertLessons(sqlite, scheduleId, p.lessons);
+    }
+  });
+  tx();
+}
+
+function insertLessons(sqlite: DB, scheduleId: string, lessons: ScheduleLessonInput[]): void {
+  const ins = sqlite.prepare(
+    `INSERT INTO schedule_lessons (id, schedule_id, date, start_time, end_time) VALUES (?,?,?,?,?)`,
+  );
+  for (const l of lessons) ins.run(`sl-${nanoid(10)}`, scheduleId, l.date, l.startTime, l.endTime);
+}
+
+/** Delete a schedule and its lessons. The route refuses while a batch exists (409). */
+export function deleteSchedule(sqlite: DB, scheduleId: string): void {
+  const tx = sqlite.transaction(() => {
+    sqlite.prepare(`DELETE FROM schedule_lessons WHERE schedule_id=?`).run(scheduleId);
+    sqlite.prepare(`DELETE FROM class_schedules WHERE id=?`).run(scheduleId);
+  });
+  tx();
+}
+
+export interface InvoiceSnapshotRow {
+  studentId: string;
+  attendedCount: number;
+  plannedCount: number;
+  billableCount: number;
+  computedAmountCents: number;
+}
+
+/**
+ * Create a 收款批次 + its per-student invoices in one transaction (创建时快照,
+ * 决策 4). Rows arrive pre-computed by lib/billing.ts; final = computed here.
+ */
+export function createBillingBatch(
+  sqlite: DB,
+  p: {
+    classId: string;
+    scheduleId: string;
+    unitPriceCents: number;
+    addonCents: number;
+    addonNote: string | null;
+    createdBy: string;
+    rows: InvoiceSnapshotRow[];
+  },
+): string {
+  const id = `bb-${nanoid(10)}`;
+  const tx = sqlite.transaction(() => {
+    sqlite
+      .prepare(
+        `INSERT INTO billing_batches (id, class_id, schedule_id, unit_price_cents, addon_cents, addon_note, snapshot_at, created_by)
+         VALUES (?,?,?,?,?,?, datetime('now'), ?)`,
+      )
+      .run(id, p.classId, p.scheduleId, p.unitPriceCents, p.addonCents, p.addonNote, p.createdBy);
+    const ins = sqlite.prepare(
+      `INSERT INTO invoices (id, batch_id, student_id, attended_count, planned_count, billable_count,
+         unit_price_cents, computed_amount_cents, final_amount_cents)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
+    );
+    for (const r of p.rows) {
+      ins.run(
+        `iv-${nanoid(10)}`,
+        id,
+        r.studentId,
+        r.attendedCount,
+        r.plannedCount,
+        r.billableCount,
+        p.unitPriceCents,
+        r.computedAmountCents,
+        r.computedAmountCents,
+      );
+    }
+  });
+  tx();
+  return id;
+}
+
+/**
+ * 重新计算 (recalculate): refresh PENDING invoices' three counts + computed
+ * (computed uses each invoice's OWN unit price — an override sticks), reset
+ * final to computed unless adjusted=1 (hand-set final/note survive), insert
+ * invoices for students the snapshot missed (新入班等, at the batch unit price),
+ * and stamp snapshot_at. paid rows are never touched; billable→0 rows stay
+ * (computed drops to 0 via the rows' computed value). `rows` = the full fresh
+ * snapshot from lib/billing.ts buildBatchSnapshot, amounts computed per-invoice
+ * by the route (it knows each invoice's unit price).
+ */
+export function recalculateBatch(
+  sqlite: DB,
+  batchId: string,
+  p: {
+    unitPriceCents: number; // batch default, for newly added students
+    updates: { invoiceId: string; row: InvoiceSnapshotRow; adjusted: boolean }[];
+    additions: InvoiceSnapshotRow[];
+  },
+): void {
+  const tx = sqlite.transaction(() => {
+    const upd = sqlite.prepare(
+      `UPDATE invoices SET attended_count=?, planned_count=?, billable_count=?, computed_amount_cents=?,
+         final_amount_cents = CASE WHEN ? THEN final_amount_cents ELSE ? END
+       WHERE id=? AND status='pending'`,
+    );
+    for (const u of p.updates) {
+      upd.run(
+        u.row.attendedCount,
+        u.row.plannedCount,
+        u.row.billableCount,
+        u.row.computedAmountCents,
+        u.adjusted ? 1 : 0,
+        u.row.computedAmountCents,
+        u.invoiceId,
+      );
+    }
+    const ins = sqlite.prepare(
+      `INSERT INTO invoices (id, batch_id, student_id, attended_count, planned_count, billable_count,
+         unit_price_cents, computed_amount_cents, final_amount_cents)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
+    );
+    for (const r of p.additions) {
+      ins.run(
+        `iv-${nanoid(10)}`,
+        batchId,
+        r.studentId,
+        r.attendedCount,
+        r.plannedCount,
+        r.billableCount,
+        p.unitPriceCents,
+        r.computedAmountCents,
+        r.computedAmountCents,
+      );
+    }
+    sqlite.prepare(`UPDATE billing_batches SET snapshot_at=datetime('now') WHERE id=?`).run(batchId);
+  });
+  tx();
+}
+
+/** Delete a batch and all its invoices (前端对已收款批次二次确认). */
+export function deleteBillingBatch(sqlite: DB, batchId: string): void {
+  const tx = sqlite.transaction(() => {
+    sqlite.prepare(`DELETE FROM invoices WHERE batch_id=?`).run(batchId);
+    sqlite.prepare(`DELETE FROM billing_batches WHERE id=?`).run(batchId);
+  });
+  tx();
+}
+
+/**
+ * Edit a pending invoice (编辑弹窗): unit price / final amount / note. computed
+ * is re-derived by the route; adjusted = final differs from computed after the
+ * edit (an override back to the auto value clears the flag).
+ */
+export function updateInvoice(
+  sqlite: DB,
+  invoiceId: string,
+  p: {
+    unitPriceCents: number;
+    computedAmountCents: number;
+    finalAmountCents: number;
+    adjusted: boolean;
+    note: string | null;
+  },
+): void {
+  sqlite
+    .prepare(
+      `UPDATE invoices SET unit_price_cents=?, computed_amount_cents=?, final_amount_cents=?, adjusted=?, note=?
+       WHERE id=? AND status='pending'`,
+    )
+    .run(p.unitPriceCents, p.computedAmountCents, p.finalAmountCents, p.adjusted ? 1 : 0, p.note, invoiceId);
+}
+
+/** 确认收款: pending → paid, stamping who + when. */
+export function confirmInvoice(sqlite: DB, invoiceId: string, teacherId: string): void {
+  sqlite
+    .prepare(`UPDATE invoices SET status='paid', paid_at=datetime('now'), paid_by=? WHERE id=? AND status='pending'`)
+    .run(teacherId, invoiceId);
+}
+
+/** 撤销收款: paid → pending, clearing the stamp. */
+export function unconfirmInvoice(sqlite: DB, invoiceId: string): void {
+  sqlite
+    .prepare(`UPDATE invoices SET status='pending', paid_at=NULL, paid_by=NULL WHERE id=? AND status='paid'`)
+    .run(invoiceId);
 }
 
 /**

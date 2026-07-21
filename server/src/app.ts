@@ -20,14 +20,20 @@ import {
   addStudent,
   bindTeacherWechat,
   commitSession,
+  confirmInvoice,
+  createBillingBatch,
   createClass,
   createInvite,
+  createSchedule,
   createTeacher,
+  deleteBillingBatch,
+  deleteSchedule,
   deleteSession,
   deleteStudent,
   dismissJoinRequest,
   linkJoinRequest,
   overwriteSession,
+  recalculateBatch,
   renameStudent,
   saveGrouping,
   setAttendance,
@@ -35,7 +41,10 @@ import {
   setHomeworkTemplate,
   setSessionHomework,
   setStudentStatus,
+  unconfirmInvoice,
   updateClassInfo,
+  updateInvoice,
+  updateSchedule,
   updateSessionInfo,
   updateTeacher,
   upsertJoinRequest,
@@ -43,10 +52,19 @@ import {
   type CommitInput,
   type CommitTag,
   type GroupInput,
+  type InvoiceSnapshotRow,
+  type ScheduleLessonInput,
 } from './db/mutations.js';
+import {
+  buildBatchSnapshot,
+  computeAmountCents,
+  computeStudentCounts,
+  scheduleRange,
+  type MembershipRecord,
+} from './lib/billing.js';
 import { storageClient } from './storage/index.js';
 import { UPLOAD_DIR } from './storage/local.js';
-import { fmtDuration, relativeDayCN, weekdayCN } from './util/time.js';
+import { fmtDuration, localToday, relativeDayCN, weekdayCN } from './util/time.js';
 
 if (
   !existsSync(DB_PATH) ||
@@ -243,6 +261,40 @@ const q = {
     `SELECT s.id, s.name, s.en_name, s.photo_url, COUNT(b.id) links
      FROM students s LEFT JOIN student_wechat_bindings b ON b.student_id=s.id
      WHERE s.class_id=? AND s.status != 'archived' GROUP BY s.id ORDER BY s.created_at, s.id`,
+  ),
+  // 排班 (课程周期) + 收费 (收款批次/收款单)
+  schedulesOfClass: sqlite.prepare(
+    `SELECT * FROM class_schedules WHERE class_id=? ORDER BY created_at DESC, rowid DESC`,
+  ),
+  scheduleById: sqlite.prepare(`SELECT * FROM class_schedules WHERE id=?`),
+  lessonsOfSchedule: sqlite.prepare(`SELECT * FROM schedule_lessons WHERE schedule_id=? ORDER BY date, start_time`),
+  batchOfSchedule: sqlite.prepare(`SELECT * FROM billing_batches WHERE schedule_id=?`),
+  batchById: sqlite.prepare(`SELECT * FROM billing_batches WHERE id=?`),
+  batchesOfOrg: sqlite.prepare(
+    `SELECT bb.* FROM billing_batches bb JOIN classes c ON c.id = bb.class_id
+     WHERE c.org_id=? ORDER BY bb.created_at DESC, bb.rowid DESC`,
+  ),
+  invoicesOfBatch: sqlite.prepare(
+    `SELECT iv.*, st.name student_name, st.status student_status FROM invoices iv
+     JOIN students st ON st.id = iv.student_id
+     WHERE iv.batch_id=? ORDER BY st.created_at, st.id`,
+  ),
+  invoiceWithStudent: sqlite.prepare(
+    `SELECT iv.*, st.name student_name, st.status student_status FROM invoices iv
+     JOIN students st ON st.id = iv.student_id WHERE iv.id=?`,
+  ),
+  invoiceStatsOfBatch: sqlite.prepare(
+    `SELECT COUNT(*) n,
+       COALESCE(SUM(CASE WHEN status='paid' THEN 1 ELSE 0 END),0) paid_n,
+       COALESCE(SUM(CASE WHEN status='paid' THEN final_amount_cents ELSE 0 END),0) paid_cents,
+       COALESCE(SUM(CASE WHEN status='pending' THEN final_amount_cents ELSE 0 END),0) pending_cents
+     FROM invoices WHERE batch_id=?`,
+  ),
+  // 计费口径的出勤源：该班全部已结束课堂的快照行（lib/billing.ts 消费）
+  billingMembershipsOfClass: sqlite.prepare(
+    `SELECT sm.session_id, sm.student_id, sm.attendance, sm.made_up
+     FROM session_memberships sm JOIN class_sessions cs ON cs.id = sm.session_id
+     WHERE cs.class_id=? AND cs.status='ended'`,
   ),
 };
 
@@ -569,6 +621,132 @@ function lastRecapPayload(classId: string) {
   return buildRecap(s);
 }
 
+// ---- 排班 / 收费 payloads --------------------------------------------------
+
+/** One 课程周期 row: derived range + lesson count + 1:1 batch link. */
+function schedulePayload(s: any, withLessons = false) {
+  const lessons = q.lessonsOfSchedule.all(s.id) as any[];
+  const range = scheduleRange(lessons);
+  const batch = q.batchOfSchedule.get(s.id) as any;
+  return {
+    id: s.id,
+    name: s.name,
+    createdAt: s.created_at,
+    lessonCount: lessons.length,
+    minDate: range?.minDate ?? null,
+    maxDate: range?.maxDate ?? null,
+    batchId: batch?.id ?? null,
+    ...(withLessons
+      ? { lessons: lessons.map((l) => ({ id: l.id, date: l.date, startTime: l.start_time, endTime: l.end_time })) }
+      : {}),
+  };
+}
+
+/** Everything lib/billing.ts needs about one class, gathered once per request. */
+function billingInputsOfClass(classId: string) {
+  return {
+    students: (q.studentsOfClass.all(classId) as any[]).map((s) => ({ id: s.id, status: s.status })),
+    sessions: (q.endedSessionsOfClass.all(classId) as any[]).map((s) => ({ id: s.id, date: s.date })),
+    memberships: (q.billingMembershipsOfClass.all(classId) as any[]).map(
+      (m): MembershipRecord => ({
+        sessionId: m.session_id,
+        studentId: m.student_id,
+        attendance: m.attendance,
+        madeUp: m.made_up,
+      }),
+    ),
+  };
+}
+
+function invoicePayload(r: any) {
+  return {
+    id: r.id,
+    studentId: r.student_id,
+    studentName: r.student_name,
+    studentStatus: r.student_status,
+    attendedCount: r.attended_count,
+    plannedCount: r.planned_count,
+    billableCount: r.billable_count,
+    unitPriceCents: r.unit_price_cents,
+    computedAmountCents: r.computed_amount_cents,
+    finalAmountCents: r.final_amount_cents,
+    adjusted: r.adjusted,
+    note: r.note ?? null,
+    status: r.status,
+    paidAt: r.paid_at ?? null,
+    paidByName: (r.paid_by ? (q.teacherById.get(r.paid_by) as any)?.name : null) ?? null,
+  };
+}
+
+/** Batch card/header: names, derived range, live 已上/未上 split, payment progress. */
+function batchPayload(b: any) {
+  const c = q.classById.get(b.class_id) as any;
+  const sch = q.scheduleById.get(b.schedule_id) as any;
+  const lessons = q.lessonsOfSchedule.all(b.schedule_id) as any[];
+  const range = scheduleRange(lessons);
+  const stats = q.invoiceStatsOfBatch.get(b.id) as any;
+  const today = localToday();
+  const sessions = (q.endedSessionsOfClass.all(b.class_id) as any[]).filter(
+    (s) => range && s.date >= range.minDate && s.date <= range.maxDate,
+  );
+  const sessionDates = new Set(sessions.map((s) => s.date));
+  const futureLessonCount = lessons.filter(
+    (l) => l.date > today || (l.date === today && !sessionDates.has(today)),
+  ).length;
+  return {
+    id: b.id,
+    classId: b.class_id,
+    className: c?.name ?? '—',
+    scheduleId: b.schedule_id,
+    scheduleName: sch?.name ?? '—',
+    lessonCount: lessons.length,
+    minDate: range?.minDate ?? null,
+    maxDate: range?.maxDate ?? null,
+    heldSessionCount: sessions.length,
+    futureLessonCount,
+    unitPriceCents: b.unit_price_cents,
+    addonCents: b.addon_cents,
+    addonNote: b.addon_note ?? null,
+    snapshotAt: b.snapshot_at ?? null,
+    createdAt: b.created_at,
+    invoiceCount: stats.n,
+    paidCount: stats.paid_n,
+    paidAmountCents: stats.paid_cents,
+    pendingAmountCents: stats.pending_cents,
+    totalAmountCents: stats.paid_cents + stats.pending_cents,
+  };
+}
+
+function batchDetailPayload(b: any) {
+  return { ...batchPayload(b), invoices: (q.invoicesOfBatch.all(b.id) as any[]).map(invoicePayload) };
+}
+
+const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+const HM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/** Validate a lessons array (POST/PUT schedules): shape, formats, in-payload uniqueness. */
+function parseLessons(raw: unknown): { lessons: ScheduleLessonInput[] } | { error: string } {
+  if (!Array.isArray(raw) || raw.length === 0) return { error: 'lessons 必须是非空数组' };
+  const lessons: ScheduleLessonInput[] = [];
+  const seen = new Set<string>();
+  for (const l of raw) {
+    const date = typeof l?.date === 'string' ? l.date : '';
+    const startTime = typeof l?.startTime === 'string' ? l.startTime : '';
+    const endTime = typeof l?.endTime === 'string' ? l.endTime : '';
+    if (!DATE_RE.test(date)) return { error: '节次日期必须是 YYYY-MM-DD' };
+    if (!HM_RE.test(startTime) || !HM_RE.test(endTime)) return { error: '节次时间必须是 HH:MM' };
+    if (startTime >= endTime) return { error: '节次结束时间必须晚于开始时间' };
+    const key = `${date} ${startTime}`;
+    if (seen.has(key)) return { error: `节次重复：${key}` };
+    seen.add(key);
+    lessons.push({ date, startTime, endTime });
+  }
+  return { lessons };
+}
+
+/** Non-negative integer cents from the body, else null (金额一律整数分). */
+const centsOr = (v: unknown): number | null => (Number.isInteger(v) && (v as number) >= 0 ? (v as number) : null);
+
 // ---- request helpers ------------------------------------------------------
 const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null);
 
@@ -580,6 +758,25 @@ const contentOrNull = (v: unknown): string | null => (typeof v === 'string' && v
 function classInOrg(classId: string, orgId: string): any | null {
   const c = q.classById.get(classId) as any;
   return c && c.org_id === orgId ? c : null;
+}
+
+/** The schedule row if its class is in the acting teacher's org, else null. */
+function scheduleInOrg(scheduleId: string, orgId: string): any | null {
+  const s = q.scheduleById.get(scheduleId) as any;
+  return s && classInOrg(s.class_id, orgId) ? s : null;
+}
+
+/** The batch row if its class is in the acting teacher's org, else null. */
+function batchInOrg(batchId: string, orgId: string): any | null {
+  const b = q.batchById.get(batchId) as any;
+  return b && classInOrg(b.class_id, orgId) ? b : null;
+}
+
+/** The invoice (joined with its student) + its batch, org-checked; null otherwise. */
+function invoiceInOrg(invoiceId: string, orgId: string): { inv: any; batch: any } | null {
+  const inv = q.invoiceWithStudent.get(invoiceId) as any;
+  const batch = inv ? batchInOrg(inv.batch_id, orgId) : null;
+  return inv && batch ? { inv, batch } : null;
 }
 
 // Naive 'YYYY-MM-DD HH:mm:ss' (no T/Z) — actualMin parses it as UTC, so an ISO
@@ -1589,6 +1786,261 @@ export function createApp() {
     const s = q.sessionById.get(req.params.id) as any;
     if (!s || !classInOrg(s.class_id, teacher.org_id)) return res.status(404).json({ error: 'session not found' });
     res.json(buildRecap(s));
+  });
+
+  // ---- 排班 (课程周期; 班级详情「排班」tab) ----
+  app.get('/api/classes/:id/schedules', (req, res) => {
+    if (!classInOrg(req.params.id, res.locals.teacher.org_id))
+      return res.status(404).json({ error: 'class not found' });
+    res.json((q.schedulesOfClass.all(req.params.id) as any[]).map((s) => schedulePayload(s)));
+  });
+
+  app.post('/api/classes/:id/schedules', (req, res) => {
+    if (!classInOrg(req.params.id, res.locals.teacher.org_id))
+      return res.status(404).json({ error: 'class not found' });
+    const name = str(req.body?.name);
+    if (!name) return res.status(400).json({ error: '周期名称必填' });
+    const parsed = parseLessons(req.body?.lessons);
+    if ('error' in parsed) return res.status(400).json({ error: parsed.error });
+    const id = createSchedule(sqlite, { classId: req.params.id, name, lessons: parsed.lessons });
+    res.status(201).json(schedulePayload(q.scheduleById.get(id), true));
+  });
+
+  app.get('/api/schedules/:id', (req, res) => {
+    const sched = scheduleInOrg(req.params.id, res.locals.teacher.org_id);
+    if (!sched) return res.status(404).json({ error: 'schedule not found' });
+    res.json(schedulePayload(sched, true));
+  });
+
+  app.put('/api/schedules/:id', (req, res) => {
+    const sched = scheduleInOrg(req.params.id, res.locals.teacher.org_id);
+    if (!sched) return res.status(404).json({ error: 'schedule not found' });
+    const patch: { name?: string; lessons?: ScheduleLessonInput[] } = {};
+    if ('name' in (req.body ?? {})) {
+      const name = str(req.body.name);
+      if (!name) return res.status(400).json({ error: '周期名称必填' });
+      patch.name = name;
+    }
+    if ('lessons' in (req.body ?? {})) {
+      const parsed = parseLessons(req.body.lessons);
+      if ('error' in parsed) return res.status(400).json({ error: parsed.error });
+      patch.lessons = parsed.lessons;
+    }
+    updateSchedule(sqlite, sched.id, patch);
+    res.json(schedulePayload(q.scheduleById.get(sched.id), true));
+  });
+
+  app.delete('/api/schedules/:id', (req, res) => {
+    const sched = scheduleInOrg(req.params.id, res.locals.teacher.org_id);
+    if (!sched) return res.status(404).json({ error: 'schedule not found' });
+    if (q.batchOfSchedule.get(sched.id)) return res.status(409).json({ error: '该周期已生成收款批次，请先删除批次' });
+    deleteSchedule(sqlite, sched.id);
+    res.json({ ok: true });
+  });
+
+  // ---- 收银台 (org 级收款批次) ----
+  app.get('/api/billing/batches', (_req, res) => {
+    res.json((q.batchesOfOrg.all(res.locals.teacher.org_id) as any[]).map(batchPayload));
+  });
+
+  // 创建批次 = 单事务快照建全部收款单（决策 4/5）。计费口径 today 用真实本地日期。
+  app.post('/api/billing/batches', (req, res) => {
+    const teacher = res.locals.teacher;
+    const scheduleId = str(req.body?.scheduleId);
+    const sched = scheduleId ? scheduleInOrg(scheduleId, teacher.org_id) : null;
+    if (!sched) return res.status(404).json({ error: 'schedule not found' });
+    if (q.batchOfSchedule.get(sched.id)) return res.status(409).json({ error: '该课程周期已生成收款批次' });
+    const unitPriceCents = centsOr(req.body?.unitPriceCents);
+    if (unitPriceCents == null) return res.status(400).json({ error: '单价必须是非负整数（分）' });
+    const addonCents = req.body?.addonCents == null ? 0 : centsOr(req.body.addonCents);
+    if (addonCents == null) return res.status(400).json({ error: '附加费必须是非负整数（分）' });
+
+    const lessons = q.lessonsOfSchedule.all(sched.id) as any[];
+    const rows = buildBatchSnapshot({ ...billingInputsOfClass(sched.class_id), lessons, today: localToday() }).map(
+      (r): InvoiceSnapshotRow => ({
+        ...r,
+        computedAmountCents: computeAmountCents({ unitPriceCents, billableCount: r.billableCount, addonCents }),
+      }),
+    );
+    const id = createBillingBatch(sqlite, {
+      classId: sched.class_id,
+      scheduleId: sched.id,
+      unitPriceCents,
+      addonCents,
+      addonNote: str(req.body?.addonNote),
+      createdBy: teacher.id,
+      rows,
+    });
+    res.status(201).json(batchDetailPayload(q.batchById.get(id)));
+  });
+
+  app.get('/api/billing/batches/:id', (req, res) => {
+    const b = batchInOrg(req.params.id, res.locals.teacher.org_id);
+    if (!b) return res.status(404).json({ error: 'batch not found' });
+    res.json(batchDetailPayload(b));
+  });
+
+  // 重新计算：只动 pending（computed 按各自单价），adjusted 保留 final/note，
+  // 给快照后新入班的学生补建收款单；paid 与 billable→0 的行一律保留。
+  app.post('/api/billing/batches/:id/recalculate', (req, res) => {
+    const b = batchInOrg(req.params.id, res.locals.teacher.org_id);
+    if (!b) return res.status(404).json({ error: 'batch not found' });
+    const inputs = billingInputsOfClass(b.class_id);
+    const lessons = q.lessonsOfSchedule.all(b.schedule_id) as any[];
+    const today = localToday();
+    const statusById = new Map(inputs.students.map((s) => [s.id, s.status]));
+
+    const existing = q.invoicesOfBatch.all(b.id) as any[];
+    const updates = existing
+      .filter((iv) => iv.status === 'pending')
+      .map((iv) => {
+        const counts = computeStudentCounts({
+          studentId: iv.student_id,
+          status: statusById.get(iv.student_id) ?? 'archived',
+          lessons,
+          sessions: inputs.sessions,
+          memberships: inputs.memberships,
+          today,
+        });
+        return {
+          invoiceId: iv.id as string,
+          adjusted: iv.adjusted === 1,
+          row: {
+            studentId: iv.student_id as string,
+            ...counts,
+            computedAmountCents: computeAmountCents({
+              unitPriceCents: iv.unit_price_cents,
+              billableCount: counts.billableCount,
+              addonCents: b.addon_cents,
+            }),
+          },
+        };
+      });
+
+    const known = new Set(existing.map((iv) => iv.student_id));
+    const additions = buildBatchSnapshot({ ...inputs, lessons, today })
+      .filter((r) => !known.has(r.studentId))
+      .map(
+        (r): InvoiceSnapshotRow => ({
+          ...r,
+          computedAmountCents: computeAmountCents({
+            unitPriceCents: b.unit_price_cents,
+            billableCount: r.billableCount,
+            addonCents: b.addon_cents,
+          }),
+        }),
+      );
+
+    recalculateBatch(sqlite, b.id, { unitPriceCents: b.unit_price_cents, updates, additions });
+    res.json(batchDetailPayload(q.batchById.get(b.id)));
+  });
+
+  app.delete('/api/billing/batches/:id', (req, res) => {
+    const b = batchInOrg(req.params.id, res.locals.teacher.org_id);
+    if (!b) return res.status(404).json({ error: 'batch not found' });
+    deleteBillingBatch(sqlite, b.id);
+    res.json({ ok: true });
+  });
+
+  // ---- 收款单 (invoices) ----
+  app.put('/api/invoices/:id', (req, res) => {
+    const found = invoiceInOrg(req.params.id, res.locals.teacher.org_id);
+    if (!found) return res.status(404).json({ error: 'invoice not found' });
+    const { inv, batch } = found;
+    if (inv.status === 'paid') return res.status(409).json({ error: '已确认收款的收款单不可修改，请先撤销' });
+    const b = req.body ?? {};
+    let unitPriceCents = inv.unit_price_cents;
+    if ('unitPriceCents' in b) {
+      const v = centsOr(b.unitPriceCents);
+      if (v == null) return res.status(400).json({ error: '单价必须是非负整数（分）' });
+      unitPriceCents = v;
+    }
+    const computedAmountCents = computeAmountCents({
+      unitPriceCents,
+      billableCount: inv.billable_count,
+      addonCents: batch.addon_cents,
+    });
+    let finalAmountCents = computedAmountCents;
+    if ('finalAmountCents' in b) {
+      const v = centsOr(b.finalAmountCents);
+      if (v == null) return res.status(400).json({ error: '最终收款金额必须是非负整数（分）' });
+      finalAmountCents = v;
+    }
+    const note =
+      'note' in b ? (typeof b.note === 'string' && b.note.trim() ? b.note.trim() : null) : (inv.note ?? null);
+    updateInvoice(sqlite, inv.id, {
+      unitPriceCents,
+      computedAmountCents,
+      finalAmountCents,
+      adjusted: finalAmountCents !== computedAmountCents,
+      note,
+    });
+    res.json(invoicePayload(q.invoiceWithStudent.get(inv.id)));
+  });
+
+  app.post('/api/invoices/:id/confirm', (req, res) => {
+    const found = invoiceInOrg(req.params.id, res.locals.teacher.org_id);
+    if (!found) return res.status(404).json({ error: 'invoice not found' });
+    if (found.inv.status === 'paid') return res.status(409).json({ error: '已确认过收款' });
+    confirmInvoice(sqlite, found.inv.id, res.locals.teacher.id);
+    res.json(invoicePayload(q.invoiceWithStudent.get(found.inv.id)));
+  });
+
+  app.post('/api/invoices/:id/unconfirm', (req, res) => {
+    const found = invoiceInOrg(req.params.id, res.locals.teacher.org_id);
+    if (!found) return res.status(404).json({ error: 'invoice not found' });
+    if (found.inv.status !== 'paid') return res.status(409).json({ error: '该收款单尚未确认收款' });
+    unconfirmInvoice(sqlite, found.inv.id);
+    res.json(invoicePayload(q.invoiceWithStudent.get(found.inv.id)));
+  });
+
+  // 编辑弹窗逐节明细：范围内实际课堂（含排班外加课）+ 过去未开课排班日 + 未上按计划行。
+  app.get('/api/invoices/:id/lessons', (req, res) => {
+    const found = invoiceInOrg(req.params.id, res.locals.teacher.org_id);
+    if (!found) return res.status(404).json({ error: 'invoice not found' });
+    const { inv, batch } = found;
+    const lessons = q.lessonsOfSchedule.all(batch.schedule_id) as any[];
+    const range = scheduleRange(lessons);
+    const today = localToday();
+    const student = q.studentById.get(inv.student_id) as any;
+    const active = student?.status === 'active';
+    const allSessions = q.endedSessionsOfClass.all(batch.class_id) as any[];
+    const sessionDates = new Set(allSessions.map((s) => s.date));
+    const lessonDates = new Set(lessons.map((l) => l.date));
+    const memBySession = new Map(
+      (q.billingMembershipsOfClass.all(batch.class_id) as any[])
+        .filter((m) => m.student_id === inv.student_id)
+        .map((m) => [m.session_id, m]),
+    );
+
+    const rows: any[] = [];
+    for (const s of allSessions) {
+      if (!range || s.date < range.minDate || s.date > range.maxDate) continue;
+      const mem = memBySession.get(s.id);
+      rows.push({
+        kind: 'session',
+        sessionId: s.id,
+        date: s.date,
+        startTime: s.started_at?.slice(11, 16) ?? null,
+        lessonNumber: s.lesson_number ?? null,
+        lessonTitle: s.lesson_title ?? null,
+        attendance: mem?.attendance ?? null, // null = 未入班（该节无快照行）
+        madeUp: mem?.made_up === 1,
+        billable: mem != null && (mem.attendance === 'present' || mem.made_up === 1),
+        inSchedule: lessonDates.has(s.date),
+      });
+    }
+    for (const l of lessons) {
+      const planned = l.date > today || (l.date === today && !sessionDates.has(today));
+      if (planned) {
+        rows.push({ kind: 'planned', date: l.date, startTime: l.start_time, endTime: l.end_time, billable: active });
+      } else if (!sessionDates.has(l.date)) {
+        // 已过去但没开课的排班日：临时取消，不计费
+        rows.push({ kind: 'missed', date: l.date, startTime: l.start_time, endTime: l.end_time, billable: false });
+      }
+    }
+    rows.sort((a, b2) => (a.date + (a.startTime ?? '')).localeCompare(b2.date + (b2.startTime ?? '')));
+    res.json({ invoiceId: inv.id, studentId: inv.student_id, rows });
   });
 
   // Multer surfaces its limit violations (e.g. fileSize) via next(err); map

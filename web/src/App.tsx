@@ -2,6 +2,8 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { ToastProvider } from './components/Toast';
 import { api, type Me } from './lib/api';
+import { Billing } from './pages/Billing';
+import { BillingBatch } from './pages/BillingBatch';
 import { ClassAttendance } from './pages/ClassAttendance';
 import { ClassDetail } from './pages/ClassDetail';
 import { ClassList } from './pages/ClassList';
@@ -61,6 +63,8 @@ export function App() {
         <Route path="/classes/:id/setup" element={guard(<Setup />)} />
         <Route path="/classes/:id/classroom" element={guard(<Classroom />)} />
         <Route path="/sessions" element={guard(<Sessions me={me} />)} />
+        <Route path="/billing" element={guard(<Billing me={me} />)} />
+        <Route path="/billing/:batchId" element={guard(<BillingBatch me={me} />)} />
         <Route path="/teachers" element={guard(<Teachers me={me} />)} />
       </Routes>
     </ToastProvider>
