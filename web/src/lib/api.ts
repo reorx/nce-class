@@ -330,6 +330,89 @@ export interface CommitResult {
   created: boolean; // false when an existing session was returned (idempotent replay)
 }
 
+// ---- 排班 (课程周期) + 收费 (收款批次/收款单) -------------------------------
+
+export interface ScheduleLessonItem {
+  id: string;
+  date: string; // YYYY-MM-DD
+  startTime: string; // HH:MM
+  endTime: string; // HH:MM
+}
+
+export interface ScheduleItem {
+  id: string;
+  name: string;
+  createdAt: string;
+  lessonCount: number;
+  minDate: string | null; // 派生自节次 min/max，无节次为 null
+  maxDate: string | null;
+  batchId: string | null; // 已生成的收款批次（1:1）
+}
+
+export interface ScheduleDetail extends ScheduleItem {
+  lessons: ScheduleLessonItem[];
+}
+
+export interface BillingBatchItem {
+  id: string;
+  classId: string;
+  className: string;
+  scheduleId: string;
+  scheduleName: string;
+  lessonCount: number;
+  minDate: string | null;
+  maxDate: string | null;
+  heldSessionCount: number; // 周期范围内实际已上节数（live）
+  futureLessonCount: number; // 未上的计划节数（live）
+  unitPriceCents: number;
+  addonCents: number;
+  addonNote: string | null;
+  snapshotAt: string | null;
+  createdAt: string;
+  invoiceCount: number;
+  paidCount: number;
+  paidAmountCents: number;
+  pendingAmountCents: number;
+  totalAmountCents: number;
+}
+
+export interface InvoiceItem {
+  id: string;
+  studentId: string;
+  studentName: string;
+  studentStatus: StudentStatus;
+  attendedCount: number;
+  plannedCount: number;
+  billableCount: number;
+  unitPriceCents: number;
+  computedAmountCents: number;
+  finalAmountCents: number;
+  adjusted: number; // 1 = final 被手动覆盖过（重算保留 final/note）
+  note: string | null;
+  status: 'pending' | 'paid';
+  paidAt: string | null;
+  paidByName: string | null;
+}
+
+export interface BillingBatchDetail extends BillingBatchItem {
+  invoices: InvoiceItem[];
+}
+
+/** 编辑弹窗逐节明细行：实际课堂 / 未上按计划 / 过去未开课的排班日。 */
+export interface InvoiceLessonRow {
+  kind: 'session' | 'planned' | 'missed';
+  date: string;
+  startTime: string | null;
+  endTime?: string;
+  sessionId?: string;
+  lessonNumber?: number | null;
+  lessonTitle?: string | null;
+  attendance?: 'present' | 'absent' | 'leave' | null; // null = 该节无快照行（未入班）
+  madeUp?: boolean;
+  billable: boolean;
+  inSchedule?: boolean; // false = 排班外临时加课
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -452,4 +535,25 @@ export const api = {
   classAttendance: (classId: string) => get<ClassAttendance>(`/api/classes/${classId}/attendance`),
   updateAttendance: (sessionId: string, studentId: string, p: { status: AttendanceStatus; madeUp?: boolean }) =>
     req<AttendanceRecord>('PUT', `/api/sessions/${sessionId}/attendance/${studentId}`, p),
+  // 排班（课程周期）
+  listSchedules: (classId: string) => get<ScheduleItem[]>(`/api/classes/${classId}/schedules`),
+  createSchedule: (classId: string, p: { name: string; lessons: Omit<ScheduleLessonItem, 'id'>[] }) =>
+    req<ScheduleDetail>('POST', `/api/classes/${classId}/schedules`, p),
+  scheduleDetail: (id: string) => get<ScheduleDetail>(`/api/schedules/${id}`),
+  updateSchedule: (id: string, p: { name?: string; lessons?: Omit<ScheduleLessonItem, 'id'>[] }) =>
+    req<ScheduleDetail>('PUT', `/api/schedules/${id}`, p),
+  deleteSchedule: (id: string) => req<{ ok: true }>('DELETE', `/api/schedules/${id}`),
+  // 收银台（收款批次 + 收款单）
+  listBillingBatches: () => get<BillingBatchItem[]>('/api/billing/batches'),
+  createBillingBatch: (p: { scheduleId: string; unitPriceCents: number; addonCents?: number; addonNote?: string }) =>
+    req<BillingBatchDetail>('POST', '/api/billing/batches', p),
+  billingBatchDetail: (id: string) => get<BillingBatchDetail>(`/api/billing/batches/${id}`),
+  recalculateBillingBatch: (id: string) => req<BillingBatchDetail>('POST', `/api/billing/batches/${id}/recalculate`),
+  deleteBillingBatch: (id: string) => req<{ ok: true }>('DELETE', `/api/billing/batches/${id}`),
+  updateInvoice: (id: string, p: { unitPriceCents?: number; finalAmountCents?: number; note?: string }) =>
+    req<InvoiceItem>('PUT', `/api/invoices/${id}`, p),
+  confirmInvoice: (id: string) => req<InvoiceItem>('POST', `/api/invoices/${id}/confirm`),
+  unconfirmInvoice: (id: string) => req<InvoiceItem>('POST', `/api/invoices/${id}/unconfirm`),
+  invoiceLessons: (id: string) =>
+    get<{ invoiceId: string; studentId: string; rows: InvoiceLessonRow[] }>(`/api/invoices/${id}/lessons`),
 };

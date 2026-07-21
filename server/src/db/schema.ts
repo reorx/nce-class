@@ -260,6 +260,83 @@ export const orgTags = sqliteTable(
   (t) => [uniqueIndex('uq_org_tag_name').on(t.orgId, sql`${t.name} COLLATE NOCASE`)],
 );
 
+// ---- ClassSchedule — 课程周期（排班表）: the class-level planning layer. Start
+// and end dates are NOT stored — always derived from its lessons' min/max, so
+// editing dates can never desync a denormalised range.
+export const classSchedules = sqliteTable('class_schedules', {
+  id: text('id').primaryKey(),
+  classId: text('class_id')
+    .notNull()
+    .references(() => classes.id),
+  name: text('name').notNull(),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+});
+
+// ---- ScheduleLesson — one planned 节次. Multiple lessons may share a date as
+// long as their start_time differs (同天多节).
+export const scheduleLessons = sqliteTable(
+  'schedule_lessons',
+  {
+    id: text('id').primaryKey(),
+    scheduleId: text('schedule_id')
+      .notNull()
+      .references(() => classSchedules.id),
+    date: text('date').notNull(), // YYYY-MM-DD
+    startTime: text('start_time').notNull(), // HH:MM
+    endTime: text('end_time').notNull(), // HH:MM
+  },
+  (t) => [uniqueIndex('uq_schedule_lesson').on(t.scheduleId, t.date, t.startTime)],
+);
+
+// ---- BillingBatch — 收款批次: one billing action per (class, schedule). The
+// UNIQUE schedule_id enforces the 1:1 rule (a schedule can only ever be billed
+// once; delete the batch to re-generate). Amounts are integer cents everywhere.
+export const billingBatches = sqliteTable('billing_batches', {
+  id: text('id').primaryKey(),
+  classId: text('class_id')
+    .notNull()
+    .references(() => classes.id),
+  scheduleId: text('schedule_id')
+    .notNull()
+    .unique()
+    .references(() => classSchedules.id),
+  unitPriceCents: integer('unit_price_cents').notNull(), // default 单价, per-invoice overridable
+  addonCents: integer('addon_cents').notNull().default(0), // 附加费/人 (书本费等)
+  addonNote: text('addon_note'),
+  snapshotAt: text('snapshot_at'), // when the per-student counts were last computed
+  createdBy: text('created_by').references(() => teachers.id),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+});
+
+// ---- Invoice — 收款单, the per-student payment ledger. Counts/amounts are a
+// snapshot taken at batch creation (or refreshed by 重新计算) — never auto-derived
+// on read, so what the teacher confirmed is what stays on record.
+export const invoices = sqliteTable(
+  'invoices',
+  {
+    id: text('id').primaryKey(),
+    batchId: text('batch_id')
+      .notNull()
+      .references(() => billingBatches.id),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => students.id),
+    attendedCount: integer('attended_count').notNull().default(0), // 已上到堂 (present||madeUp)
+    plannedCount: integer('planned_count').notNull().default(0), // 未上计划节数
+    billableCount: integer('billable_count').notNull().default(0), // = attended + planned
+    unitPriceCents: integer('unit_price_cents').notNull(), // inherits batch, per-student overridable
+    computedAmountCents: integer('computed_amount_cents').notNull().default(0),
+    finalAmountCents: integer('final_amount_cents').notNull().default(0), // defaults to computed, hand-overridable
+    adjusted: integer('adjusted').notNull().default(0), // 手动改过 → recalculate keeps final/note
+    note: text('note'),
+    status: text('status').notNull().default('pending'), // pending | paid
+    paidAt: text('paid_at'),
+    paidBy: text('paid_by').references(() => teachers.id),
+    createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+  },
+  (t) => [uniqueIndex('uq_invoice_batch_student').on(t.batchId, t.studentId)],
+);
+
 // ---- SessionTag — one 奖章 awarded to a student in one session ----
 // tag_name is a point-in-time snapshot (precedent: session_groups.name), so a
 // future library rename never rewrites history; tag_id is the aggregation hook.

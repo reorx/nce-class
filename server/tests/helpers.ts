@@ -24,6 +24,10 @@ export async function setupTestApp(): Promise<{ app: Express; sqlite: DB; reseed
 }
 
 const TABLES = [
+  'invoices',
+  'billing_batches',
+  'schedule_lessons',
+  'class_schedules',
   'session_tags',
   'org_tags',
   'check_records',
