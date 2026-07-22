@@ -10,3 +10,4 @@ webdist*/
 *.local
 .env
 .swc/
+*.tsbuildinfo
