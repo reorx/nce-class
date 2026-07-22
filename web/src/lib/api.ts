@@ -359,7 +359,9 @@ export interface BillingBatchItem {
   className: string;
   scheduleId: string;
   scheduleName: string;
-  lessonCount: number;
+  lessonCount: number; // 计费课程次数 = override ?? 排班节数
+  scheduleLessonCount: number; // 排班表本身的节数
+  lessonCountOverride: number | null; // 用户覆盖的课程次数；null = 跟随排班
   minDate: string | null;
   maxDate: string | null;
   heldSessionCount: number; // 周期范围内实际已上节数（live）
@@ -545,10 +547,19 @@ export const api = {
   deleteSchedule: (id: string) => req<{ ok: true }>('DELETE', `/api/schedules/${id}`),
   // 收银台（收款批次 + 收款单）
   listBillingBatches: () => get<BillingBatchItem[]>('/api/billing/batches'),
-  createBillingBatch: (p: { scheduleId: string; unitPriceCents: number; addonCents?: number; addonNote?: string }) =>
-    req<BillingBatchDetail>('POST', '/api/billing/batches', p),
+  createBillingBatch: (p: {
+    scheduleId: string;
+    unitPriceCents: number;
+    addonCents?: number;
+    addonNote?: string;
+    lessonCount?: number;
+  }) => req<BillingBatchDetail>('POST', '/api/billing/batches', p),
   billingBatchDetail: (id: string) => get<BillingBatchDetail>(`/api/billing/batches/${id}`),
-  recalculateBillingBatch: (id: string) => req<BillingBatchDetail>('POST', `/api/billing/batches/${id}/recalculate`),
+  // 无 body = 只刷新快照；带 body = 重置条款（单价统一待收款行、附加费/课程次数随批次更新）
+  recalculateBillingBatch: (
+    id: string,
+    p?: { unitPriceCents?: number; addonCents?: number; addonNote?: string; lessonCount?: number },
+  ) => req<BillingBatchDetail>('POST', `/api/billing/batches/${id}/recalculate`, p),
   deleteBillingBatch: (id: string) => req<{ ok: true }>('DELETE', `/api/billing/batches/${id}`),
   updateInvoice: (id: string, p: { unitPriceCents?: number; finalAmountCents?: number; note?: string }) =>
     req<InvoiceItem>('PUT', `/api/invoices/${id}`, p),

@@ -1,5 +1,6 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { BillingBatchModal } from '../components/BillingBatchModal';
 import { Modal } from '../components/Modal';
 import { useToast } from '../components/Toast';
 import { TopBar } from '../components/TopBar';
@@ -16,6 +17,7 @@ export function BillingBatch({ me }: { me: Me | null }) {
   const navigate = useNavigate();
   const [d, setD] = useState<BillingBatchDetail | null>(null);
   const [editing, setEditing] = useState<InvoiceItem | null>(null);
+  const [resetOpen, setResetOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -29,19 +31,6 @@ export function BillingBatch({ me }: { me: Me | null }) {
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [batchId]);
-
-  async function recalculate() {
-    if (busy) return;
-    setBusy(true);
-    try {
-      setD(await api.recalculateBillingBatch(batchId));
-      toast('已重新计算：待收款行已刷新，新入班学生已补建');
-    } catch (e) {
-      toast(e instanceof ApiError ? e.message : '重新计算失败', 'error');
-    } finally {
-      setBusy(false);
-    }
-  }
 
   async function confirmDelete() {
     if (busy) return;
@@ -112,8 +101,8 @@ export function BillingBatch({ me }: { me: Me | null }) {
             )}
           </div>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 9 }}>
-            <button style={ghostBtn} onClick={recalculate} disabled={busy}>
-              ↻ 重新计算
+            <button style={ghostBtn} onClick={() => setResetOpen(true)} disabled={d == null}>
+              ↻ 重置收款项
             </button>
             <button style={{ ...ghostBtn, color: '#d94a4a' }} onClick={() => setDeleteOpen(true)}>
               删除收款项
@@ -187,10 +176,22 @@ export function BillingBatch({ me }: { me: Me | null }) {
           </div>
         )}
         <p style={{ fontSize: 12, color: '#9aa1ac', marginTop: 12, lineHeight: 1.7 }}>
-          「重新计算」只刷新<b>待收款</b>学生的快照（并为新入班学生补建收款单）；已收款的行不动。
+          「重置收款项」只刷新<b>待收款</b>学生的快照（并为新入班学生补建收款单）；已收款的行不动。
           手动改过金额的行重算时保留最终金额与备注、仅更新节数统计并标黄提醒。
         </p>
       </div>
+
+      {d && (
+        <BillingBatchModal
+          open={resetOpen}
+          onClose={() => setResetOpen(false)}
+          batch={d}
+          onReset={(next) => {
+            setD(next);
+            setResetOpen(false);
+          }}
+        />
+      )}
 
       {editing && d && (
         <InvoiceEditModal

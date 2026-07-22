@@ -311,6 +311,56 @@ describe('billing batches API', () => {
     });
   });
 
+  it('creates a batch with a lessonCount override: 全勤按覆盖次数计费, planned = 覆盖 − 已上', async () => {
+    const { agent } = await login();
+    seedBillingScene();
+    const sched = await createSchedule(agent);
+    // 排班 5 节、已上 3 节（含加课 bC），覆盖为 8 → active 学生 planned = 8 − 3 = 5
+    const res = await createBatch(agent, sched.id, { lessonCount: 8 });
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      lessonCount: 8,
+      lessonCountOverride: 8,
+      scheduleLessonCount: 5,
+      heldSessionCount: 3,
+      futureLessonCount: 5,
+    });
+    const inv = new Map(res.body.invoices.map((r: any) => [r.studentId, r]));
+    // s1 全勤 3 节 → billable 恰为覆盖次数 8
+    expect(inv.get('s1')).toMatchObject({
+      attendedCount: 3,
+      plannedCount: 5,
+      billableCount: 8,
+      computedAmountCents: 10000 * 8 + 3000,
+    });
+    expect(inv.get('s2')).toMatchObject({ attendedCount: 1, plannedCount: 5, billableCount: 6 });
+    // 停课生 planned 仍强制 0
+    expect(inv.get('s4')).toMatchObject({ attendedCount: 1, plannedCount: 0, billableCount: 1 });
+  });
+
+  it('stores no override when lessonCount equals the schedule count (继续跟随排班)', async () => {
+    const { agent } = await login();
+    seedBillingScene();
+    const sched = await createSchedule(agent);
+    const res = await createBatch(agent, sched.id, { lessonCount: 5 });
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ lessonCount: 5, lessonCountOverride: null, scheduleLessonCount: 5 });
+    expect(sqlite.prepare(`SELECT lesson_count_override v FROM billing_batches WHERE id=?`).get(res.body.id)).toEqual({
+      v: null,
+    });
+    const s1 = res.body.invoices.find((r: any) => r.studentId === 's1');
+    expect(s1).toMatchObject({ attendedCount: 3, plannedCount: 2, billableCount: 5 });
+  });
+
+  it('validates lessonCount as a positive integer when provided', async () => {
+    const { agent } = await login();
+    const sched = await createSchedule(agent);
+    expect((await createBatch(agent, sched.id, { lessonCount: 0 })).status).toBe(400);
+    expect((await createBatch(agent, sched.id, { lessonCount: -2 })).status).toBe(400);
+    expect((await createBatch(agent, sched.id, { lessonCount: 3.5 })).status).toBe(400);
+    expect((await createBatch(agent, sched.id, { lessonCount: 'x' })).status).toBe(400);
+  });
+
   it('isolates billing across orgs with 404', async () => {
     const { agent } = await login();
     const sched = await createSchedule(agent);
@@ -440,6 +490,82 @@ describe('invoices API', () => {
       unitPriceCents: 10000,
       computedAmountCents: 33000,
     });
+  });
+
+  it('resets with new terms: batch fields updated, pending unified to new unit price, adjusted keeps final/note, paid untouched', async () => {
+    const { agent, batch, invOf } = await scene();
+    // 现场：s1 已收款；s2 覆盖最终金额；s3 单独改过单价（重置后应被统一）
+    await agent.post(`/api/invoices/${invOf('s1').id}/confirm`);
+    await agent.put(`/api/invoices/${invOf('s2').id}`).send({ finalAmountCents: 30000, note: '优惠' });
+    await agent.put(`/api/invoices/${invOf('s3').id}`).send({ unitPriceCents: 9000 });
+
+    const res = await agent
+      .post(`/api/billing/batches/${batch.id}/recalculate`)
+      .send({ unitPriceCents: 8000, addonCents: 1000, addonNote: '新教材费', lessonCount: 6 });
+    expect(res.status).toBe(200);
+    // 批次条款整体更新；已上 3 节 → futureLessonCount = 6 − 3
+    expect(res.body).toMatchObject({
+      unitPriceCents: 8000,
+      addonCents: 1000,
+      addonNote: '新教材费',
+      lessonCount: 6,
+      lessonCountOverride: 6,
+      futureLessonCount: 3,
+    });
+    const inv = new Map(res.body.invoices.map((r: any) => [r.studentId, r]));
+
+    // paid 一律不动（旧单价、旧金额）
+    expect(inv.get('s1')).toMatchObject({ status: 'paid', unitPriceCents: 10000, finalAmountCents: 53000 });
+    // s3 之前的单价覆盖被统一为新单价；attended 2 + planned (6−3) → billable 5
+    expect(inv.get('s3')).toMatchObject({
+      unitPriceCents: 8000,
+      attendedCount: 2,
+      plannedCount: 3,
+      billableCount: 5,
+      computedAmountCents: 8000 * 5 + 1000,
+      finalAmountCents: 8000 * 5 + 1000,
+      adjusted: 0,
+    });
+    // adjusted：counts/computed 按新条款刷新，final/note 保留
+    expect(inv.get('s2')).toMatchObject({
+      unitPriceCents: 8000,
+      attendedCount: 1,
+      plannedCount: 3,
+      billableCount: 4,
+      computedAmountCents: 8000 * 4 + 1000,
+      finalAmountCents: 30000,
+      note: '优惠',
+      adjusted: 1,
+    });
+    // 停课生：仍只结已上、按新单价
+    expect(inv.get('s4')).toMatchObject({
+      unitPriceCents: 8000,
+      billableCount: 1,
+      computedAmountCents: 8000 * 1 + 1000,
+    });
+  });
+
+  it('reset validates its optional fields like creation', async () => {
+    const { agent, batch } = await scene();
+    const post = (body: any) => agent.post(`/api/billing/batches/${batch.id}/recalculate`).send(body);
+    expect((await post({ unitPriceCents: -1 })).status).toBe(400);
+    expect((await post({ unitPriceCents: 99.5 })).status).toBe(400);
+    expect((await post({ addonCents: -3 })).status).toBe(400);
+    expect((await post({ lessonCount: 0 })).status).toBe(400);
+    expect((await post({ lessonCount: 2.5 })).status).toBe(400);
+  });
+
+  it('reset with lessonCount equal to the schedule count clears the override', async () => {
+    const { agent, batch } = await scene();
+    const withOverride = await agent.post(`/api/billing/batches/${batch.id}/recalculate`).send({ lessonCount: 8 });
+    expect(withOverride.status).toBe(200);
+    expect(withOverride.body).toMatchObject({ lessonCount: 8, lessonCountOverride: 8 });
+
+    const cleared = await agent.post(`/api/billing/batches/${batch.id}/recalculate`).send({ lessonCount: 5 });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body).toMatchObject({ lessonCount: 5, lessonCountOverride: null });
+    // 没带 unitPriceCents 的重算不改任何单价
+    for (const r of cleared.body.invoices) expect(r.unitPriceCents).toBe(10000);
   });
 
   it('serves the per-lesson breakdown for the edit modal', async () => {

@@ -690,16 +690,20 @@ function batchPayload(b: any) {
     (s) => range && s.date >= range.minDate && s.date <= range.maxDate,
   );
   const sessionDates = new Set(sessions.map((s) => s.date));
-  const futureLessonCount = lessons.filter(
-    (l) => l.date > today || (l.date === today && !sessionDates.has(today)),
-  ).length;
+  const override = (b.lesson_count_override ?? null) as number | null;
+  const futureLessonCount =
+    override != null
+      ? Math.max(0, override - sessions.length)
+      : lessons.filter((l) => l.date > today || (l.date === today && !sessionDates.has(today))).length;
   return {
     id: b.id,
     classId: b.class_id,
     className: c?.name ?? '—',
     scheduleId: b.schedule_id,
     scheduleName: sch?.name ?? '—',
-    lessonCount: lessons.length,
+    lessonCount: override ?? lessons.length,
+    scheduleLessonCount: lessons.length,
+    lessonCountOverride: override,
     minDate: range?.minDate ?? null,
     maxDate: range?.maxDate ?? null,
     heldSessionCount: sessions.length,
@@ -746,6 +750,10 @@ function parseLessons(raw: unknown): { lessons: ScheduleLessonInput[] } | { erro
 
 /** Non-negative integer cents from the body, else null (金额一律整数分). */
 const centsOr = (v: unknown): number | null => (Number.isInteger(v) && (v as number) >= 0 ? (v as number) : null);
+
+/** 课程次数 from the body: absent → null (跟随排班), else positive integer or 'invalid'. */
+const lessonCountOr = (v: unknown): number | null | 'invalid' =>
+  v == null ? null : Number.isInteger(v) && (v as number) >= 1 ? (v as number) : 'invalid';
 
 // ---- request helpers ------------------------------------------------------
 const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null);
@@ -1854,9 +1862,18 @@ export function createApp() {
     if (unitPriceCents == null) return res.status(400).json({ error: '单价必须是非负整数（分）' });
     const addonCents = req.body?.addonCents == null ? 0 : centsOr(req.body.addonCents);
     if (addonCents == null) return res.status(400).json({ error: '附加费必须是非负整数（分）' });
+    const lessonCount = lessonCountOr(req.body?.lessonCount);
+    if (lessonCount === 'invalid') return res.status(400).json({ error: '课程次数必须是正整数' });
 
     const lessons = q.lessonsOfSchedule.all(sched.id) as any[];
-    const rows = buildBatchSnapshot({ ...billingInputsOfClass(sched.class_id), lessons, today: localToday() }).map(
+    // 与排班节数相同的输入不落 override，让计费继续跟随排班（后续改排班即生效）
+    const lessonCountOverride = lessonCount != null && lessonCount !== lessons.length ? lessonCount : null;
+    const rows = buildBatchSnapshot({
+      ...billingInputsOfClass(sched.class_id),
+      lessons,
+      today: localToday(),
+      lessonCountOverride,
+    }).map(
       (r): InvoiceSnapshotRow => ({
         ...r,
         computedAmountCents: computeAmountCents({ unitPriceCents, billableCount: r.billableCount, addonCents }),
@@ -1868,6 +1885,7 @@ export function createApp() {
       unitPriceCents,
       addonCents,
       addonNote: str(req.body?.addonNote),
+      lessonCountOverride,
       createdBy: teacher.id,
       rows,
     });
@@ -1882,13 +1900,34 @@ export function createApp() {
 
   // 重新计算：只动 pending（computed 按各自单价），adjusted 保留 final/note，
   // 给快照后新入班的学生补建收款单；paid 与 billable→0 的行一律保留。
+  // 「重置收款项」走同一路由：body 可带新条款（单价/附加费/课程次数），批次字段
+  // 随之更新；带 unitPriceCents 时待收款行的单价统一为新值（个别改过的也重置）。
   app.post('/api/billing/batches/:id/recalculate', (req, res) => {
     const b = batchInOrg(req.params.id, res.locals.teacher.org_id);
     if (!b) return res.status(404).json({ error: 'batch not found' });
+    const body = req.body ?? {};
+    const hasUnit = body.unitPriceCents !== undefined;
+    const resetUnit = hasUnit ? centsOr(body.unitPriceCents) : null;
+    if (hasUnit && resetUnit == null) return res.status(400).json({ error: '单价必须是非负整数（分）' });
+    const hasAddon = body.addonCents !== undefined;
+    const newAddon = hasAddon ? centsOr(body.addonCents) : null;
+    if (hasAddon && newAddon == null) return res.status(400).json({ error: '附加费必须是非负整数（分）' });
+    const lessonCount = lessonCountOr(body.lessonCount);
+    if (lessonCount === 'invalid') return res.status(400).json({ error: '课程次数必须是正整数' });
+
     const inputs = billingInputsOfClass(b.class_id);
     const lessons = q.lessonsOfSchedule.all(b.schedule_id) as any[];
     const today = localToday();
     const statusById = new Map(inputs.students.map((s) => [s.id, s.status]));
+    const batchUnit = hasUnit ? resetUnit! : (b.unit_price_cents as number);
+    const addonCents = hasAddon ? newAddon! : (b.addon_cents as number);
+    const addonNote = 'addonNote' in body ? str(body.addonNote) : ((b.addon_note ?? null) as string | null);
+    const lessonCountOverride =
+      body.lessonCount === undefined
+        ? ((b.lesson_count_override ?? null) as number | null)
+        : lessonCount !== lessons.length
+          ? lessonCount
+          : null;
 
     const existing = q.invoicesOfBatch.all(b.id) as any[];
     const updates = existing
@@ -1901,6 +1940,7 @@ export function createApp() {
           sessions: inputs.sessions,
           memberships: inputs.memberships,
           today,
+          lessonCountOverride,
         });
         return {
           invoiceId: iv.id as string,
@@ -1909,29 +1949,35 @@ export function createApp() {
             studentId: iv.student_id as string,
             ...counts,
             computedAmountCents: computeAmountCents({
-              unitPriceCents: iv.unit_price_cents,
+              unitPriceCents: hasUnit ? resetUnit! : iv.unit_price_cents,
               billableCount: counts.billableCount,
-              addonCents: b.addon_cents,
+              addonCents,
             }),
           },
         };
       });
 
     const known = new Set(existing.map((iv) => iv.student_id));
-    const additions = buildBatchSnapshot({ ...inputs, lessons, today })
+    const additions = buildBatchSnapshot({ ...inputs, lessons, today, lessonCountOverride })
       .filter((r) => !known.has(r.studentId))
       .map(
         (r): InvoiceSnapshotRow => ({
           ...r,
           computedAmountCents: computeAmountCents({
-            unitPriceCents: b.unit_price_cents,
+            unitPriceCents: batchUnit,
             billableCount: r.billableCount,
-            addonCents: b.addon_cents,
+            addonCents,
           }),
         }),
       );
 
-    recalculateBatch(sqlite, b.id, { unitPriceCents: b.unit_price_cents, updates, additions });
+    recalculateBatch(sqlite, b.id, {
+      unitPriceCents: batchUnit,
+      updates,
+      additions,
+      resetUnitPriceCents: hasUnit ? resetUnit : null,
+      batch: { unitPriceCents: batchUnit, addonCents, addonNote, lessonCountOverride },
+    });
     res.json(batchDetailPayload(q.batchById.get(b.id)));
   });
 
