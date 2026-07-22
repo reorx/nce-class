@@ -44,6 +44,9 @@ export function scheduleRange(lessons: LessonPlan[]): { minDate: string; maxDate
  * - planned：date > today 的节次，加 date == today 且该班当天尚无 session 的节次
  *   （当天已上过课则当天全部排班不再计，边界接受、由重算兜底）；
  *   停课/归档学生 planned 强制 0，只结已上部分。
+ * - lessonCountOverride（课程次数，用户输入为准）：设了则总量以它为纲——
+ *   planned = max(0, override − 周期内已上节数)，全勤学生恰好计费 override 节，
+ *   缺勤照常从 attended 里扣；排班节次日期只用来定周期范围。
  */
 export function computeStudentCounts(p: {
   studentId: string;
@@ -52,6 +55,7 @@ export function computeStudentCounts(p: {
   sessions: EndedSession[];
   memberships: MembershipRecord[];
   today: string; // YYYY-MM-DD
+  lessonCountOverride?: number | null;
 }): StudentCounts {
   const range = scheduleRange(p.lessons);
   if (!range) return { attendedCount: 0, plannedCount: 0, billableCount: 0 };
@@ -66,10 +70,14 @@ export function computeStudentCounts(p: {
 
   let plannedCount = 0;
   if (p.status === 'active') {
-    const sessionDates = new Set(p.sessions.map((s) => s.date));
-    plannedCount = p.lessons.filter(
-      (l) => l.date > p.today || (l.date === p.today && !sessionDates.has(p.today)),
-    ).length;
+    if (p.lessonCountOverride != null) {
+      plannedCount = Math.max(0, p.lessonCountOverride - inRange.length);
+    } else {
+      const sessionDates = new Set(p.sessions.map((s) => s.date));
+      plannedCount = p.lessons.filter(
+        (l) => l.date > p.today || (l.date === p.today && !sessionDates.has(p.today)),
+      ).length;
+    }
   }
 
   return { attendedCount, plannedCount, billableCount: attendedCount + plannedCount };
@@ -90,6 +98,7 @@ export function buildBatchSnapshot(p: {
   sessions: EndedSession[];
   memberships: MembershipRecord[];
   today: string;
+  lessonCountOverride?: number | null;
 }): ({ studentId: string } & StudentCounts)[] {
   const rows: ({ studentId: string } & StudentCounts)[] = [];
   for (const s of p.students) {
@@ -100,6 +109,7 @@ export function buildBatchSnapshot(p: {
       sessions: p.sessions,
       memberships: p.memberships,
       today: p.today,
+      lessonCountOverride: p.lessonCountOverride,
     });
     if (s.status === 'active' || counts.attendedCount > 0) rows.push({ studentId: s.id, ...counts });
   }

@@ -303,6 +303,7 @@ export const billingBatches = sqliteTable('billing_batches', {
   unitPriceCents: integer('unit_price_cents').notNull(), // default 单价, per-invoice overridable
   addonCents: integer('addon_cents').notNull().default(0), // 附加费/人 (书本费等)
   addonNote: text('addon_note'),
+  lessonCountOverride: integer('lesson_count_override'), // 课程次数覆盖; NULL = 跟随排班节数
   snapshotAt: text('snapshot_at'), // when the per-student counts were last computed
   createdBy: text('created_by').references(() => teachers.id),
   createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),

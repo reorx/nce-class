@@ -115,6 +115,7 @@ CREATE TABLE IF NOT EXISTS billing_batches (
   unit_price_cents INTEGER NOT NULL,
   addon_cents INTEGER NOT NULL DEFAULT 0,
   addon_note TEXT,
+  lesson_count_override INTEGER,
   snapshot_at TEXT, created_by TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

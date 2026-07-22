@@ -41,6 +41,11 @@ export function migrate(sqlite: DB): void {
   if (!sessionCols.some((c) => c.name === 'review_lesson')) {
     sqlite.exec(`ALTER TABLE class_sessions ADD COLUMN review_lesson INTEGER`);
   }
+  // 收银台: 课程次数覆盖 (NULL = 跟随排班节数) on billing batches.
+  const batchCols = sqlite.prepare(`PRAGMA table_info(billing_batches)`).all() as { name: string }[];
+  if (!batchCols.some((c) => c.name === 'lesson_count_override')) {
+    sqlite.exec(`ALTER TABLE billing_batches ADD COLUMN lesson_count_override INTEGER`);
+  }
   // 考勤 corrections: 补课 flag on session memberships.
   const memberCols = sqlite.prepare(`PRAGMA table_info(session_memberships)`).all() as { name: string }[];
   if (!memberCols.some((c) => c.name === 'made_up')) {

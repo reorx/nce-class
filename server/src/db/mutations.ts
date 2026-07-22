@@ -636,6 +636,7 @@ export function createBillingBatch(
     unitPriceCents: number;
     addonCents: number;
     addonNote: string | null;
+    lessonCountOverride: number | null; // NULL = 跟随排班节数
     createdBy: string;
     rows: InvoiceSnapshotRow[];
   },
@@ -644,10 +645,19 @@ export function createBillingBatch(
   const tx = sqlite.transaction(() => {
     sqlite
       .prepare(
-        `INSERT INTO billing_batches (id, class_id, schedule_id, unit_price_cents, addon_cents, addon_note, snapshot_at, created_by)
-         VALUES (?,?,?,?,?,?, datetime('now'), ?)`,
+        `INSERT INTO billing_batches (id, class_id, schedule_id, unit_price_cents, addon_cents, addon_note, lesson_count_override, snapshot_at, created_by)
+         VALUES (?,?,?,?,?,?,?, datetime('now'), ?)`,
       )
-      .run(id, p.classId, p.scheduleId, p.unitPriceCents, p.addonCents, p.addonNote, p.createdBy);
+      .run(
+        id,
+        p.classId,
+        p.scheduleId,
+        p.unitPriceCents,
+        p.addonCents,
+        p.addonNote,
+        p.lessonCountOverride,
+        p.createdBy,
+      );
     const ins = sqlite.prepare(
       `INSERT INTO invoices (id, batch_id, student_id, attended_count, planned_count, billable_count,
          unit_price_cents, computed_amount_cents, final_amount_cents)
@@ -673,13 +683,15 @@ export function createBillingBatch(
 
 /**
  * 重新计算 (recalculate): refresh PENDING invoices' three counts + computed
- * (computed uses each invoice's OWN unit price — an override sticks), reset
- * final to computed unless adjusted=1 (hand-set final/note survive), insert
- * invoices for students the snapshot missed (新入班等, at the batch unit price),
- * and stamp snapshot_at. paid rows are never touched; billable→0 rows stay
- * (computed drops to 0 via the rows' computed value). `rows` = the full fresh
- * snapshot from lib/billing.ts buildBatchSnapshot, amounts computed per-invoice
- * by the route (it knows each invoice's unit price).
+ * (computed uses each invoice's OWN unit price — an override sticks — unless
+ * `resetUnitPriceCents` unifies pending rows, 重置收款项), reset final to
+ * computed unless adjusted=1 (hand-set final/note survive), insert invoices
+ * for students the snapshot missed (新入班等, at the batch unit price), update
+ * batch terms when `batch` is given (重置弹窗改单价/附加费/课程次数), and stamp
+ * snapshot_at. paid rows are never touched; billable→0 rows stay (computed
+ * drops to 0 via the rows' computed value). `rows` = the full fresh snapshot
+ * from lib/billing.ts buildBatchSnapshot, amounts computed per-invoice by the
+ * route (it knows each invoice's unit price).
  */
 export function recalculateBatch(
   sqlite: DB,
@@ -688,11 +700,19 @@ export function recalculateBatch(
     unitPriceCents: number; // batch default, for newly added students
     updates: { invoiceId: string; row: InvoiceSnapshotRow; adjusted: boolean }[];
     additions: InvoiceSnapshotRow[];
+    resetUnitPriceCents?: number | null; // set → 待收款行单价统一为该值
+    batch?: {
+      unitPriceCents: number;
+      addonCents: number;
+      addonNote: string | null;
+      lessonCountOverride: number | null;
+    };
   },
 ): void {
   const tx = sqlite.transaction(() => {
     const upd = sqlite.prepare(
       `UPDATE invoices SET attended_count=?, planned_count=?, billable_count=?, computed_amount_cents=?,
+         unit_price_cents = COALESCE(?, unit_price_cents),
          final_amount_cents = CASE WHEN ? THEN final_amount_cents ELSE ? END
        WHERE id=? AND status='pending'`,
     );
@@ -702,6 +722,7 @@ export function recalculateBatch(
         u.row.plannedCount,
         u.row.billableCount,
         u.row.computedAmountCents,
+        p.resetUnitPriceCents ?? null,
         u.adjusted ? 1 : 0,
         u.row.computedAmountCents,
         u.invoiceId,
@@ -725,7 +746,16 @@ export function recalculateBatch(
         r.computedAmountCents,
       );
     }
-    sqlite.prepare(`UPDATE billing_batches SET snapshot_at=datetime('now') WHERE id=?`).run(batchId);
+    if (p.batch) {
+      sqlite
+        .prepare(
+          `UPDATE billing_batches SET unit_price_cents=?, addon_cents=?, addon_note=?, lesson_count_override=?,
+             snapshot_at=datetime('now') WHERE id=?`,
+        )
+        .run(p.batch.unitPriceCents, p.batch.addonCents, p.batch.addonNote, p.batch.lessonCountOverride, batchId);
+    } else {
+      sqlite.prepare(`UPDATE billing_batches SET snapshot_at=datetime('now') WHERE id=?`).run(batchId);
+    }
   });
   tx();
 }

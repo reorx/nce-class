@@ -145,6 +145,64 @@ describe('computeStudentCounts', () => {
     }
   });
 
+  describe('lessonCountOverride (课程次数以用户输入为准)', () => {
+    // 周期内已上 3 节（含 7/02 临时加课），s1 全勤
+    const sessions = [
+      { id: 'x1', date: '2026-07-01' },
+      { id: 'x2', date: '2026-07-02' },
+      { id: 'x3', date: '2026-07-03' },
+    ];
+    const memberships = [mem('x1', 's1'), mem('x2', 's1'), mem('x3', 's1')];
+
+    it('bills a full-attendance student exactly the override: planned = override − 已上节数', () => {
+      const counts = computeStudentCounts({ ...base, sessions, memberships, lessonCountOverride: 8 });
+      expect(counts).toEqual({ attendedCount: 3, plannedCount: 5, billableCount: 8 });
+    });
+
+    it('absences still reduce billable below the override', () => {
+      const counts = computeStudentCounts({
+        ...base,
+        sessions,
+        memberships: [mem('x1', 's1'), mem('x2', 's1', 'absent'), mem('x3', 's1')],
+        lessonCountOverride: 8,
+      });
+      expect(counts).toEqual({ attendedCount: 2, plannedCount: 5, billableCount: 7 });
+    });
+
+    it('clamps planned at 0 when more sessions were held than the override', () => {
+      const counts = computeStudentCounts({ ...base, sessions, memberships, lessonCountOverride: 2 });
+      expect(counts).toEqual({ attendedCount: 3, plannedCount: 0, billableCount: 3 });
+    });
+
+    it('keeps planned at 0 for suspended students regardless of the override', () => {
+      const counts = computeStudentCounts({
+        ...base,
+        status: 'suspended',
+        sessions,
+        memberships,
+        lessonCountOverride: 8,
+      });
+      expect(counts).toEqual({ attendedCount: 3, plannedCount: 0, billableCount: 3 });
+    });
+
+    it('null override falls back to the schedule-derived planned count', () => {
+      const counts = computeStudentCounts({ ...base, sessions, memberships, lessonCountOverride: null });
+      expect(counts).toEqual({ attendedCount: 3, plannedCount: 2, billableCount: 5 });
+    });
+
+    it('flows through buildBatchSnapshot', () => {
+      const rows = buildBatchSnapshot({
+        students: [{ id: 's1', status: 'active' }],
+        lessons: LESSONS,
+        sessions,
+        memberships,
+        today: TODAY,
+        lessonCountOverride: 8,
+      });
+      expect(rows).toEqual([{ studentId: 's1', attendedCount: 3, plannedCount: 5, billableCount: 8 }]);
+    });
+  });
+
   it('returns all zeros when the schedule has no lessons', () => {
     const counts = computeStudentCounts({
       ...base,
