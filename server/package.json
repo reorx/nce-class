@@ -9,6 +9,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "create-teacher": "tsx src/db/create-teacher.ts",
+    "reset-password": "tsx src/db/reset-password.ts",
     "db:seed": "tsx src/db/seed.ts",
     "db:reset": "rm -f data/app.db && tsx src/db/seed.ts",
     "test": "vitest run"

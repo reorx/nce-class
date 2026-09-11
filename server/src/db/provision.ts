@@ -77,3 +77,30 @@ export function createTeacher(
   });
   return tx();
 }
+
+export const MIN_PASSWORD_LENGTH = 6; // same rule as the teachers API
+
+/** Ops reset for a forgotten password (no login needed, run on the server): overwrite the teacher's password credential, creating it if missing. */
+export function resetPassword(sqlite: DB, p: { username: string; password: string }): { teacherId: string } {
+  if (p.password.length < MIN_PASSWORD_LENGTH) {
+    throw new Error(`password must be at least ${MIN_PASSWORD_LENGTH} characters`);
+  }
+  const teacher = sqlite.prepare(`SELECT id FROM teachers WHERE username = ?`).get(p.username) as
+    | { id: string }
+    | undefined;
+  if (!teacher) throw new Error(`username not found: ${p.username}`);
+
+  const secret = hashPassword(p.password);
+  const tx = sqlite.transaction(() => {
+    const updated = sqlite
+      .prepare(`UPDATE credentials SET secret=? WHERE teacher_id=? AND provider='password'`)
+      .run(secret, teacher.id);
+    if (updated.changes === 0) {
+      sqlite
+        .prepare(`INSERT INTO credentials (id, teacher_id, provider, secret) VALUES (?,?,'password',?)`)
+        .run(`cred-${nanoid(10)}`, teacher.id, secret);
+    }
+  });
+  tx();
+  return { teacherId: teacher.id };
+}

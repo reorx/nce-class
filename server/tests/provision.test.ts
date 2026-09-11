@@ -1,7 +1,9 @@
 import type DatabaseType from 'better-sqlite3';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 import request from 'supertest';
 
@@ -104,5 +106,87 @@ describe('createTeacher', () => {
     ).toThrow(/username/);
     const after = sqlite.prepare(`SELECT count(*) n FROM teachers`).get() as any;
     expect(after.n).toBe(before.n);
+  });
+});
+
+async function login(username: string, password: string) {
+  const { createApp } = await import('../src/app.js');
+  return request(createApp()).post('/api/auth/login').send({ username, password });
+}
+
+describe('resetPassword', () => {
+  it('replaces the password: old one stops working, new one logs in, other teachers untouched', async () => {
+    provision.resetPassword(sqlite, { username: 'wangli', password: 'brand-new-1' });
+    expect((await login('wangli', 'real-pass-1')).status).toBe(401);
+    expect((await login('wangli', 'brand-new-1')).status).toBe(200);
+    expect((await login('chenxiao', 'real-pass-2')).status).toBe(200);
+  });
+
+  it('rejects an unknown username', () => {
+    expect(() => provision.resetPassword(sqlite, { username: 'nobody', password: 'whatever-1' })).toThrow(
+      /username not found/,
+    );
+  });
+
+  it('rejects a password shorter than 6 characters and keeps the old one', async () => {
+    expect(() => provision.resetPassword(sqlite, { username: 'wangli', password: '12345' })).toThrow(/at least 6/);
+    expect((await login('wangli', 'brand-new-1')).status).toBe(200);
+  });
+
+  it('creates the password credential when the teacher has none', async () => {
+    const t = sqlite.prepare(`SELECT id FROM teachers WHERE username='waiguo'`).get() as any;
+    sqlite.prepare(`DELETE FROM credentials WHERE teacher_id=? AND provider='password'`).run(t.id);
+    expect((await login('waiguo', 'real-pass-3')).status).toBe(401);
+
+    provision.resetPassword(sqlite, { username: 'waiguo', password: 'revived-pass' });
+    expect((await login('waiguo', 'revived-pass')).status).toBe(200);
+  });
+});
+
+// The real script against the same temp database (NCE_DB_PATH is inherited);
+// the new password arrives on stdin as two lines, like an operator typing it.
+describe('reset-password CLI', { timeout: 30_000 }, () => {
+  const serverDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+  const runCli = (args: string[], input: string) =>
+    spawnSync(process.execPath, ['--import', 'tsx', 'src/db/reset-password.ts', ...args], {
+      cwd: serverDir,
+      input,
+      encoding: 'utf8',
+    });
+
+  it('resets the password read from stdin (entered twice)', async () => {
+    const r = runCli(['--username', 'chenxiao'], 'cli-pass-1\ncli-pass-1\n');
+    expect(r.stderr).toBe('');
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('password reset: chenxiao');
+    expect(r.stdout).not.toContain('cli-pass-1');
+    expect((await login('chenxiao', 'cli-pass-1')).status).toBe(200);
+  });
+
+  it('refuses when the two entries differ or input ends early, leaving the password unchanged', async () => {
+    const mismatch = runCli(['--username', 'chenxiao'], 'aaaaaa-1\nbbbbbb-2\n');
+    expect(mismatch.status).toBe(1);
+    expect(mismatch.stderr).toContain('passwords do not match');
+
+    const early = runCli(['--username', 'chenxiao'], 'only-once\n');
+    expect(early.status).toBe(1);
+    expect(early.stderr).toContain('aborted');
+
+    const short = runCli(['--username', 'chenxiao'], '12345\n12345\n');
+    expect(short.status).toBe(1);
+    expect(short.stderr).toContain('at least 6');
+
+    expect((await login('chenxiao', 'cli-pass-1')).status).toBe(200);
+  });
+
+  it('lists the existing usernames when --username is missing or unknown', () => {
+    for (const args of [[], ['--username', 'nobody']]) {
+      const r = runCli(args, '');
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('Usage:');
+      expect(r.stderr).toContain('wangli');
+      expect(r.stderr).toContain('chenxiao');
+    }
+    expect(runCli(['--username', 'nobody'], '').stderr).toContain('username not found: nobody');
   });
 });

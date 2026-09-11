@@ -53,7 +53,7 @@ pnpm --filter server exec tsc --noEmit # 类型检查（web/miniapp 同理）
 - ⚠️ 端口 5173/5177 常被邻近项目 tenderbuddy 占用或混淆；清理前先 `lsof -nP -iTCP:5177 -sTCP:LISTEN` 确认进程 cwd，勿误杀。web 可 `pnpm --filter web exec vite --port 5180`。
 - 新增写接口 **先加测试用例再实现**（TDD）。
 
-**部署**：push master → GitHub Actions（`.github/workflows/deploy.yml`）build 镜像（server + web/dist 同一镜像）push 到 ghcr → 用 digest 调服务器部署 webhook（repo Secrets：`WEBHOOK_SECRET` + `WEBHOOK_URL`，含路径的完整 URL）。服务器侧 compose / 部署脚本 / Caddy 路由由 deploy 工作区的 Ansible 管理（容器只跑 API，web 静态从镜像拷到 webdist 由宿主机 Caddy serve）；`.env` 变量名 SSOT = 仓库根 `.env.example`，真值服务器手填。weapp 上传**不走 CI**：本地 `pnpm --filter miniapp upload:weapp`（生产 API 域名由 gitignored `miniapp/.env.production.local` 的 `TARO_APP_API_BASE` 构建时注入，缺失即构建报错；需 nvm node24）。`pnpm --filter server db:migrate` 幂等 DDL（server 启动也自动跑，部署无需手动迁移）；干净库开账号用 `pnpm --filter server create-teacher`。
+**部署**：push master → GitHub Actions（`.github/workflows/deploy.yml`）build 镜像（server + web/dist 同一镜像）push 到 ghcr → 用 digest 调服务器部署 webhook（repo Secrets：`WEBHOOK_SECRET` + `WEBHOOK_URL`，含路径的完整 URL）。服务器侧 compose / 部署脚本 / Caddy 路由由 deploy 工作区的 Ansible 管理（容器只跑 API，web 静态从镜像拷到 webdist 由宿主机 Caddy serve）；`.env` 变量名 SSOT = 仓库根 `.env.example`，真值服务器手填。weapp 上传**不走 CI**：本地 `pnpm --filter miniapp upload:weapp`（生产 API 域名由 gitignored `miniapp/.env.production.local` 的 `TARO_APP_API_BASE` 构建时注入，缺失即构建报错；需 nvm node24）。`pnpm --filter server db:migrate` 幂等 DDL（server 启动也自动跑，部署无需手动迁移）；干净库开账号用 `pnpm --filter server create-teacher`；忘记密码（无需登录）用 `pnpm --filter server reset-password -- --username <登录名>`：新密码交互输入两次不回显（也接受管道两行），不带/带错 username 时列出库里全部用户名；生产在容器内 `docker compose exec app pnpm --filter server reset-password -- --username <登录名>`（远程要 `ssh -t`）。⚠️ 会话是无状态签名 cookie，改密不吊销已签发的会话，怀疑泄露需轮换 `AUTH_SECRET`。
 
 ## 验证套路
 
