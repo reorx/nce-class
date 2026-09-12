@@ -43,6 +43,15 @@ describe('auth', () => {
     expect((await lifang.agent.get('/api/me')).body.isAdmin).toBe(false);
   });
 
+  it("carries the teacher's own org name on login and /api/me, not the first org in the table", async () => {
+    const out = await login('waiguo'); // org-2 别校
+    expect(out.res.body.orgName).toBe('别校');
+    expect((await out.agent.get('/api/me')).body.orgName).toBe('别校');
+    const { agent, res } = await login();
+    expect(res.body.orgName).toBe('晨光英语');
+    expect((await agent.get('/api/me')).body.orgName).toBe('晨光英语');
+  });
+
   it('rejects a wrong password with 401', async () => {
     const res = await request(app).post('/api/auth/login').send({ username: 'wangli', password: 'nope' });
     expect(res.status).toBe(401);

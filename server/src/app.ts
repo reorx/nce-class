@@ -77,7 +77,6 @@ if (
 
 // ---- prepared queries -----------------------------------------------------
 const q = {
-  org: sqlite.prepare(`SELECT * FROM organizations LIMIT 1`),
   teacherByUsername: sqlite.prepare(`SELECT * FROM teachers WHERE username=?`),
   credByTeacher: sqlite.prepare(`SELECT * FROM credentials WHERE teacher_id=? AND provider='password'`),
   classById: sqlite.prepare(`SELECT * FROM classes WHERE id=?`),
@@ -2183,6 +2182,6 @@ function teacherItem(t: any) {
 }
 
 function mePayload(teacher: any) {
-  const org = q.org.get() as any;
+  const org = q.orgById.get(teacher.org_id) as any;
   return { ...teacherItem(teacher), orgName: org?.name };
 }
