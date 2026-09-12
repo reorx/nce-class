@@ -1,3 +1,5 @@
+import type { BookKey } from './homework';
+
 export interface Me {
   id: string;
   name: string;
@@ -39,7 +41,7 @@ export interface ClassListItem {
   id: string;
   name: string;
   teacherName: string;
-  textbook: number | null; // 教材册数 1-4
+  textbook: BookKey | null; // 教材 key（lib/homework BOOKS）
   studentCount: number;
   roster: string[];
   lastSession: {
@@ -153,7 +155,7 @@ export interface ClassDetail {
   id: string;
   name: string;
   notes: string | null; // 班级资源 — free-form markdown
-  textbook: number | null; // 教材册数 1-4 (structured)
+  textbook: BookKey | null; // 教材 key (structured, 课文复习默认)
   homeworkTemplate: string | null; // 作业模板 with {lesson_number}/{date}/{class_name} vars
   teacherId: string | null; // 负责老师; null on legacy rows
   teacherName: string;
@@ -201,7 +203,7 @@ export interface PrevHomework {
   lessonNumber: number | null;
   lessonTitle: string | null;
   content: string;
-  reviewBook: number | null;
+  reviewBook: BookKey | null;
   reviewLesson: number | null;
 }
 
@@ -231,11 +233,11 @@ export interface SessionLedger {
 export interface SessionDetail extends Session {
   classId: string;
   className: string;
-  classTextbook: number | null;
+  classTextbook: BookKey | null;
   homeworkTemplate: string | null;
   homeworkContent: string | null;
-  reviewBook: number | null; // 课文复习: 第几册
-  reviewLesson: number | null; // 课文复习: 第几课
+  reviewBook: BookKey | null; // 课文复习: 教材
+  reviewLesson: number | null; // 课文复习: 第几课（1-based 平铺序号）
   prevHomework: PrevHomework | null;
   recap: Recap;
   overview: SessionOverview;
@@ -514,9 +516,9 @@ export const api = {
     req<{ ok: true }>('PUT', `/api/admin/teachers/${teacherId}/password`, { password, adminPassword }),
   classes: () => get<ClassListItem[]>('/api/classes'),
   classDetail: (id: string) => get<ClassDetail>(`/api/classes/${id}`),
-  createClass: (p: { name: string; teacherId: string; textbook: number | null }) =>
+  createClass: (p: { name: string; teacherId: string; textbook: BookKey | null }) =>
     req<ClassDetail>('POST', '/api/classes', p),
-  updateClassInfo: (classId: string, p: { name: string; teacherId: string; textbook: number | null }) =>
+  updateClassInfo: (classId: string, p: { name: string; teacherId: string; textbook: BookKey | null }) =>
     req<ClassDetail>('PUT', `/api/classes/${classId}`, p),
   addStudent: (classId: string, name: string) => req<Student>('POST', `/api/classes/${classId}/students`, { name }),
   updateStudent: (id: string, name: string) =>
@@ -546,7 +548,7 @@ export const api = {
   sessionDetail: (sessionId: string) => get<SessionDetail>(`/api/sessions/${sessionId}`),
   saveSessionHomework: (
     sessionId: string,
-    p: { content: string; reviewBook: number | null; reviewLesson: number | null },
+    p: { content: string; reviewBook: BookKey | null; reviewLesson: number | null },
   ) => req<SessionDetail>('PUT', `/api/sessions/${sessionId}/homework`, p),
   getStudentProfile: (studentId: string) => get<StudentProfile>(`/api/students/${studentId}/profile`),
   getJoinRequests: (classId: string) => get<JoinRequestItem[]>(`/api/classes/${classId}/join-requests`),

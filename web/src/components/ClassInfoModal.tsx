@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { api, type TeacherItem } from '../lib/api';
-import { BOOK_LABELS, BOOKS } from '../lib/homework';
+import { BOOK_LABELS, BOOKS, type BookKey, parseBook } from '../lib/homework';
 import { GREEN } from '../lib/theme';
 import { Modal } from './Modal';
 import { useToast } from './Toast';
@@ -8,11 +8,11 @@ import { useToast } from './Toast';
 export interface ClassInfoValues {
   name: string;
   teacherId: string;
-  textbook: number | null;
+  textbook: BookKey | null;
 }
 
 /**
- * 班级基本信息表单弹窗（名称/教材册数/负责老师），新建班级（ClassList）与
+ * 班级基本信息表单弹窗（名称/教材/负责老师），新建班级（ClassList）与
  * 编辑班级信息（ClassDetail）共用。onSubmit 由调用方注入（API 调用 + reload +
  * 成功 toast/跳转），成功后弹窗自动关闭，抛错则留在弹窗并提示 errorText。
  */
@@ -49,7 +49,7 @@ export function ClassInfoModal({
   useEffect(() => {
     if (!open) return;
     setName(initial.name);
-    setTextbook(initial.textbook != null ? String(initial.textbook) : '');
+    setTextbook(initial.textbook ?? '');
     setTeacherId(initial.teacherId);
     api
       .teachers()
@@ -62,7 +62,7 @@ export function ClassInfoModal({
     if (!name.trim() || !teacherId || busy) return;
     setBusy(true);
     try {
-      await onSubmit({ name: name.trim(), teacherId, textbook: textbook ? Number(textbook) : null });
+      await onSubmit({ name: name.trim(), teacherId, textbook: parseBook(textbook) });
       onClose();
     } catch {
       toast(errorText, 'error');
@@ -83,7 +83,7 @@ export function ClassInfoModal({
         style={fieldStyle}
       />
       <label style={{ ...labelStyle, margin: '14px 0 6px' }}>
-        教材册数 <span style={{ fontWeight: 400, color: '#9aa1ac' }}>（课文复习默认按此册）</span>
+        教材 <span style={{ fontWeight: 400, color: '#9aa1ac' }}>（课文复习默认按此教材）</span>
       </label>
       <select
         value={textbook}

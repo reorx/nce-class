@@ -7,7 +7,16 @@ import { TopBar } from '../components/TopBar';
 import { useToast } from '../components/Toast';
 import { api, type Me, type SessionDetail as SessionData, type TeacherItem } from '../lib/api';
 import { applyStartTime, minutesBetweenSql, startTimeOf } from '../lib/classroomStore';
-import { BOOK_LABELS, BOOKS, clampLesson, lessonOptions, renderHomeworkTemplate } from '../lib/homework';
+import {
+  BOOK_LABELS,
+  BOOKS,
+  type BookKey,
+  clampLesson,
+  lessonOptions,
+  parseBook,
+  renderHomeworkTemplate,
+  reviewLessonLabel,
+} from '../lib/homework';
 import { lessonLabel } from '../lib/lesson';
 import { fmtDurationCn } from '../lib/recapCard';
 import { GREEN } from '../lib/theme';
@@ -129,7 +138,7 @@ export function SessionDetail({ me }: { me: Me | null }) {
 function HomeworkTab({ d, onSaved }: { d: SessionData; onSaved: (fresh: SessionData) => void }) {
   const toast = useToast();
   const [content, setContent] = useState('');
-  const [book, setBook] = useState<number | null>(null);
+  const [book, setBook] = useState<BookKey | null>(null);
   const [lesson, setLesson] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [templateOpen, setTemplateOpen] = useState(false);
@@ -142,7 +151,7 @@ function HomeworkTab({ d, onSaved }: { d: SessionData; onSaved: (fresh: SessionD
     });
 
   // Seed once per session: saved values win; a fresh session auto-generates the
-  // content and defaults 课文复习 to 班级教材册数 + 本节课课数.
+  // content and defaults 课文复习 to 班级教材 + 本节课课次.
   useEffect(() => {
     setContent(d.homeworkContent ?? generate());
     const b = d.reviewBook ?? d.classTextbook;
@@ -209,7 +218,7 @@ function HomeworkTab({ d, onSaved }: { d: SessionData; onSaved: (fresh: SessionD
           <select
             value={book ?? ''}
             onChange={(e) => {
-              const b = e.target.value ? Number(e.target.value) : null;
+              const b = parseBook(e.target.value);
               setBook(b);
               setLesson(clampLesson(b, lesson ?? d.lessonNumber));
             }}
@@ -228,12 +237,13 @@ function HomeworkTab({ d, onSaved }: { d: SessionData; onSaved: (fresh: SessionD
             disabled={book == null}
             style={{ ...selectStyle, opacity: book == null ? 0.55 : 1 }}
           >
-            <option value="">{book == null ? '先选择册数' : '未选择'}</option>
-            {lessonOptions(book).map((n) => (
-              <option key={n} value={n}>
-                第{n}课
-              </option>
-            ))}
+            <option value="">{book == null ? '先选择教材' : '未选择'}</option>
+            {book != null &&
+              lessonOptions(book).map((n) => (
+                <option key={n} value={n}>
+                  {reviewLessonLabel(book, n)}
+                </option>
+              ))}
           </select>
         </div>
         <div
@@ -306,7 +316,7 @@ function PrevHomeworkCard({ p, classId }: { p: NonNullable<SessionData['prevHome
       {p.reviewBook != null && (
         <div style={{ marginTop: 10, fontSize: 12.5, color: '#7a828f' }}>
           课文复习：{BOOK_LABELS[p.reviewBook]}
-          {p.reviewLesson != null ? ` · 第${p.reviewLesson}课` : ''}
+          {p.reviewLesson != null ? ` · ${reviewLessonLabel(p.reviewBook, p.reviewLesson)}` : ''}
         </div>
       )}
     </div>

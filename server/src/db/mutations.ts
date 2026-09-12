@@ -97,7 +97,7 @@ export function renameTeacher(sqlite: DB, teacherId: string, name: string): void
 /** Create a class in the given org owned by the given teacher. Returns its id. */
 export function createClass(
   sqlite: DB,
-  p: { orgId: string; name: string; teacherId: string; textbook: number | null },
+  p: { orgId: string; name: string; teacherId: string; textbook: string | null },
 ): string {
   const id = `c-${nanoid(10)}`;
   sqlite
@@ -106,11 +106,11 @@ export function createClass(
   return id;
 }
 
-/** Update a class's basic info (name / 负责老师 / 教材册数). */
+/** Update a class's basic info (name / 负责老师 / 教材). */
 export function updateClassInfo(
   sqlite: DB,
   classId: string,
-  p: { name: string; teacherId: string; textbook: number | null },
+  p: { name: string; teacherId: string; textbook: string | null },
 ): void {
   sqlite
     .prepare(`UPDATE classes SET name=?, teacher_id=?, textbook=? WHERE id=?`)
@@ -258,7 +258,7 @@ export function setHomeworkTemplate(sqlite: DB, classId: string, template: strin
 export function setSessionHomework(
   sqlite: DB,
   sessionId: string,
-  p: { content: string | null; reviewBook: number | null; reviewLesson: number | null },
+  p: { content: string | null; reviewBook: string | null; reviewLesson: number | null },
 ): void {
   sqlite
     .prepare(`UPDATE class_sessions SET homework_content=?, review_book=?, review_lesson=? WHERE id=?`)

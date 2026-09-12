@@ -406,17 +406,46 @@ describe('class notes', () => {
   });
 });
 
-describe('class textbook (教材册数)', () => {
-  it('persists 1-4 through create and update, echoing in the detail', async () => {
+describe('class textbook (教材)', () => {
+  it('persists a book key through create and update as TEXT, echoing in the detail', async () => {
     const { agent } = await login();
-    const created = await agent.post('/api/classes').send({ name: '四年级C班', textbook: 2 });
+    const created = await agent.post('/api/classes').send({ name: '四年级C班', textbook: '2' });
     expect(created.status).toBe(201);
-    expect(created.body.textbook).toBe(2);
+    expect(created.body.textbook).toBe('2');
 
-    const res = await agent.put('/api/classes/c1').send({ name: '三年级A班', teacherId: 't-wangli', textbook: 3 });
+    const res = await agent.put('/api/classes/c1').send({ name: '三年级A班', teacherId: 't-wangli', textbook: '3' });
     expect(res.status).toBe(200);
-    expect(res.body.textbook).toBe(3);
-    expect((sqlite.prepare(`SELECT textbook FROM classes WHERE id='c1'`).get() as any).textbook).toBe(3);
+    expect(res.body.textbook).toBe('3');
+    expect(sqlite.prepare(`SELECT textbook, typeof(textbook) AS t FROM classes WHERE id='c1'`).get()).toEqual({
+      textbook: '3',
+      t: 'text',
+    });
+  });
+
+  it('switches a 第一册 class to 青少版A, echoed by the class list and detail', async () => {
+    const { agent } = await login();
+    await agent.put('/api/classes/c1').send({ name: '三年级A班', teacherId: 't-wangli', textbook: '1' });
+    const res = await agent
+      .put('/api/classes/c1')
+      .send({ name: '三年级A班', teacherId: 't-wangli', textbook: 'starterA' });
+    expect(res.status).toBe(200);
+    expect(res.body.textbook).toBe('starterA');
+    expect((sqlite.prepare(`SELECT textbook FROM classes WHERE id='c1'`).get() as any).textbook).toBe('starterA');
+    expect((await agent.get('/api/classes/c1')).body.textbook).toBe('starterA');
+    const list = (await agent.get('/api/classes')).body;
+    expect(list.find((c: any) => c.id === 'c1').textbook).toBe('starterA');
+
+    const created = await agent.post('/api/classes').send({ name: '启蒙班', textbook: 'starterB' });
+    expect(created.status).toBe(201);
+    expect(created.body.textbook).toBe('starterB');
+  });
+
+  it('still accepts a legacy integer 1-4 from a stale page, stored as its string key', async () => {
+    const { agent } = await login();
+    const res = await agent.put('/api/classes/c1').send({ name: '三年级A班', teacherId: 't-wangli', textbook: 2 });
+    expect(res.status).toBe(200);
+    expect(res.body.textbook).toBe('2');
+    expect((sqlite.prepare(`SELECT textbook FROM classes WHERE id='c1'`).get() as any).textbook).toBe('2');
   });
 
   it('defaults to null when omitted and clears back to null', async () => {
@@ -424,15 +453,15 @@ describe('class textbook (教材册数)', () => {
     expect((await agent.get('/api/classes/c1')).body.textbook).toBeNull();
     expect((await agent.post('/api/classes').send({ name: '新班' })).body.textbook).toBeNull();
 
-    await agent.put('/api/classes/c1').send({ name: '三年级A班', teacherId: 't-wangli', textbook: 2 });
+    await agent.put('/api/classes/c1').send({ name: '三年级A班', teacherId: 't-wangli', textbook: '2' });
     const res = await agent.put('/api/classes/c1').send({ name: '三年级A班', teacherId: 't-wangli', textbook: null });
     expect(res.status).toBe(200);
     expect(res.body.textbook).toBeNull();
   });
 
-  it('rejects an out-of-range or non-integer 册数 with 400, leaving the class untouched', async () => {
+  it('rejects an unknown 教材 key with 400, leaving the class untouched', async () => {
     const { agent } = await login();
-    for (const bad of [0, 5, 1.5, '2']) {
+    for (const bad of [0, 5, 1.5, '0', '5', '', 'starterC', 'StarterA', 'Starter A']) {
       expect(
         (await agent.put('/api/classes/c1').send({ name: 'X', teacherId: 't-wangli', textbook: bad })).status,
       ).toBe(400);
@@ -601,10 +630,10 @@ describe('session detail (GET /api/sessions/:id)', () => {
 
   it('carries the class textbook and template for the 作业布置 tab defaults', async () => {
     const { agent } = await login();
-    await agent.put('/api/classes/c1').send({ name: '三年级A班', teacherId: 't-wangli', textbook: 2 });
+    await agent.put('/api/classes/c1').send({ name: '三年级A班', teacherId: 't-wangli', textbook: 'starterA' });
     await agent.put('/api/classes/c1/homework-template').send({ template: '- 背L{lesson_number}' });
     const res = await agent.get('/api/sessions/sess1');
-    expect(res.body.classTextbook).toBe(2);
+    expect(res.body.classTextbook).toBe('starterA');
     expect(res.body.homeworkTemplate).toBe('- 背L{lesson_number}');
   });
 
@@ -616,7 +645,7 @@ describe('session detail (GET /api/sessions/:id)', () => {
     );
     // 06-25 第6课 no homework → skipped; 06-24 第5课 has homework → picked
     ins.run('sess-p2', 'c1', 't-wangli', '2026-06-25', 6, 'Percy Buttons', null, null, null);
-    ins.run('sess-p1', 'c1', 't-wangli', '2026-06-24', 5, 'No wrong numbers', '- 背L5 三遍\n- 练字两面', 2, 5);
+    ins.run('sess-p1', 'c1', 't-wangli', '2026-06-24', 5, 'No wrong numbers', '- 背L5 三遍\n- 练字两面', '2', 5);
     const res = await agent.get('/api/sessions/sess1');
     expect(res.body.prevHomework).toEqual({
       sessionId: 'sess-p1',
@@ -626,7 +655,7 @@ describe('session detail (GET /api/sessions/:id)', () => {
       lessonNumber: 5,
       lessonTitle: 'No wrong numbers',
       content: '- 背L5 三遍\n- 练字两面',
-      reviewBook: 2,
+      reviewBook: '2',
       reviewLesson: 5,
     });
     // later sessions never count, even with homework — the earliest one has no reference
@@ -689,12 +718,12 @@ describe('session homework (完成布置)', () => {
   it('saves content + 课文复习 selection and echoes the fresh session detail', async () => {
     const { agent } = await login();
     const content = '- L7 三英一汉，听写三遍\n- 练字三面';
-    const res = await agent.put('/api/sessions/sess1/homework').send({ content, reviewBook: 2, reviewLesson: 7 });
+    const res = await agent.put('/api/sessions/sess1/homework').send({ content, reviewBook: '2', reviewLesson: 7 });
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
       id: 'sess1',
       homeworkContent: content,
-      reviewBook: 2,
+      reviewBook: '2',
       reviewLesson: 7,
       hasHomework: true,
     });
@@ -702,34 +731,69 @@ describe('session homework (完成布置)', () => {
     const row = sqlite
       .prepare(`SELECT homework_content, review_book, review_lesson FROM class_sessions WHERE id='sess1'`)
       .get() as any;
-    expect(row).toEqual({ homework_content: content, review_book: 2, review_lesson: 7 });
+    expect(row).toEqual({ homework_content: content, review_book: '2', review_lesson: 7 });
     // 上课记录 badge source
     const d = (await agent.get('/api/classes/c1')).body;
     expect(d.sessions.find((s: any) => s.id === 'sess1').hasHomework).toBe(true);
+  });
+
+  it('accepts 青少版 books (45 lessons each), stored as TEXT keys', async () => {
+    const { agent } = await login();
+    const res = await agent
+      .put('/api/sessions/sess1/homework')
+      .send({ content: '作业', reviewBook: 'starterA', reviewLesson: 45 });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ reviewBook: 'starterA', reviewLesson: 45 });
+    expect(
+      sqlite
+        .prepare(`SELECT review_book, typeof(review_book) AS t, review_lesson FROM class_sessions WHERE id='sess1'`)
+        .get(),
+    ).toEqual({ review_book: 'starterA', t: 'text', review_lesson: 45 });
+    expect(
+      (
+        await agent
+          .put('/api/sessions/sess1/homework')
+          .send({ content: '作业', reviewBook: 'starterB', reviewLesson: 46 })
+      ).status,
+    ).toBe(400);
+  });
+
+  it('still accepts a legacy integer 册数 from a stale page, stored as its string key', async () => {
+    const { agent } = await login();
+    const res = await agent
+      .put('/api/sessions/sess1/homework')
+      .send({ content: '作业', reviewBook: 2, reviewLesson: 7 });
+    expect(res.status).toBe(200);
+    expect(res.body.reviewBook).toBe('2');
   });
 
   it('clears blank content to null (课文复习 selection may stand alone)', async () => {
     const { agent } = await login();
     const res = await agent
       .put('/api/sessions/sess1/homework')
-      .send({ content: '   ', reviewBook: 1, reviewLesson: 144 });
+      .send({ content: '   ', reviewBook: '1', reviewLesson: 144 });
     expect(res.status).toBe(200);
     expect(res.body.homeworkContent).toBeNull();
     expect(res.body.hasHomework).toBe(false);
-    expect(res.body.reviewBook).toBe(1);
+    expect(res.body.reviewBook).toBe('1');
     expect(res.body.reviewLesson).toBe(144);
   });
 
-  it('rejects an out-of-range 册数/课数 or a lesson without a book with 400, leaving the row untouched', async () => {
+  it('rejects an unknown 教材, out-of-range 课数 or a lesson without a book with 400, leaving the row untouched', async () => {
     const { agent } = await login();
     expect((await agent.put('/api/sessions/sess1/homework').send({ content: 42 })).status).toBe(400);
-    expect((await agent.put('/api/sessions/sess1/homework').send({ content: 'x', reviewBook: 5 })).status).toBe(400);
+    for (const bad of [5, '5', 'starterC', 'Starter A']) {
+      expect((await agent.put('/api/sessions/sess1/homework').send({ content: 'x', reviewBook: bad })).status).toBe(
+        400,
+      );
+    }
     expect((await agent.put('/api/sessions/sess1/homework').send({ content: 'x', reviewLesson: 3 })).status).toBe(400);
     expect(
-      (await agent.put('/api/sessions/sess1/homework').send({ content: 'x', reviewBook: 4, reviewLesson: 49 })).status,
+      (await agent.put('/api/sessions/sess1/homework').send({ content: 'x', reviewBook: '4', reviewLesson: 49 }))
+        .status,
     ).toBe(400);
     expect(
-      (await agent.put('/api/sessions/sess1/homework').send({ content: 'x', reviewBook: 2, reviewLesson: 0 })).status,
+      (await agent.put('/api/sessions/sess1/homework').send({ content: 'x', reviewBook: '2', reviewLesson: 0 })).status,
     ).toBe(400);
     const row = sqlite
       .prepare(`SELECT homework_content, review_book, review_lesson FROM class_sessions WHERE id='sess1'`)
@@ -740,7 +804,7 @@ describe('session homework (完成布置)', () => {
   it('does not disturb the ledger-derived recap', async () => {
     const { agent } = await login();
     const before = (await agent.get('/api/sessions/sess1/recap')).body;
-    await agent.put('/api/sessions/sess1/homework').send({ content: '作业', reviewBook: 2, reviewLesson: 7 });
+    await agent.put('/api/sessions/sess1/homework').send({ content: '作业', reviewBook: '2', reviewLesson: 7 });
     expect((await agent.get('/api/sessions/sess1/recap')).body).toEqual(before);
   });
 

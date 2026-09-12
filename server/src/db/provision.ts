@@ -24,9 +24,9 @@ export function migrate(sqlite: DB): void {
   if (classCols.some((c) => c.name === 'level')) {
     sqlite.exec(`ALTER TABLE classes DROP COLUMN level`);
   }
-  // 作业机制: 教材册数 + 作业模板 on classes, 作业布置 fields on class_sessions.
+  // 作业机制: 教材 + 作业模板 on classes, 作业布置 fields on class_sessions.
   if (!classCols.some((c) => c.name === 'textbook')) {
-    sqlite.exec(`ALTER TABLE classes ADD COLUMN textbook INTEGER`);
+    sqlite.exec(`ALTER TABLE classes ADD COLUMN textbook TEXT`);
   }
   if (!classCols.some((c) => c.name === 'homework_template')) {
     sqlite.exec(`ALTER TABLE classes ADD COLUMN homework_template TEXT`);
@@ -36,11 +36,15 @@ export function migrate(sqlite: DB): void {
     sqlite.exec(`ALTER TABLE class_sessions ADD COLUMN homework_content TEXT`);
   }
   if (!sessionCols.some((c) => c.name === 'review_book')) {
-    sqlite.exec(`ALTER TABLE class_sessions ADD COLUMN review_book INTEGER`);
+    sqlite.exec(`ALTER TABLE class_sessions ADD COLUMN review_book TEXT`);
   }
   if (!sessionCols.some((c) => c.name === 'review_lesson')) {
     sqlite.exec(`ALTER TABLE class_sessions ADD COLUMN review_lesson INTEGER`);
   }
+  // 教材 keys are strings ('1'-'4' 第一~四册, 'starterA'/'starterB' 青少版A/B) in TEXT
+  // columns; databases from before 青少版 declared both columns INTEGER.
+  convertColumnToText(sqlite, 'classes', 'textbook');
+  convertColumnToText(sqlite, 'class_sessions', 'review_book');
   // 收银台: 课程次数覆盖 (NULL = 跟随排班节数) on billing batches.
   const batchCols = sqlite.prepare(`PRAGMA table_info(billing_batches)`).all() as { name: string }[];
   if (!batchCols.some((c) => c.name === 'lesson_count_override')) {
@@ -57,6 +61,23 @@ export function migrate(sqlite: DB): void {
   if (!teacherCols.some((c) => c.name === 'is_admin')) {
     sqlite.exec(`ALTER TABLE teachers ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0`);
   }
+}
+
+/**
+ * Re-declare an INTEGER column as TEXT in place (SQLite has no ALTER COLUMN TYPE):
+ * add a TEXT twin, copy with CAST, drop the original, rename the twin back — all
+ * in one transaction. No-op unless the column is currently declared INTEGER.
+ */
+function convertColumnToText(sqlite: DB, table: string, column: string): void {
+  const cols = sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string; type: string }[];
+  if (cols.find((c) => c.name === column)?.type !== 'INTEGER') return;
+  const twin = `${column}__text`;
+  sqlite.transaction(() => {
+    sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${twin} TEXT`);
+    sqlite.exec(`UPDATE ${table} SET ${twin} = CAST(${column} AS TEXT)`);
+    sqlite.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);
+    sqlite.exec(`ALTER TABLE ${table} RENAME COLUMN ${twin} TO ${column}`);
+  })();
 }
 
 /**

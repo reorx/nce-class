@@ -819,12 +819,20 @@ const TIME_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01]) ([01]\d|2[0-3]):[0
 // 奖章 tag name cap — mirrored by the web picker's maxLength.
 const MAX_TAG_LEN = 20;
 
-// 教材册数 → 每册课数（课文复习校验）。镜像 web/src/lib/homework.ts —— 改一处都要改两处。
-const BOOK_LESSON_COUNTS: Record<number, number> = { 1: 144, 2: 96, 3: 60, 4: 48 };
+// 教材 key → 课数（课文复习校验）：'1'-'4' 新概念第一~四册，starterA/starterB 青少版入门级 A/B
+// （15 单元 × 3 课）。存 TEXT 列、JSON 恒为字符串。镜像 web/src/lib/homework.ts —— 改一处都要改两处。
+const BOOK_LESSON_COUNTS: Record<string, number> = { starterA: 45, starterB: 45, '1': 144, '2': 96, '3': 60, '4': 48 };
+const BOOK_KEYS = Object.keys(BOOK_LESSON_COUNTS);
 
-/** Parse an optional 册数 body value: absent/null → null, 1-4 int → itself, else 'invalid'. */
-const bookOr = (v: unknown): number | null | 'invalid' =>
-  v == null ? null : Number.isInteger(v) && BOOK_LESSON_COUNTS[v as number] ? (v as number) : 'invalid';
+/**
+ * Parse an optional 教材 body value: absent/null → null, a known key → itself, a
+ * legacy integer 1-4 (pages loaded before the string keys) → its key, else 'invalid'.
+ */
+const bookOr = (v: unknown): string | null | 'invalid' => {
+  if (v == null) return null;
+  const key = Number.isInteger(v) ? String(v) : v;
+  return typeof key === 'string' && BOOK_KEYS.includes(key) ? key : 'invalid';
+};
 
 /** Coerce to a non-negative integer, or a fallback when not a finite number. */
 const intOr = (v: unknown, fallback: number | null): number | null =>
@@ -1419,7 +1427,7 @@ export function createApp() {
     const name = str(req.body?.name);
     if (!name) return res.status(400).json({ error: '班级名称必填' });
     const textbook = bookOr(req.body?.textbook);
-    if (textbook === 'invalid') return res.status(400).json({ error: '教材册数必须是 1-4' });
+    if (textbook === 'invalid') return res.status(400).json({ error: '教材必须是 青少版A/B 或 第一~四册' });
     // 负责老师 optional on create; defaults to the acting teacher (mirrors PUT's same-org check).
     const teacherId = str(req.body?.teacherId) ?? teacher.id;
     const t = q.teacherById.get(teacherId) as any;
@@ -1439,7 +1447,7 @@ export function createApp() {
     const t = q.teacherById.get(teacherId) as any;
     if (!t || t.org_id !== teacher.org_id) return res.status(400).json({ error: '负责老师不存在或不属于本校' });
     const textbook = bookOr(req.body?.textbook);
-    if (textbook === 'invalid') return res.status(400).json({ error: '教材册数必须是 1-4' });
+    if (textbook === 'invalid') return res.status(400).json({ error: '教材必须是 青少版A/B 或 第一~四册' });
     updateClassInfo(sqlite, req.params.id, { name, teacherId, textbook });
     res.json(classDetailPayload(req.params.id));
   });
@@ -1754,10 +1762,10 @@ export function createApp() {
       return res.status(400).json({ error: 'content 必须是字符串' });
     const content = contentOrNull(rawContent);
     const reviewBook = bookOr(req.body?.reviewBook);
-    if (reviewBook === 'invalid') return res.status(400).json({ error: '课文复习册数必须是 1-4' });
+    if (reviewBook === 'invalid') return res.status(400).json({ error: '课文复习教材必须是 青少版A/B 或 第一~四册' });
     let reviewLesson: number | null = null;
     if (req.body?.reviewLesson != null) {
-      if (reviewBook == null) return res.status(400).json({ error: '课文复习需要先选择册数' });
+      if (reviewBook == null) return res.status(400).json({ error: '课文复习需要先选择教材' });
       const n = req.body.reviewLesson;
       if (!Number.isInteger(n) || n < 1 || n > BOOK_LESSON_COUNTS[reviewBook])
         return res.status(400).json({ error: `课文复习课数必须在 1-${BOOK_LESSON_COUNTS[reviewBook]} 之间` });

@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 import request from 'supertest';
+import { DDL } from '../src/db/ddl.js';
 
 // Provisioning a clean production database: no seed, no fixtures. The env must
 // be set before the first import of db/client (read at module-load time), so
@@ -77,6 +78,96 @@ describe('migrate', () => {
     old.prepare(`INSERT INTO teachers (id, org_id, name, username) VALUES ('t-new','o1','新人','newbie')`).run();
     expect(old.prepare(`SELECT is_admin FROM teachers WHERE id='t-new'`).get()).toEqual({ is_admin: 0 });
     old.close();
+  });
+});
+
+// 教材 columns (classes.textbook / class_sessions.review_book) hold string keys
+// ('1'-'4', 'starterA', 'starterB') in TEXT columns — never relying on SQLite
+// type affinity. Databases from before 青少版 created them INTEGER and must be
+// converted in place.
+describe('migrate: 教材 columns are TEXT', () => {
+  const columns = (db: Database.Database, table: string) =>
+    db.prepare(`PRAGMA table_info(${table})`).all() as { name: string; type: string }[];
+  const colType = (db: Database.Database, table: string, col: string) =>
+    columns(db, table).find((c) => c.name === col)?.type;
+
+  it('creates both as TEXT on a fresh database', () => {
+    const db = new Database(':memory:');
+    provision.migrate(db);
+    expect(colType(db, 'classes', 'textbook')).toBe('TEXT');
+    expect(colType(db, 'class_sessions', 'review_book')).toBe('TEXT');
+    db.close();
+  });
+
+  it('adds both as TEXT on a pre-作业机制 database that lacks them', () => {
+    const db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE classes (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, name TEXT NOT NULL, teacher_id TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')));
+      CREATE TABLE class_sessions (id TEXT PRIMARY KEY, class_id TEXT NOT NULL, teacher_id TEXT,
+        date TEXT NOT NULL, lesson_number INTEGER, lesson_title TEXT, status TEXT NOT NULL DEFAULT 'ended',
+        planned_duration_min INTEGER NOT NULL DEFAULT 120, started_at TEXT, ended_at TEXT,
+        client_session_id TEXT UNIQUE);
+    `);
+    provision.migrate(db);
+    expect(colType(db, 'classes', 'textbook')).toBe('TEXT');
+    expect(colType(db, 'class_sessions', 'review_book')).toBe('TEXT');
+    db.close();
+  });
+
+  it('converts legacy INTEGER columns in place, keeping every row and column, idempotently', () => {
+    const legacyDdl = DDL.replace('textbook TEXT', 'textbook INTEGER').replace(
+      'review_book TEXT',
+      'review_book INTEGER',
+    );
+    expect(legacyDdl).not.toBe(DDL);
+    const db = new Database(':memory:');
+    db.exec(legacyDdl);
+    db.prepare(
+      `INSERT INTO classes (id, org_id, name, teacher_id, textbook, homework_template) VALUES (?,?,?,?,?,?)`,
+    ).run('c1', 'o1', '一班', 't1', 1, '- 背L{lesson_number}');
+    db.prepare(`INSERT INTO classes (id, org_id, name) VALUES (?,?,?)`).run('c2', 'o1', '二班');
+    db.prepare(
+      `INSERT INTO class_sessions (id, class_id, date, lesson_number, homework_content, review_book, review_lesson)
+       VALUES (?,?,?,?,?,?,?)`,
+    ).run('s1', 'c1', '2026-06-01', 7, '作业', 2, 7);
+    expect(colType(db, 'classes', 'textbook')).toBe('INTEGER');
+
+    provision.migrate(db);
+    provision.migrate(db); // already TEXT → no-op
+
+    expect(colType(db, 'classes', 'textbook')).toBe('TEXT');
+    expect(colType(db, 'class_sessions', 'review_book')).toBe('TEXT');
+    expect(
+      db
+        .prepare(
+          `SELECT id, name, teacher_id, textbook, typeof(textbook) AS t, homework_template FROM classes ORDER BY id`,
+        )
+        .all(),
+    ).toEqual([
+      { id: 'c1', name: '一班', teacher_id: 't1', textbook: '1', t: 'text', homework_template: '- 背L{lesson_number}' },
+      { id: 'c2', name: '二班', teacher_id: null, textbook: null, t: 'null', homework_template: null },
+    ]);
+    expect(
+      db
+        .prepare(
+          `SELECT id, lesson_number, homework_content, review_book, typeof(review_book) AS t, review_lesson FROM class_sessions`,
+        )
+        .get(),
+    ).toEqual({ id: 's1', lesson_number: 7, homework_content: '作业', review_book: '2', t: 'text', review_lesson: 7 });
+
+    // same column set as a fresh database (no leftover temp column, nothing dropped)
+    const fresh = new Database(':memory:');
+    provision.migrate(fresh);
+    for (const table of ['classes', 'class_sessions']) {
+      const names = (d: Database.Database) =>
+        columns(d, table)
+          .map((c) => c.name)
+          .sort();
+      expect(names(db)).toEqual(names(fresh));
+    }
+    fresh.close();
+    db.close();
   });
 });
 

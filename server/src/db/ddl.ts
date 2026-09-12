@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS wechat_accounts (
 CREATE TABLE IF NOT EXISTS classes (
   id TEXT PRIMARY KEY, org_id TEXT NOT NULL, name TEXT NOT NULL,
   notes TEXT, teacher_id TEXT,
-  textbook INTEGER, homework_template TEXT,
+  textbook TEXT, homework_template TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS class_invites (
@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS class_sessions (
   planned_duration_min INTEGER NOT NULL DEFAULT 120,
   started_at TEXT, ended_at TEXT,
   client_session_id TEXT UNIQUE,
-  homework_content TEXT, review_book INTEGER, review_lesson INTEGER
+  homework_content TEXT, review_book TEXT, review_lesson INTEGER
 );
 CREATE TABLE IF NOT EXISTS session_groups (
   id TEXT PRIMARY KEY, session_id TEXT NOT NULL, name TEXT NOT NULL,

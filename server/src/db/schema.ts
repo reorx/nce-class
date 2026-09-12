@@ -57,7 +57,7 @@ export const classes = sqliteTable('classes', {
     .references(() => organizations.id),
   name: text('name').notNull(),
   notes: text('notes'), // 班级资源 — free-form markdown kept by the teachers
-  textbook: integer('textbook'), // 教材册数 1-4 (structured, for 课文复习 defaults)
+  textbook: text('textbook'), // 教材 key: '1'-'4' 第一~四册 | 'starterA'/'starterB' 青少版A/B (for 课文复习 defaults)
   homeworkTemplate: text('homework_template'), // 作业模板 — {lesson_number}/{date}/{class_name} vars
   teacherId: text('teacher_id').references(() => teachers.id), // 负责老师
   createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
@@ -186,7 +186,7 @@ export const classSessions = sqliteTable('class_sessions', {
   // the session detail page (own PUT). overwriteSession (编辑上课记录) never
   // touches this column — a re-commit payload's homeworkContent is ignored.
   homeworkContent: text('homework_content'),
-  reviewBook: integer('review_book'), // 课文复习: 第几册 (1-4)
+  reviewBook: text('review_book'), // 课文复习: 教材 key (same keys as classes.textbook)
   reviewLesson: integer('review_lesson'), // 课文复习: 第几课
 });
 
