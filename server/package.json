@@ -10,6 +10,7 @@
     "db:migrate": "tsx src/db/migrate.ts",
     "create-teacher": "tsx src/db/create-teacher.ts",
     "reset-password": "tsx src/db/reset-password.ts",
+    "set-admin": "tsx src/db/set-admin.ts",
     "db:seed": "tsx src/db/seed.ts",
     "db:reset": "rm -f data/app.db && tsx src/db/seed.ts",
     "test": "vitest run"

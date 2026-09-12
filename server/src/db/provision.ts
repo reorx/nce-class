@@ -51,12 +51,21 @@ export function migrate(sqlite: DB): void {
   if (!memberCols.some((c) => c.name === 'made_up')) {
     sqlite.exec(`ALTER TABLE session_memberships ADD COLUMN made_up INTEGER NOT NULL DEFAULT 0`);
   }
+  // 管理员 flag. No backfill on purpose: after deploy nobody is an admin until the
+  // set-admin CLI grants it (an existing owner is never promoted implicitly).
+  const teacherCols = sqlite.prepare(`PRAGMA table_info(teachers)`).all() as { name: string }[];
+  if (!teacherCols.some((c) => c.name === 'is_admin')) {
+    sqlite.exec(`ALTER TABLE teachers ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0`);
+  }
 }
 
-/** Provision a real account on a clean database: org (by name, created if missing) + teacher + password credential. */
+/**
+ * Provision a real account on a clean database: org (by name, created if missing) + teacher + password credential.
+ * `isAdmin` makes it an admin in the same step (the first account of a fresh deploy).
+ */
 export function createTeacher(
   sqlite: DB,
-  p: { org: string; name: string; username: string; password: string; role?: string },
+  p: { org: string; name: string; username: string; password: string; role?: string; isAdmin?: boolean },
 ): { orgId: string; teacherId: string } {
   const taken = sqlite.prepare(`SELECT id FROM teachers WHERE username = ?`).get(p.username);
   if (taken) throw new Error(`username already taken: ${p.username}`);
@@ -68,8 +77,8 @@ export function createTeacher(
 
     const teacherId = `t-${nanoid(10)}`;
     sqlite
-      .prepare(`INSERT INTO teachers (id, org_id, name, username, role) VALUES (?,?,?,?,?)`)
-      .run(teacherId, orgId, p.name, p.username, p.role ?? 'owner');
+      .prepare(`INSERT INTO teachers (id, org_id, name, username, role, is_admin) VALUES (?,?,?,?,?,?)`)
+      .run(teacherId, orgId, p.name, p.username, p.role ?? 'owner', p.isAdmin ? 1 : 0);
     sqlite
       .prepare(`INSERT INTO credentials (id, teacher_id, provider, secret) VALUES (?,?,'password',?)`)
       .run(`cred-${nanoid(10)}`, teacherId, hashPassword(p.password));
@@ -102,5 +111,15 @@ export function resetPassword(sqlite: DB, p: { username: string; password: strin
     }
   });
   tx();
+  return { teacherId: teacher.id };
+}
+
+/** Grant or revoke 管理员 by username — the only way in (no page can promote). Bites on that teacher's next request. */
+export function setAdmin(sqlite: DB, p: { username: string; isAdmin: boolean }): { teacherId: string } {
+  const teacher = sqlite.prepare(`SELECT id FROM teachers WHERE username = ?`).get(p.username) as
+    | { id: string }
+    | undefined;
+  if (!teacher) throw new Error(`username not found: ${p.username}`);
+  sqlite.prepare(`UPDATE teachers SET is_admin = ? WHERE id = ?`).run(p.isAdmin ? 1 : 0, teacher.id);
   return { teacherId: teacher.id };
 }

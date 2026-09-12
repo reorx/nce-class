@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { ToastProvider } from './components/Toast';
 import { api, type Me } from './lib/api';
+import { Admin } from './pages/Admin';
 import { Billing } from './pages/Billing';
 import { BillingBatch } from './pages/BillingBatch';
 import { ClassAttendance } from './pages/ClassAttendance';
@@ -66,6 +67,7 @@ export function App() {
         <Route path="/billing" element={guard(<Billing me={me} />)} />
         <Route path="/billing/:batchId" element={guard(<BillingBatch me={me} />)} />
         <Route path="/teachers" element={guard(<Teachers me={me} />)} />
+        <Route path="/admin" element={guard(<Admin me={me} />)} />
       </Routes>
     </ToastProvider>
   );

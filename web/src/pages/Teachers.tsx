@@ -3,7 +3,7 @@ import { Modal } from '../components/Modal';
 import { TopBar } from '../components/TopBar';
 import { useToast } from '../components/Toast';
 import { api, ApiError, type Me, type TeacherItem } from '../lib/api';
-import { GREEN, squareAvatarStyle } from '../lib/theme';
+import { GREEN, squareAvatarStyle, teacherBadgeStyle } from '../lib/theme';
 
 export function Teachers({ me }: { me: Me | null }) {
   const [teachers, setTeachers] = useState<TeacherItem[]>([]);
@@ -14,7 +14,6 @@ export function Teachers({ me }: { me: Me | null }) {
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<TeacherItem | null>(null);
   const [editName, setEditName] = useState('');
-  const [editPassword, setEditPassword] = useState('');
   const [editBusy, setEditBusy] = useState(false);
   const toast = useToast();
 
@@ -51,19 +50,16 @@ export function Teachers({ me }: { me: Me | null }) {
   function openEdit(t: TeacherItem) {
     setEditing(t);
     setEditName(t.name);
-    setEditPassword('');
   }
 
-  // 姓名必填；密码留空则不改，否则至少 6 位。
-  const editValid = editName.trim() && (editPassword.length === 0 || editPassword.length >= 6);
+  // 只改姓名（必填）；改密只在 /admin（管理员）。
+  const editValid = editName.trim().length > 0;
 
   async function submitEdit() {
     if (!editing || !editValid || editBusy) return;
     setEditBusy(true);
     try {
-      const p: { name: string; password?: string } = { name: editName.trim() };
-      if (editPassword.length > 0) p.password = editPassword;
-      await api.updateTeacher(editing.id, p);
+      await api.updateTeacher(editing.id, { name: editName.trim() });
       await reload();
       toast(`已保存「${editName.trim()}」`);
       setEditing(null);
@@ -82,7 +78,7 @@ export function Teachers({ me }: { me: Me | null }) {
           <div>
             <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, letterSpacing: '-.3px' }}>老师</h1>
             <div style={{ marginTop: 6, fontSize: 13.5, color: '#7a828f' }}>
-              {teachers.length} 位老师 · 同校老师共享班级与学生 · 权限暂不细分
+              {teachers.length} 位老师 · 同校老师共享班级与学生 · 修改密码请联系管理员
             </div>
           </div>
           <button
@@ -131,21 +127,8 @@ export function Teachers({ me }: { me: Me | null }) {
                   >
                     {t.name}
                   </span>
-                  {t.id === me?.id && (
-                    <span
-                      style={{
-                        fontSize: 11,
-                        fontWeight: 600,
-                        color: '#3f7a56',
-                        background: '#eef6f0',
-                        border: '1px solid #dcecdf',
-                        padding: '1px 7px',
-                        borderRadius: 6,
-                      }}
-                    >
-                      我
-                    </span>
-                  )}
+                  {t.id === me?.id && <span style={teacherBadgeStyle('me')}>我</span>}
+                  {t.isAdmin && <span style={teacherBadgeStyle('admin')}>管理员</span>}
                 </div>
                 <div className="mono" style={{ marginTop: 3, fontSize: 12, color: '#9aa1ac' }}>
                   {t.username}
@@ -245,6 +228,7 @@ export function Teachers({ me }: { me: Me | null }) {
           value={editName}
           autoFocus
           onChange={(e) => setEditName(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && submitEdit()}
           placeholder="如 李芳"
           style={fieldStyle}
         />
@@ -255,17 +239,9 @@ export function Teachers({ me }: { me: Me | null }) {
           disabled
           style={{ ...fieldStyle, background: '#f2f4f6', color: '#9aa1ac', cursor: 'not-allowed' }}
         />
-        <div style={{ marginTop: 5, fontSize: 12, color: '#9aa1ac' }}>用户名不可修改。</div>
-        <label style={{ ...labelStyle, marginTop: 15 }}>新密码</label>
-        <input
-          type="password"
-          value={editPassword}
-          onChange={(e) => setEditPassword(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && submitEdit()}
-          placeholder="留空则不修改"
-          style={fieldStyle}
-        />
-        <div style={{ marginTop: 5, fontSize: 12, color: '#9aa1ac' }}>如需重置密码，请输入至少 6 位新密码。</div>
+        <div style={{ marginTop: 5, fontSize: 12, color: '#9aa1ac' }}>
+          用户名不可修改。忘记或需要重置密码，请联系管理员。
+        </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 22 }}>
           <button
             style={{

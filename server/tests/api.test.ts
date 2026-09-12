@@ -24,8 +24,23 @@ describe('auth', () => {
   it('logs in with the seeded password and returns the teacher', async () => {
     const { res } = await login();
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ name: '王莉', username: 'wangli', role: 'owner', orgName: '晨光英语' });
+    expect(res.body).toMatchObject({
+      name: '王莉',
+      username: 'wangli',
+      role: 'owner',
+      isAdmin: true,
+      orgName: '晨光英语',
+    });
     expect(res.headers['set-cookie'][0]).toMatch(/nce_session=.+HttpOnly/i);
+  });
+
+  it('carries isAdmin on login and /api/me: true for the admin, false for a regular teacher', async () => {
+    const { agent } = await login();
+    expect((await agent.get('/api/me')).body.isAdmin).toBe(true);
+    await agent.post('/api/teachers').send({ name: '李芳', username: 'lifang', password: 'secret66' });
+    const lifang = await login('lifang', 'secret66');
+    expect(lifang.res.body.isAdmin).toBe(false);
+    expect((await lifang.agent.get('/api/me')).body.isAdmin).toBe(false);
   });
 
   it('rejects a wrong password with 401', async () => {
@@ -77,14 +92,14 @@ describe('teachers', () => {
     const { agent } = await login();
     const res = await agent.get('/api/teachers');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual([{ id: 't-wangli', name: '王莉', username: 'wangli', role: 'owner' }]);
+    expect(res.body).toEqual([{ id: 't-wangli', name: '王莉', username: 'wangli', role: 'owner', isAdmin: true }]);
   });
 
   it('creates a teacher who can log in immediately', async () => {
     const { agent } = await login();
     const created = await agent.post('/api/teachers').send({ name: '李芳', username: 'lifang', password: 'secret66' });
     expect(created.status).toBe(201);
-    expect(created.body).toMatchObject({ name: '李芳', username: 'lifang', role: 'teacher' });
+    expect(created.body).toMatchObject({ name: '李芳', username: 'lifang', role: 'teacher', isAdmin: false });
 
     // shows up in the list, pinned to the creator's org
     const list = (await agent.get('/api/teachers')).body;
@@ -139,30 +154,29 @@ describe('teachers', () => {
     const { agent } = await login();
     const res = await agent.put('/api/teachers/t-wangli').send({ name: '王老师' });
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ id: 't-wangli', name: '王老师', username: 'wangli', role: 'owner' });
+    expect(res.body).toEqual({ id: 't-wangli', name: '王老师', username: 'wangli', role: 'owner', isAdmin: true });
     // username stays put, the original password still logs in
     const row = sqlite.prepare(`SELECT name, username FROM teachers WHERE id='t-wangli'`).get() as any;
     expect(row).toEqual({ name: '王老师', username: 'wangli' });
     expect((await login('wangli', 'demo1234')).res.status).toBe(200);
   });
 
-  it('changes the password only when a non-blank one is provided', async () => {
+  it('refuses a password change with 403 (改密只走 /admin), writing nothing — not even the rename', async () => {
     const { agent } = await login();
-    // blank password → unchanged
+    // blank password = no change requested → a plain rename
     expect((await agent.put('/api/teachers/t-wangli').send({ name: '王莉', password: '' })).status).toBe(200);
+    // a non-blank one (e.g. from a cached old page) is refused as a whole
+    const res = await agent.put('/api/teachers/t-wangli').send({ name: '王老师', password: 'newpass9' });
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('修改密码请联系管理员');
+    expect((sqlite.prepare(`SELECT name FROM teachers WHERE id='t-wangli'`).get() as any).name).toBe('王莉');
+    expect((await login('wangli', 'newpass9')).res.status).toBe(401);
     expect((await login('wangli', 'demo1234')).res.status).toBe(200);
-    // real password → old one stops working, new one logs in
-    expect((await agent.put('/api/teachers/t-wangli').send({ name: '王莉', password: 'newpass9' })).status).toBe(200);
-    expect((await login('wangli', 'demo1234')).res.status).toBe(401);
-    expect((await login('wangli', 'newpass9')).res.status).toBe(200);
   });
 
-  it('rejects a blank name or a too-short password with 400', async () => {
+  it('rejects a blank name with 400', async () => {
     const { agent } = await login();
     expect((await agent.put('/api/teachers/t-wangli').send({ name: '   ' })).status).toBe(400);
-    expect((await agent.put('/api/teachers/t-wangli').send({ name: '王莉', password: '12345' })).status).toBe(400);
-    // nothing changed
-    expect((await login('wangli', 'demo1234')).res.status).toBe(200);
     expect((sqlite.prepare(`SELECT name FROM teachers WHERE id='t-wangli'`).get() as any).name).toBe('王莉');
   });
 
@@ -2083,5 +2097,273 @@ describe('cross-org isolation', () => {
     expect(mine).toEqual(['c1']);
     const theirs = (await (await login('waiguo')).agent.get('/api/classes')).body.map((c: any) => c.id);
     expect(theirs).toEqual(['c-out']);
+  });
+});
+
+describe('admin (/api/admin/*)', () => {
+  /** 李芳: a same-org teacher created through the API — never an admin. */
+  async function nonAdmin() {
+    const { agent } = await login();
+    const created = await agent.post('/api/teachers').send({ name: '李芳', username: 'lifang', password: 'secret66' });
+    expect(created.status).toBe(201);
+    return { id: created.body.id as string, agent: (await login('lifang', 'secret66')).agent };
+  }
+
+  /**
+   * Give c1 a row in every class-owned table the base seed leaves empty: a
+   * schedule + billing batch with one confirmed invoice, an invite + a linked
+   * join request, and an archived student (still counted, still deleted).
+   */
+  async function furnishC1(agent: request.Agent) {
+    const lessons = ['2099-09-01', '2099-09-08'].map((date) => ({ date, startTime: '18:00', endTime: '20:00' }));
+    const sched = await agent.post('/api/classes/c1/schedules').send({ name: '九月周期', lessons });
+    expect(sched.status).toBe(201);
+    const batch = await agent.post('/api/billing/batches').send({ scheduleId: sched.body.id, unitPriceCents: 10000 });
+    expect(batch.status).toBe(201);
+    const s1 = batch.body.invoices.find((i: any) => i.studentId === 's1');
+    const paid = await agent.post(`/api/invoices/${s1.id}/confirm`);
+    expect(paid.status).toBe(200);
+    expect(paid.body.finalAmountCents).toBeGreaterThan(0);
+    sqlite
+      .prepare(
+        `INSERT INTO class_invites (id, class_id, token, created_by, expires_at)
+         VALUES ('inv-c1','c1','tok-inv-c1','t-wangli', datetime('now','+7 days'))`,
+      )
+      .run();
+    sqlite
+      .prepare(
+        `INSERT INTO join_requests (id, class_id, wechat_account_id, invite_id, cn_name, status, linked_student_id)
+         VALUES ('jr-c1','c1','wa-parent','inv-c1','小明','linked','s1')`,
+      )
+      .run();
+    expect((await agent.put('/api/students/s4/status').send({ status: 'archived' })).status).toBe(200);
+    return { invoiceCount: batch.body.invoiceCount as number, paidCents: paid.body.finalAmountCents as number };
+  }
+
+  /** Every id owned by a class: itself + its students/sessions/session groups/groups/schedules/batches/invites. */
+  function classScope(classId: string): string[] {
+    const ids = (sql: string) => (sqlite.prepare(sql).all(classId) as any[]).map((r) => r.id as string);
+    return [
+      classId,
+      ...ids(`SELECT id FROM students WHERE class_id=?`),
+      ...ids(`SELECT id FROM class_sessions WHERE class_id=?`),
+      ...ids(`SELECT sg.id FROM session_groups sg JOIN class_sessions cs ON cs.id = sg.session_id WHERE cs.class_id=?`),
+      ...ids(`SELECT id FROM class_groups WHERE class_id=?`),
+      ...ids(`SELECT id FROM class_schedules WHERE class_id=?`),
+      ...ids(`SELECT id FROM billing_batches WHERE class_id=?`),
+      ...ids(`SELECT id FROM class_invites WHERE class_id=?`),
+    ];
+  }
+
+  // Columns that can point at a class-owned row, scanned over EVERY table of the
+  // live schema — a future table hanging off a class that deleteClass forgets
+  // fails the residual check without anyone having to update this list of tables.
+  const REF_COLS = [
+    'id',
+    'class_id',
+    'student_id',
+    'session_id',
+    'batch_id',
+    'schedule_id',
+    'class_group_id',
+    'session_group_id',
+    'linked_student_id',
+    'target_id',
+    'invite_id',
+  ];
+
+  /** Per-table count of rows whose id / reference column hits one of `ids` (tables without hits omitted). */
+  function rowsReferencing(ids: string[]): Record<string, number> {
+    const tables = (sqlite.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all() as any[]).map(
+      (r) => r.name as string,
+    );
+    const marks = ids.map(() => '?').join(',');
+    const out: Record<string, number> = {};
+    for (const t of tables) {
+      const cols = (sqlite.prepare(`PRAGMA table_info(${t})`).all() as any[])
+        .map((c) => c.name as string)
+        .filter((c) => REF_COLS.includes(c));
+      if (!cols.length) continue;
+      const where = cols.map((c) => `${c} IN (${marks})`).join(' OR ');
+      const n = (sqlite.prepare(`SELECT COUNT(*) c FROM ${t} WHERE ${where}`).get(...cols.flatMap(() => ids)) as any).c;
+      if (n > 0) out[t] = n;
+    }
+    return out;
+  }
+
+  it('401 unauthenticated; 403 for a non-admin on every admin route, changing nothing', async () => {
+    expect((await request(app).get('/api/admin/classes')).status).toBe(401);
+    expect((await request(app).delete('/api/admin/classes/c1').send({ adminPassword: 'demo1234' })).status).toBe(401);
+    expect(
+      (
+        await request(app)
+          .put('/api/admin/teachers/t-wangli/password')
+          .send({ password: 'hacked-1', adminPassword: 'demo1234' })
+      ).status,
+    ).toBe(401);
+
+    const { agent } = await nonAdmin();
+    const list = await agent.get('/api/admin/classes');
+    expect(list.status).toBe(403);
+    expect(list.body.error).toBe('需要管理员权限');
+    // even with the caller's own correct password
+    expect((await agent.delete('/api/admin/classes/c1').send({ adminPassword: 'secret66' })).status).toBe(403);
+    expect(
+      (
+        await agent
+          .put('/api/admin/teachers/t-wangli/password')
+          .send({ password: 'hacked-1', adminPassword: 'secret66' })
+      ).status,
+    ).toBe(403);
+    expect(sqlite.prepare(`SELECT id FROM classes WHERE id='c1'`).get()).toBeTruthy();
+    expect((await login('wangli', 'demo1234')).res.status).toBe(200);
+  });
+
+  it('revoking is_admin takes effect on the very next request (no re-login)', async () => {
+    const { agent } = await login();
+    expect((await agent.get('/api/admin/classes')).status).toBe(200);
+    sqlite.prepare(`UPDATE teachers SET is_admin=0 WHERE id='t-wangli'`).run();
+    expect((await agent.get('/api/admin/classes')).status).toBe(403);
+    expect((await agent.get('/api/me')).body.isAdmin).toBe(false);
+  });
+
+  it('lists the org’s classes with deletion impact counts (students of every status)', async () => {
+    const { agent } = await login();
+    const { invoiceCount, paidCents } = await furnishC1(agent);
+    const empty = await agent.post('/api/classes').send({ name: '空班' });
+
+    const res = await agent.get('/api/admin/classes');
+    expect(res.status).toBe(200);
+    expect(res.body.map((c: any) => c.id)).toEqual(['c1', empty.body.id]); // c-out (org-2) never listed
+    expect(res.body[0]).toEqual({
+      id: 'c1',
+      name: '三年级A班',
+      teacherName: '王莉',
+      studentCount: 4, // archived s4 still counts — deleting the class takes it too
+      sessionCount: 1,
+      scheduleCount: 1,
+      batchCount: 1,
+      invoiceCount,
+      paidInvoiceCount: 1,
+      paidAmountCents: paidCents,
+    });
+    expect(res.body[1]).toEqual({
+      id: empty.body.id,
+      name: '空班',
+      teacherName: '王莉',
+      studentCount: 0,
+      sessionCount: 0,
+      scheduleCount: 0,
+      batchCount: 0,
+      invoiceCount: 0,
+      paidInvoiceCount: 0,
+      paidAmountCents: 0,
+    });
+  });
+
+  it('hard-deletes a class with every row hanging off it; other classes and org-level rows stay', async () => {
+    const { agent } = await login();
+    await furnishC1(agent);
+    // a little ledger on c-out too, so "left intact" is a real assertion
+    const run = (sql: string) => sqlite.prepare(sql).run();
+    run(`INSERT INTO class_groups (id, class_id, name) VALUES ('g-out','c-out','外组')`);
+    run(`INSERT INTO class_group_memberships (id, class_group_id, student_id) VALUES ('m-out','g-out','so1')`);
+    run(`INSERT INTO class_sessions (id, class_id, teacher_id, date) VALUES ('sess-out','c-out','t-out','2026-06-20')`);
+    run(`INSERT INTO session_memberships (id, session_id, student_id) VALUES ('sm-out','sess-out','so1')`);
+    run(
+      `INSERT INTO score_events (id, session_id, target_type, target_id, delta) VALUES ('e-out','sess-out','student','so1',1)`,
+    );
+
+    const c1Ids = classScope('c1');
+    const outIds = classScope('c-out');
+    const outBefore = rowsReferencing(outIds);
+    // the fixture really reaches every class-owned table
+    expect(Object.keys(rowsReferencing(c1Ids)).sort()).toEqual([
+      'billing_batches',
+      'check_records',
+      'class_group_memberships',
+      'class_groups',
+      'class_invites',
+      'class_schedules',
+      'class_sessions',
+      'classes',
+      'invoices',
+      'join_requests',
+      'schedule_lessons',
+      'score_events',
+      'session_groups',
+      'session_memberships',
+      'session_tags',
+      'student_wechat_bindings',
+      'students',
+    ]);
+
+    const res = await agent.delete('/api/admin/classes/c1').send({ adminPassword: 'demo1234' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+
+    expect(rowsReferencing(c1Ids)).toEqual({});
+    expect(rowsReferencing(outIds)).toEqual(outBefore);
+    // org-level rows survive: the 奖章 library, the parent's wechat identity, teachers
+    expect(sqlite.prepare(`SELECT id FROM org_tags WHERE id='tag1'`).get()).toBeTruthy();
+    expect(sqlite.prepare(`SELECT id FROM wechat_accounts WHERE id='wa-parent'`).get()).toBeTruthy();
+    expect((sqlite.prepare(`SELECT COUNT(*) c FROM teachers`).get() as any).c).toBe(2);
+
+    expect((await agent.get('/api/classes/c1')).status).toBe(404);
+    expect((await agent.get('/api/classes')).body).toEqual([]);
+    expect((await agent.get('/api/admin/classes')).body).toEqual([]);
+    // the parent's miniapp home still loads, just without the deleted child
+    const token = await wxLogin(app, 'dev-parent');
+    const wxMe = await request(app).get('/api/wx/me').set('Authorization', `Bearer ${token}`);
+    expect(wxMe.status).toBe(200);
+    expect(wxMe.body.children).toEqual([]);
+  });
+
+  it('refuses a wrong or missing admin password with 403, deleting nothing', async () => {
+    const { agent } = await login();
+    const before = rowsReferencing(classScope('c1'));
+    const bad = await agent.delete('/api/admin/classes/c1').send({ adminPassword: 'nope' });
+    expect(bad.status).toBe(403);
+    expect(bad.body.error).toBe('管理员密码错误');
+    expect((await agent.delete('/api/admin/classes/c1')).status).toBe(403);
+    expect(rowsReferencing(classScope('c1'))).toEqual(before);
+    expect((await agent.get('/api/me')).status).toBe(200); // the session itself stays valid
+  });
+
+  it('404 for a cross-org or unknown class, even with the right password', async () => {
+    const { agent } = await login();
+    expect((await agent.delete('/api/admin/classes/c-out').send({ adminPassword: 'demo1234' })).status).toBe(404);
+    expect((await agent.delete('/api/admin/classes/nope').send({ adminPassword: 'demo1234' })).status).toBe(404);
+    expect(sqlite.prepare(`SELECT id FROM classes WHERE id='c-out'`).get()).toBeTruthy();
+  });
+
+  it('resets a same-org teacher’s password: the new one logs in, the old one fails, others untouched', async () => {
+    const { id } = await nonAdmin();
+    const { agent } = await login();
+    const res = await agent
+      .put(`/api/admin/teachers/${id}/password`)
+      .send({ password: 'fresh-pass', adminPassword: 'demo1234' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+    expect((await login('lifang', 'secret66')).res.status).toBe(401);
+    expect((await login('lifang', 'fresh-pass')).res.status).toBe(200);
+    expect((await login('wangli', 'demo1234')).res.status).toBe(200);
+    expect((await login('waiguo', 'demo1234')).res.status).toBe(200);
+  });
+
+  it('rejects a short password (400), a wrong admin password (403), cross-org/unknown teachers (404)', async () => {
+    const { id } = await nonAdmin();
+    const { agent } = await login();
+    const put = (tid: string, body: object) => agent.put(`/api/admin/teachers/${tid}/password`).send(body);
+    expect((await put(id, { password: '12345', adminPassword: 'demo1234' })).status).toBe(400);
+    expect((await put(id, { adminPassword: 'demo1234' })).status).toBe(400);
+    const bad = await put(id, { password: 'fresh-pass', adminPassword: 'nope' });
+    expect(bad.status).toBe(403);
+    expect(bad.body.error).toBe('管理员密码错误');
+    expect((await put('t-out', { password: 'fresh-pass', adminPassword: 'demo1234' })).status).toBe(404);
+    expect((await put('nope', { password: 'fresh-pass', adminPassword: 'demo1234' })).status).toBe(404);
+    // nothing changed
+    expect((await login('lifang', 'secret66')).res.status).toBe(200);
+    expect((await login('waiguo', 'demo1234')).res.status).toBe(200);
   });
 });

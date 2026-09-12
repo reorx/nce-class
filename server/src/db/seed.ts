@@ -13,10 +13,10 @@ const ORG_ID = 'org-chenguang';
 const token = () => nanoid(24);
 
 const TEACHERS = [
-  { id: 't-wangli', name: '王莉', username: 'wangli', role: 'owner' },
-  { id: 't-chenxiao', name: '陈晓', username: 'chenxiao', role: 'teacher' },
-  { id: 't-limei', name: '李梅', username: 'limei', role: 'teacher' },
-  { id: 't-zhangwei', name: '张伟', username: 'zhangwei', role: 'teacher' },
+  { id: 't-wangli', name: '王莉', username: 'wangli', role: 'owner', isAdmin: 1 }, // dev 管理员（生产只由 set-admin CLI 授予）
+  { id: 't-chenxiao', name: '陈晓', username: 'chenxiao', role: 'teacher', isAdmin: 0 },
+  { id: 't-limei', name: '李梅', username: 'limei', role: 'teacher', isAdmin: 0 },
+  { id: 't-zhangwei', name: '张伟', username: 'zhangwei', role: 'teacher', isAdmin: 0 },
 ];
 
 // 三年级A班 (c1) — the detailed class shown across the class-detail screenshots.
@@ -157,7 +157,7 @@ function run() {
 
   for (const te of TEACHERS) {
     db.insert(t.teachers)
-      .values({ id: te.id, orgId: ORG_ID, name: te.name, username: te.username, role: te.role })
+      .values({ id: te.id, orgId: ORG_ID, name: te.name, username: te.username, role: te.role, isAdmin: te.isAdmin })
       .run();
     db.insert(t.credentials)
       .values({ id: nanoid(), teacherId: te.id, provider: 'password', secret: hashPassword('demo1234') })

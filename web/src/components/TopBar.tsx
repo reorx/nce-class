@@ -18,7 +18,7 @@ export function TopBar({
   active = 'classes',
 }: {
   me: Me | null;
-  active?: 'classes' | 'sessions' | 'billing' | 'teachers';
+  active?: 'classes' | 'sessions' | 'billing' | 'teachers' | 'admin';
 }) {
   const [open, setOpen] = useState(false);
   const name = me?.name ?? '王莉';
@@ -72,6 +72,11 @@ export function TopBar({
         <Link to="/teachers" style={navBtn(active === 'teachers')}>
           老师
         </Link>
+        {me?.isAdmin && (
+          <Link to="/admin" style={navBtn(active === 'admin')}>
+            管理
+          </Link>
+        )}
       </div>
       <div style={{ flex: 1 }} />
       <div style={{ position: 'relative' }}>
@@ -129,6 +134,7 @@ export function TopBar({
                 <div style={{ fontWeight: 600, fontSize: 13.5, color: '#1e2430' }}>{name}</div>
                 <div className="mono" style={{ fontSize: 11.5, color: '#9aa1ac', marginTop: 2 }}>
                   {me?.username ?? 'wangli'} · {me?.role === 'owner' ? '负责人' : '老师'}
+                  {me?.isAdmin ? ' · 管理员' : ''}
                 </div>
               </div>
               {['账户设置', '帮助中心'].map((t) => (

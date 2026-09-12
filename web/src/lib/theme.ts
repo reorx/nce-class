@@ -75,6 +75,24 @@ export function statusTag(status: StudentStatus) {
   return null;
 }
 
+/** Small pill next to a teacher name (老师列表 + 管理页): 「我」 or 「管理员」. */
+export function teacherBadgeStyle(kind: 'me' | 'admin'): CSSProperties {
+  const c =
+    kind === 'me'
+      ? { color: '#3f7a56', bg: '#eef6f0', border: '#dcecdf' }
+      : { color: '#6f4aa8', bg: '#f3eefa', border: '#e4d9f3' };
+  return {
+    fontSize: 11,
+    fontWeight: 600,
+    color: c.color,
+    background: c.bg,
+    border: `1px solid ${c.border}`,
+    padding: '1px 7px',
+    borderRadius: 6,
+    whiteSpace: 'nowrap',
+  };
+}
+
 /** Rounded-square avatar used for teacher rows. */
 export function squareAvatarStyle(key: string, size: number): CSSProperties {
   const p = PAL[palIndex(key)];

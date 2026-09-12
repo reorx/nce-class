@@ -17,6 +17,9 @@ export const teachers = sqliteTable('teachers', {
   name: text('name').notNull(),
   username: text('username').notNull().unique(),
   role: text('role').notNull().default('teacher'), // owner | teacher
+  // 管理员: unlocks /admin (删除班级 / 修改成员密码). Granted only by the set-admin
+  // CLI — no page can promote; the admin gate re-reads it on every request.
+  isAdmin: integer('is_admin').notNull().default(0),
   createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
 });
 

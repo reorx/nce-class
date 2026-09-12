@@ -27,6 +27,7 @@ import {
   createSchedule,
   createTeacher,
   deleteBillingBatch,
+  deleteClass,
   deleteSchedule,
   deleteSession,
   deleteStudent,
@@ -35,6 +36,7 @@ import {
   overwriteSession,
   recalculateBatch,
   renameStudent,
+  renameTeacher,
   saveGrouping,
   setAttendance,
   setClassNotes,
@@ -46,7 +48,6 @@ import {
   updateInvoice,
   updateSchedule,
   updateSessionInfo,
-  updateTeacher,
   upsertJoinRequest,
   upsertWechatAccount,
   type CommitInput,
@@ -55,6 +56,7 @@ import {
   type InvoiceSnapshotRow,
   type ScheduleLessonInput,
 } from './db/mutations.js';
+import { MIN_PASSWORD_LENGTH, resetPassword } from './db/provision.js';
 import {
   buildBatchSnapshot,
   computeAmountCents,
@@ -294,6 +296,22 @@ const q = {
     `SELECT sm.session_id, sm.student_id, sm.attendance, sm.made_up
      FROM session_memberships sm JOIN class_sessions cs ON cs.id = sm.session_id
      WHERE cs.class_id=? AND cs.status='ended'`,
+  ),
+  // /admin 删除班级：本 org 班级 + 删除影响面（学生不分状态——删班全删）
+  adminClassesOfOrg: sqlite.prepare(
+    `SELECT c.id, c.name, t.name teacher_name,
+       (SELECT COUNT(*) FROM students WHERE class_id = c.id) student_count,
+       (SELECT COUNT(*) FROM class_sessions WHERE class_id = c.id) session_count,
+       (SELECT COUNT(*) FROM class_schedules WHERE class_id = c.id) schedule_count,
+       (SELECT COUNT(*) FROM billing_batches WHERE class_id = c.id) batch_count,
+       (SELECT COUNT(*) FROM invoices iv JOIN billing_batches bb ON bb.id = iv.batch_id
+         WHERE bb.class_id = c.id) invoice_count,
+       (SELECT COUNT(*) FROM invoices iv JOIN billing_batches bb ON bb.id = iv.batch_id
+         WHERE bb.class_id = c.id AND iv.status = 'paid') paid_invoice_count,
+       (SELECT COALESCE(SUM(iv.final_amount_cents), 0) FROM invoices iv JOIN billing_batches bb ON bb.id = iv.batch_id
+         WHERE bb.class_id = c.id AND iv.status = 'paid') paid_amount_cents
+     FROM classes c LEFT JOIN teachers t ON t.id = c.teacher_id
+     WHERE c.org_id = ? ORDER BY c.created_at, c.rowid`,
   ),
 };
 
@@ -765,6 +783,14 @@ const contentOrNull = (v: unknown): string | null => (typeof v === 'string' && v
 function classInOrg(classId: string, orgId: string): any | null {
   const c = q.classById.get(classId) as any;
   return c && c.org_id === orgId ? c : null;
+}
+
+/** Re-check a teacher's own password (verify-password gate + 管理员复核). Blank or non-string never matches. */
+function passwordMatches(teacherId: string, password: unknown): boolean {
+  const cred = q.credByTeacher.get(teacherId) as any;
+  return (
+    typeof password === 'string' && password.length > 0 && cred?.secret != null && verifyPassword(password, cred.secret)
+  );
 }
 
 /** The schedule row if its class is in the acting teacher's org, else null. */
@@ -1334,18 +1360,16 @@ export function createApp() {
   // Re-confirm the logged-in teacher's password for destructive actions
   // (放弃本节课). 403 on mismatch — the session itself stays valid.
   app.post('/api/auth/verify-password', (req, res) => {
-    const password = typeof req.body?.password === 'string' ? req.body.password : '';
-    const cred = q.credByTeacher.get(res.locals.teacher.id) as any;
-    if (!password || !cred?.secret || !verifyPassword(password, cred.secret)) {
+    if (!passwordMatches(res.locals.teacher.id, req.body?.password)) {
       return res.status(403).json({ error: '密码错误' });
     }
     res.json({ ok: true });
   });
 
-  // ---- teachers (同校老师列表 + 管理页添加; 权限暂不细分, 任何登录老师可加) ----
+  // ---- teachers (同校老师列表 + 管理页添加; 任何登录老师可加/改名，改密只走 /api/admin) ----
   app.get('/api/teachers', (_req, res) => {
     const rows = q.teachersOfOrg.all(res.locals.teacher.org_id) as any[];
-    res.json(rows.map((t) => ({ id: t.id, name: t.name, username: t.username, role: t.role })));
+    res.json(rows.map((t) => teacherItem(t)));
   });
 
   // ---- org 奖章 tag 库 (课堂打 tag 的下拉数据源; 写入只走 end-class commit 的 upsert) ----
@@ -1362,25 +1386,23 @@ export function createApp() {
     if (password.length < 6) return res.status(400).json({ error: '密码至少 6 位' });
     if (q.teacherByUsername.get(username)) return res.status(409).json({ error: '用户名已被使用' });
     const id = createTeacher(sqlite, { orgId: res.locals.teacher.org_id, name, username, password });
-    const t = q.teacherById.get(id) as any;
-    res.status(201).json({ id: t.id, name: t.name, username: t.username, role: t.role });
+    res.status(201).json(teacherItem(q.teacherById.get(id)));
   });
 
-  // ---- teacher 编辑 (改名 + 可选改密; username immutable, 任何同校老师可改) ----
+  // ---- teacher 编辑 (仅改名; username immutable, 任何同校老师可改) ----
   app.put('/api/teachers/:id', (req, res) => {
     const acting = res.locals.teacher;
     const t = q.teacherById.get(req.params.id) as any;
     if (!t || t.org_id !== acting.org_id) return res.status(404).json({ error: 'teacher not found' });
+    // 改密收口到 /api/admin（管理员）。A cached old page may still send one: refuse
+    // the whole request rather than rename and silently drop the password change.
+    if (typeof req.body?.password === 'string' && req.body.password.length > 0) {
+      return res.status(403).json({ error: '修改密码请联系管理员' });
+    }
     const name = str(req.body?.name);
     if (!name) return res.status(400).json({ error: '姓名必填' });
-    // Password optional (不 trim — spaces may be intentional): blank/absent leaves
-    // the credential unchanged, a provided one must still be ≥6.
-    const raw = typeof req.body?.password === 'string' ? req.body.password : '';
-    const password = raw.length > 0 ? raw : null;
-    if (password != null && password.length < 6) return res.status(400).json({ error: '密码至少 6 位' });
-    updateTeacher(sqlite, { teacherId: t.id, name, password });
-    const updated = q.teacherById.get(t.id) as any;
-    res.json({ id: updated.id, name: updated.name, username: updated.username, role: updated.role });
+    renameTeacher(sqlite, t.id, name);
+    res.json(teacherItem(q.teacherById.get(t.id)));
   });
 
   // ---- classes (read) ----
@@ -2088,6 +2110,63 @@ export function createApp() {
     res.json({ invoiceId: inv.id, studentId: inv.student_id, rows });
   });
 
+  // ---- 管理员 (/admin 高危操作: 删除班级 / 修改成员密码) ----
+  // Server-enforced — the web gate is presentation only. is_admin is re-read with
+  // the teacher row on every request (auth gate above), so a CLI revoke bites on
+  // the very next call even though cookie sessions are stateless. Every write also
+  // re-checks the acting admin's own password inside the same request.
+  app.use('/api/admin', (_req, res, next) => {
+    if (res.locals.teacher.is_admin !== 1) return res.status(403).json({ error: '需要管理员权限' });
+    next();
+  });
+
+  app.get('/api/admin/classes', (_req, res) => {
+    const rows = q.adminClassesOfOrg.all(res.locals.teacher.org_id) as any[];
+    res.json(
+      rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        teacherName: r.teacher_name ?? '—',
+        studentCount: r.student_count,
+        sessionCount: r.session_count,
+        scheduleCount: r.schedule_count,
+        batchCount: r.batch_count,
+        invoiceCount: r.invoice_count,
+        paidInvoiceCount: r.paid_invoice_count,
+        paidAmountCents: r.paid_amount_cents,
+      })),
+    );
+  });
+
+  // 删除班级 = 硬删除级联（mutations.deleteClass）。body: { adminPassword }
+  app.delete('/api/admin/classes/:id', (req, res) => {
+    const acting = res.locals.teacher;
+    const c = classInOrg(req.params.id, acting.org_id);
+    if (!c) return res.status(404).json({ error: 'class not found' });
+    if (!passwordMatches(acting.id, req.body?.adminPassword)) {
+      return res.status(403).json({ error: '管理员密码错误' });
+    }
+    deleteClass(sqlite, c.id);
+    res.json({ ok: true });
+  });
+
+  // 修改成员密码（与 reset-password CLI 同一实现：缺 password credential 行会补建）。
+  // body: { password, adminPassword }。已签发的会话不会失效（无状态 cookie）。
+  app.put('/api/admin/teachers/:id/password', (req, res) => {
+    const acting = res.locals.teacher;
+    const t = q.teacherById.get(req.params.id) as any;
+    if (!t || t.org_id !== acting.org_id) return res.status(404).json({ error: 'teacher not found' });
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      return res.status(400).json({ error: `密码至少 ${MIN_PASSWORD_LENGTH} 位` });
+    }
+    if (!passwordMatches(acting.id, req.body?.adminPassword)) {
+      return res.status(403).json({ error: '管理员密码错误' });
+    }
+    resetPassword(sqlite, { username: t.username, password });
+    res.json({ ok: true });
+  });
+
   // Multer surfaces its limit violations (e.g. fileSize) via next(err); map
   // them to 400 instead of express's default 500.
   app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -2098,13 +2177,12 @@ export function createApp() {
   return app;
 }
 
+/** One teacher as the web sees it (GET/POST/PUT /api/teachers; mePayload builds on it). */
+function teacherItem(t: any) {
+  return { id: t.id, name: t.name, username: t.username, role: t.role, isAdmin: t.is_admin === 1 };
+}
+
 function mePayload(teacher: any) {
   const org = q.org.get() as any;
-  return {
-    id: teacher?.id,
-    name: teacher?.name,
-    username: teacher?.username,
-    role: teacher?.role,
-    orgName: org?.name,
-  };
+  return { ...teacherItem(teacher), orgName: org?.name };
 }

@@ -11,14 +11,17 @@ const name = arg('name');
 const username = arg('username');
 const password = arg('password');
 const role = arg('role') ?? 'owner';
+const isAdmin = process.argv.includes('--admin');
 
 if (!org || !name || !username || !password) {
   console.error(
-    `Usage: pnpm --filter server create-teacher -- --org <机构名> --name <老师名> --username <登录名> --password <密码> [--role owner|teacher]`,
+    `Usage: pnpm --filter server create-teacher -- --org <机构名> --name <老师名> --username <登录名> --password <密码> [--role owner|teacher] [--admin]`,
   );
   process.exit(1);
 }
 
 migrate(sqlite); // idempotent — lets this run first on a brand-new volume
-const { orgId, teacherId } = createTeacher(sqlite, { org, name, username, password, role });
-console.log(`✓ teacher created: ${username} (${teacherId}) @ ${org} (${orgId}) → ${DB_PATH}`);
+const { orgId, teacherId } = createTeacher(sqlite, { org, name, username, password, role, isAdmin });
+console.log(
+  `✓ teacher created: ${username} (${teacherId})${isAdmin ? ' [admin]' : ''} @ ${org} (${orgId}) → ${DB_PATH}`,
+);

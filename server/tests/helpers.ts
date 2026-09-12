@@ -60,8 +60,16 @@ function seed(sqlite: DB) {
 
   run(`INSERT INTO organizations (id, name) VALUES ('org-1','晨光英语'),('org-2','别校')`);
 
-  const teacher = (id: string, org: string, name: string, username: string, role: string) => {
-    run(`INSERT INTO teachers (id, org_id, name, username, role) VALUES (?,?,?,?,?)`, id, org, name, username, role);
+  const teacher = (id: string, org: string, name: string, username: string, role: string, isAdmin = 0) => {
+    run(
+      `INSERT INTO teachers (id, org_id, name, username, role, is_admin) VALUES (?,?,?,?,?,?)`,
+      id,
+      org,
+      name,
+      username,
+      role,
+      isAdmin,
+    );
     run(
       `INSERT INTO credentials (id, teacher_id, provider, secret) VALUES (?,?,'password',?)`,
       `cred-${id}`,
@@ -69,7 +77,7 @@ function seed(sqlite: DB) {
       hashPassword('demo1234'),
     );
   };
-  teacher('t-wangli', 'org-1', '王莉', 'wangli', 'owner');
+  teacher('t-wangli', 'org-1', '王莉', 'wangli', 'owner', 1); // 管理员（测试口径；生产只由 set-admin CLI 授予）
   teacher('t-out', 'org-2', '外老师', 'waiguo', 'teacher');
 
   run(

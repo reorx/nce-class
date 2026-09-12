@@ -87,20 +87,11 @@ export function createTeacher(
 }
 
 /**
- * Rename a teacher and optionally reset their password (in-app 老师编辑). The
- * username is immutable here. `password === null` leaves the credential
- * untouched (blank = 不修改); a string is re-hashed into the password credential.
+ * Rename a teacher (in-app 老师编辑). The username is immutable; passwords only
+ * change through the admin route or the reset-password CLI (provision.resetPassword).
  */
-export function updateTeacher(sqlite: DB, p: { teacherId: string; name: string; password: string | null }): void {
-  const tx = sqlite.transaction(() => {
-    sqlite.prepare(`UPDATE teachers SET name=? WHERE id=?`).run(p.name, p.teacherId);
-    if (p.password != null) {
-      sqlite
-        .prepare(`UPDATE credentials SET secret=? WHERE teacher_id=? AND provider='password'`)
-        .run(hashPassword(p.password), p.teacherId);
-    }
-  });
-  tx();
+export function renameTeacher(sqlite: DB, teacherId: string, name: string): void {
+  sqlite.prepare(`UPDATE teachers SET name=? WHERE id=?`).run(name, teacherId);
 }
 
 /** Create a class in the given org owned by the given teacher. Returns its id. */
@@ -340,6 +331,44 @@ export function deleteSession(sqlite: DB, sessionId: string): void {
     sqlite.prepare(`DELETE FROM class_sessions WHERE id=?`).run(sid);
   });
   tx(sessionId);
+}
+
+/**
+ * Hard-delete a class and everything hanging off it in one transaction (管理员
+ * 删除班级), leaf → root, scoped by the class's student / session / batch /
+ * schedule / group id sets. Same 口径 as deleteStudent / deleteSession: org-level
+ * rows stay (org_tags 奖章库, wechat_accounts 家长身份) and stored photo files
+ * are left alone.
+ */
+export function deleteClass(sqlite: DB, classId: string): void {
+  const students = `SELECT id FROM students WHERE class_id=@classId`;
+  const sessions = `SELECT id FROM class_sessions WHERE class_id=@classId`;
+  const batches = `SELECT id FROM billing_batches WHERE class_id=@classId`;
+  const schedules = `SELECT id FROM class_schedules WHERE class_id=@classId`;
+  const groups = `SELECT id FROM class_groups WHERE class_id=@classId`;
+  const statements = [
+    `DELETE FROM score_events WHERE session_id IN (${sessions}) OR (target_type='student' AND target_id IN (${students}))`,
+    `DELETE FROM session_memberships WHERE session_id IN (${sessions}) OR student_id IN (${students})`,
+    `DELETE FROM check_records WHERE session_id IN (${sessions}) OR student_id IN (${students})`,
+    `DELETE FROM session_tags WHERE session_id IN (${sessions}) OR student_id IN (${students})`,
+    `DELETE FROM session_groups WHERE session_id IN (${sessions})`,
+    `DELETE FROM class_sessions WHERE class_id=@classId`,
+    `DELETE FROM invoices WHERE batch_id IN (${batches}) OR student_id IN (${students})`,
+    `DELETE FROM billing_batches WHERE class_id=@classId`,
+    `DELETE FROM schedule_lessons WHERE schedule_id IN (${schedules})`,
+    `DELETE FROM class_schedules WHERE class_id=@classId`,
+    `DELETE FROM class_group_memberships WHERE class_group_id IN (${groups}) OR student_id IN (${students})`,
+    `DELETE FROM class_groups WHERE class_id=@classId`,
+    `DELETE FROM student_wechat_bindings WHERE student_id IN (${students})`,
+    `DELETE FROM join_requests WHERE class_id=@classId`,
+    `DELETE FROM class_invites WHERE class_id=@classId`,
+    `DELETE FROM students WHERE class_id=@classId`,
+    `DELETE FROM classes WHERE id=@classId`,
+  ];
+  const tx = sqlite.transaction(() => {
+    for (const s of statements) sqlite.prepare(s).run({ classId });
+  });
+  tx();
 }
 
 /**

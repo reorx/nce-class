@@ -3,6 +3,7 @@ export interface Me {
   name: string;
   username: string;
   role: string;
+  isAdmin: boolean; // 管理员 → 顶导「管理」入口；/api/admin/* 由服务端强制鉴权
   orgName: string;
 }
 
@@ -11,6 +12,21 @@ export interface TeacherItem {
   name: string;
   username: string;
   role: string;
+  isAdmin: boolean;
+}
+
+/** /admin 删除班级列表的一行：删除该班会一并硬删的数据量（GET /api/admin/classes）。 */
+export interface AdminClassItem {
+  id: string;
+  name: string;
+  teacherName: string;
+  studentCount: number; // 不分状态：在读/停课/归档都会被删
+  sessionCount: number;
+  scheduleCount: number;
+  batchCount: number;
+  invoiceCount: number;
+  paidInvoiceCount: number; // 已确认收款的收款单
+  paidAmountCents: number;
 }
 
 /** One org-library 奖章 tag (GET /api/tags). */
@@ -488,9 +504,14 @@ export const api = {
   orgTags: () => get<TagItem[]>('/api/tags'),
   createTeacher: (name: string, username: string, password: string) =>
     req<TeacherItem>('POST', '/api/teachers', { name, username, password }),
-  // 改名 + 可选改密（password 省略/留空则不改）；username 不可改。
-  updateTeacher: (id: string, p: { name: string; password?: string }) =>
-    req<TeacherItem>('PUT', `/api/teachers/${id}`, p),
+  // 仅改名（username 不可改）；改密只在 /admin 或 reset-password CLI，带密码会被 403。
+  updateTeacher: (id: string, p: { name: string }) => req<TeacherItem>('PUT', `/api/teachers/${id}`, p),
+  // 管理员（/admin）：服务端按 is_admin 强制鉴权；高危写操作同请求复核管理员自己的密码（错误 → 403）。
+  adminClasses: () => get<AdminClassItem[]>('/api/admin/classes'),
+  adminDeleteClass: (classId: string, adminPassword: string) =>
+    req<{ ok: true }>('DELETE', `/api/admin/classes/${classId}`, { adminPassword }),
+  adminResetPassword: (teacherId: string, password: string, adminPassword: string) =>
+    req<{ ok: true }>('PUT', `/api/admin/teachers/${teacherId}/password`, { password, adminPassword }),
   classes: () => get<ClassListItem[]>('/api/classes'),
   classDetail: (id: string) => get<ClassDetail>(`/api/classes/${id}`),
   createClass: (p: { name: string; teacherId: string; textbook: number | null }) =>

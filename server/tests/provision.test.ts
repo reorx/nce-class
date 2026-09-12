@@ -1,4 +1,4 @@
-import type DatabaseType from 'better-sqlite3';
+import Database from 'better-sqlite3';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -11,7 +11,11 @@ import request from 'supertest';
 // be set before the first import of db/client (read at module-load time), so
 // everything is imported dynamically from beforeAll — same rule as helpers.ts.
 let provision: typeof import('../src/db/provision.js');
-let sqlite: DatabaseType.Database;
+let sqlite: Database.Database;
+
+const serverDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const isAdminOf = (username: string) =>
+  (sqlite.prepare(`SELECT is_admin FROM teachers WHERE username=?`).get(username) as any).is_admin;
 
 beforeAll(async () => {
   process.env.NCE_DB_PATH = join(mkdtempSync(join(tmpdir(), 'nce-provision-')), 'app.db');
@@ -55,6 +59,25 @@ describe('migrate', () => {
       expect(tables).toContain(t);
     }
   });
+
+  it('adds teachers.is_admin to a pre-admin database: default 0, no backfill, idempotent', () => {
+    const old = new Database(':memory:');
+    old.exec(
+      `CREATE TABLE teachers (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, name TEXT NOT NULL,
+         username TEXT NOT NULL UNIQUE, role TEXT NOT NULL DEFAULT 'teacher',
+         created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+    );
+    old
+      .prepare(`INSERT INTO teachers (id, org_id, name, username, role) VALUES ('t-boss','o1','老板','boss','owner')`)
+      .run();
+    provision.migrate(old);
+    provision.migrate(old);
+    // even an owner stays a non-admin — admins are only ever granted by the set-admin CLI
+    expect(old.prepare(`SELECT is_admin FROM teachers WHERE id='t-boss'`).get()).toEqual({ is_admin: 0 });
+    old.prepare(`INSERT INTO teachers (id, org_id, name, username) VALUES ('t-new','o1','新人','newbie')`).run();
+    expect(old.prepare(`SELECT is_admin FROM teachers WHERE id='t-new'`).get()).toEqual({ is_admin: 0 });
+    old.close();
+  });
 });
 
 describe('createTeacher', () => {
@@ -92,6 +115,18 @@ describe('createTeacher', () => {
     const wangli = sqlite.prepare(`SELECT org_id FROM teachers WHERE username='wangli'`).get() as any;
     expect(first.orgId).toBe(wangli.org_id);
     expect(second.orgId).not.toBe(wangli.org_id);
+  });
+
+  it('creates an admin only when isAdmin is set (default: not an admin)', () => {
+    provision.createTeacher(sqlite, {
+      org: '晨光英语',
+      name: '管理员',
+      username: 'boss',
+      password: 'boss-pass-1',
+      isAdmin: true,
+    });
+    expect(isAdminOf('boss')).toBe(1);
+    expect(isAdminOf('wangli')).toBe(0);
   });
 
   it('rejects a duplicate username without touching the database', () => {
@@ -146,7 +181,6 @@ describe('resetPassword', () => {
 // The real script against the same temp database (NCE_DB_PATH is inherited);
 // the new password arrives on stdin as two lines, like an operator typing it.
 describe('reset-password CLI', { timeout: 30_000 }, () => {
-  const serverDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   const runCli = (args: string[], input: string) =>
     spawnSync(process.execPath, ['--import', 'tsx', 'src/db/reset-password.ts', ...args], {
       cwd: serverDir,
@@ -188,5 +222,84 @@ describe('reset-password CLI', { timeout: 30_000 }, () => {
       expect(r.stderr).toContain('chenxiao');
     }
     expect(runCli(['--username', 'nobody'], '').stderr).toContain('username not found: nobody');
+  });
+});
+
+describe('setAdmin', () => {
+  it('grants and revokes admin by username, returning the teacher id', () => {
+    const t = sqlite.prepare(`SELECT id FROM teachers WHERE username='chenxiao'`).get() as any;
+    expect(provision.setAdmin(sqlite, { username: 'chenxiao', isAdmin: true })).toEqual({ teacherId: t.id });
+    expect(isAdminOf('chenxiao')).toBe(1);
+    expect(isAdminOf('wangli')).toBe(0); // nobody else touched
+
+    provision.setAdmin(sqlite, { username: 'chenxiao', isAdmin: false });
+    expect(isAdminOf('chenxiao')).toBe(0);
+  });
+
+  it('rejects an unknown username', () => {
+    expect(() => provision.setAdmin(sqlite, { username: 'nobody', isAdmin: true })).toThrow(/username not found/);
+  });
+});
+
+describe('set-admin CLI', { timeout: 30_000 }, () => {
+  const runCli = (args: string[]) =>
+    spawnSync(process.execPath, ['--import', 'tsx', 'src/db/set-admin.ts', ...args], {
+      cwd: serverDir,
+      encoding: 'utf8',
+    });
+
+  it('grants admin, and --revoke takes it away', () => {
+    const grant = runCli(['--username', 'waiguo']);
+    expect(grant.stderr).toBe('');
+    expect(grant.status).toBe(0);
+    expect(grant.stdout).toContain('admin granted: waiguo');
+    expect(isAdminOf('waiguo')).toBe(1);
+
+    const revoke = runCli(['--username', 'waiguo', '--revoke']);
+    expect(revoke.stderr).toBe('');
+    expect(revoke.status).toBe(0);
+    expect(revoke.stdout).toContain('admin revoked: waiguo');
+    expect(isAdminOf('waiguo')).toBe(0);
+  });
+
+  it('lists the usernames with their admin mark when --username is missing or unknown', () => {
+    for (const args of [[], ['--revoke'], ['--username', 'nobody']]) {
+      const r = runCli(args);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('Usage:');
+      const line = (u: string) => r.stderr.split('\n').find((l) => l.trim().startsWith(`${u} `));
+      expect(line('boss')).toContain('[admin]');
+      expect(line('chenxiao')).toBeDefined();
+      expect(line('chenxiao')).not.toContain('[admin]');
+    }
+    expect(runCli(['--username', 'nobody']).stderr).toContain('username not found: nobody');
+    expect(isAdminOf('boss')).toBe(1); // a failed run changes nothing
+  });
+});
+
+describe('create-teacher CLI', { timeout: 30_000 }, () => {
+  it('provisions a first admin in one step with --admin', async () => {
+    const r = spawnSync(
+      process.execPath,
+      [
+        '--import',
+        'tsx',
+        'src/db/create-teacher.ts',
+        '--org',
+        '晨光英语',
+        '--name',
+        '首位管理员',
+        '--username',
+        'root1',
+        '--password',
+        'root-pass-1',
+        '--admin',
+      ],
+      { cwd: serverDir, encoding: 'utf8' },
+    );
+    expect(r.stderr).toBe('');
+    expect(r.status).toBe(0);
+    expect(isAdminOf('root1')).toBe(1);
+    expect((await login('root1', 'root-pass-1')).status).toBe(200);
   });
 });
