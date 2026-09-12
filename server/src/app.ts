@@ -78,7 +78,6 @@ const q = {
   org: sqlite.prepare(`SELECT * FROM organizations LIMIT 1`),
   teacherByUsername: sqlite.prepare(`SELECT * FROM teachers WHERE username=?`),
   credByTeacher: sqlite.prepare(`SELECT * FROM credentials WHERE teacher_id=? AND provider='password'`),
-  classes: sqlite.prepare(`SELECT * FROM classes ORDER BY created_at`),
   classById: sqlite.prepare(`SELECT * FROM classes WHERE id=?`),
   teacherById: sqlite.prepare(`SELECT * FROM teachers WHERE id=?`),
   teachersOfOrg: sqlite.prepare(`SELECT * FROM teachers WHERE org_id=? ORDER BY created_at, rowid`),
@@ -309,8 +308,8 @@ function actualMin(s: any): number {
     : s.planned_duration_min;
 }
 
-function classListPayload() {
-  const classes = q.classes.all() as any[];
+function classListPayload(orgId: string) {
+  const classes = q.classesOfOrg.all(orgId) as any[];
   const counts = new Map((q.studentCounts.all() as any[]).map((r) => [r.class_id, r.c]));
   const rosterByClass = new Map<string, string[]>();
   for (const s of q.allStudentsOrdered.all() as any[]) {
@@ -1385,7 +1384,7 @@ export function createApp() {
   });
 
   // ---- classes (read) ----
-  app.get('/api/classes', (_req, res) => res.json(classListPayload()));
+  app.get('/api/classes', (_req, res) => res.json(classListPayload(res.locals.teacher.org_id)));
 
   app.get('/api/classes/:id', (req, res) => {
     if (!classInOrg(req.params.id, res.locals.teacher.org_id))

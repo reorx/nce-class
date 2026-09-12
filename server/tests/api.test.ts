@@ -2077,4 +2077,11 @@ describe('cross-org isolation', () => {
     expect((await agent.put('/api/classes/c-out/groups').send({ groups: [] })).status).toBe(404);
     expect((await agent.post('/api/classes/c-out/sessions').send({ clientSessionId: 'x' })).status).toBe(404);
   });
+
+  it('lists only the acting org’s classes (GET /api/classes)', async () => {
+    const mine = (await (await login()).agent.get('/api/classes')).body.map((c: any) => c.id);
+    expect(mine).toEqual(['c1']);
+    const theirs = (await (await login('waiguo')).agent.get('/api/classes')).body.map((c: any) => c.id);
+    expect(theirs).toEqual(['c-out']);
+  });
 });
