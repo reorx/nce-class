@@ -16,11 +16,12 @@ server/  Express + TS · Drizzle ORM + SQLite (better-sqlite3)
 web/     React + Vite + TS · 老师端桌面 Web（管理页 IBM Plex；课堂系 Nunito/Baloo 2）
   pages/    ClassList / ClassDetail（学生·分组 DnD·班级资源·作业模板·上课记录）/ StudentProfile（成长档案矩阵）/
             SessionDetail（作业布置·Recap·课堂信息三 tab，结束课堂后落地）/ ClassAttendance（考勤网格）/
-            Sessions（org 级课堂列表）/ Teachers（添加/改名改密，用户名不可改）/ Setup（课前配置；?backfill=1 补录过去的课）/
+            Sessions（org 级课堂列表）/ Teachers（添加/改名，用户名不可改，不能改密）/ Admin（仅管理员：删除班级·修改成员密码）/
+            Setup（课前配置；?backfill=1 补录过去的课）/
             Classroom（课堂主界面：看板/背书/作业/出勤/调组/班级信息/日志 七视图 + 上节课 popover + 多选批量 + 投屏 zoom）/ Login
   lib/      classroomStore（课堂本地态 reducer + localStorage 持久化 + commit payload）/ session（事件流计分派生）/
             setup / grouping / attendance / profile / homework / lesson / recapCard / recapV3（v3 战报派生：领奖台/组明细/分类统计）/ classroomLog /
-            tags（奖章归一化，与 server 口径一致）/ multiSelect / prevLesson / zoom / api（fetch 客户端）
+            tags（奖章归一化，与 server 口径一致）/ multiSelect / prevLesson / zoom / admin（删除影响面文案·改密表单校验）/ api（fetch 客户端）
 miniapp/ Taro 4 + React（weapp 正式产物 / h5 开发调试；appid wx19490e22f3580fb0；browserslist 锁 chrome60/ios10——微信 CI 不认 ES2020 语法，勿改）
   pages:    index（按身份分流）/ join（?invite= 落地表单）/ recap / bind（老师绑定）/ teacher/{home,classes,class,sessions}
   lib:      api（Bearer 注入；h5 走 :10086 代理）/ wxAuth（ensureLogin + mock 身份）/ flow / recapView
@@ -28,11 +29,12 @@ miniapp/ Taro 4 + React（weapp 正式产物 / h5 开发调试；appid wx19490e2
 
 ## 页面与 API
 
-web 路由：`/`、`/classes/:id`（?tab=students|groups|notes|homework|invite|sessions）、`/classes/:id/students/:sid`、`/classes/:id/sessions/:sid`（?tab=homework|recap|info）、`/classes/:id/attendance`、`/classes/:id/setup`、`/classes/:id/classroom`、`/sessions`、`/teachers`、`/login`。课堂直连判定：本地 store 有该班进行中课堂→恢复（若 URL `?edit_id` 与本地态不符则弹冲突拦截页）；`?edit_id=<sid>`→拉 `GET /sessions/:id` 的 `ledger` 反向还原为可编辑课堂（编辑上课记录）；`?lesson=4&title=...&duration=120`→boot 新课；否则跳 setup。
+web 路由：`/`、`/classes/:id`（?tab=students|groups|notes|homework|invite|sessions）、`/classes/:id/students/:sid`、`/classes/:id/sessions/:sid`（?tab=homework|recap|info）、`/classes/:id/attendance`、`/classes/:id/setup`、`/classes/:id/classroom`、`/sessions`、`/teachers`、`/admin`（非管理员渲染无权限空态，顶导也不显示入口）、`/login`。课堂直连判定：本地 store 有该班进行中课堂→恢复（若 URL `?edit_id` 与本地态不符则弹冲突拦截页）；`?edit_id=<sid>`→拉 `GET /sessions/:id` 的 `ledger` 反向还原为可编辑课堂（编辑上课记录）；`?lesson=4&title=...&duration=120`→boot 新课；否则跳 setup。
 
 API 全在 `server/src/app.ts`，除 `/api/health`、`/api/auth/login`、`/api/wx/login` 外均过认证中间件，orgId 取自当前登录者、跨组织一律 404。字段校验细节以代码为准，速览：
 
-- 老师 cookie 会话：auth（login/logout/me/verify-password）、teachers 增改、classes 增改 + students（增删改名改状态）+ groups（整套 replace）+ notes / homework-template（整篇 replace）、`POST /classes/:id/sessions`（结束课堂一次性提交，见下方兼容纪律）、sessions（详情含 `ledger` 还原块 / `PUT /sessions/:id` 部分更新课堂信息 / `PUT /sessions/:id/commit` 覆盖重提交=编辑上课记录 / homework / attendance 更正 / 删除 / recap）、attendance 矩阵、tags（org 奖章库）、join-requests 只读镜像。
+- 管理员 `/api/admin/*`（cookie 会话 + gate：`teacher.is_admin` 每请求随 teacher 行重读，非管理员 403；写操作 body 带 `adminPassword` 同请求复核，错 403）：`GET /admin/classes`（本 org 班级 + 删除影响面计数）、`DELETE /admin/classes/:id`（`mutations.deleteClass` 单事务硬删该班全部挂靠数据）、`PUT /admin/teachers/:id/password`（复用 `provision.resetPassword`）。
+- 老师 cookie 会话：auth（login/logout/me/verify-password；login/me 带 `isAdmin`）、teachers 增 + 改名（body 带非空 password → 403，改密只走 admin）、classes 增改 + students（增删改名改状态）+ groups（整套 replace）+ notes / homework-template（整篇 replace）、`POST /classes/:id/sessions`（结束课堂一次性提交，见下方兼容纪律）、sessions（详情含 `ledger` 还原块 / `PUT /sessions/:id` 部分更新课堂信息 / `PUT /sessions/:id/commit` 覆盖重提交=编辑上课记录 / homework / attendance 更正 / 删除 / recap）、attendance 矩阵、tags（org 奖章库）、join-requests 只读镜像。
 - 小程序 `/api/wx/*`（Bearer，与 cookie 互不通用）：me / bind-teacher；老师侧（需已绑 teacher，否则 403）classes/sessions/invites/join-requests 关联与驳回/students；家长侧 invites 预览 + join（只建 join_request）+ upload/photo + students recap（binding 守卫）。
 
 ## 开发与测试
@@ -53,7 +55,7 @@ pnpm --filter server exec tsc --noEmit # 类型检查（web/miniapp 同理）
 - ⚠️ 端口 5173/5177 常被邻近项目 tenderbuddy 占用或混淆；清理前先 `lsof -nP -iTCP:5177 -sTCP:LISTEN` 确认进程 cwd，勿误杀。web 可 `pnpm --filter web exec vite --port 5180`。
 - 新增写接口 **先加测试用例再实现**（TDD）。
 
-**部署**：push master → GitHub Actions（`.github/workflows/deploy.yml`）build 镜像（server + web/dist 同一镜像）push 到 ghcr → 用 digest 调服务器部署 webhook（repo Secrets：`WEBHOOK_SECRET` + `WEBHOOK_URL`，含路径的完整 URL）。服务器侧 compose / 部署脚本 / Caddy 路由由 deploy 工作区的 Ansible 管理（容器只跑 API，web 静态从镜像拷到 webdist 由宿主机 Caddy serve）；`.env` 变量名 SSOT = 仓库根 `.env.example`，真值服务器手填。weapp 上传**不走 CI**：本地 `pnpm --filter miniapp upload:weapp`（生产 API 域名由 gitignored `miniapp/.env.production.local` 的 `TARO_APP_API_BASE` 构建时注入，缺失即构建报错；需 nvm node24）。`pnpm --filter server db:migrate` 幂等 DDL（server 启动也自动跑，部署无需手动迁移）；干净库开账号用 `pnpm --filter server create-teacher`；忘记密码（无需登录）用 `pnpm --filter server reset-password -- --username <登录名>`：新密码交互输入两次不回显（也接受管道两行），不带/带错 username 时列出库里全部用户名；生产在容器内 `docker compose exec app pnpm --filter server reset-password -- --username <登录名>`（远程要 `ssh -t`）。⚠️ 会话是无状态签名 cookie，改密不吊销已签发的会话，怀疑泄露需轮换 `AUTH_SECRET`。
+**部署**：push master → GitHub Actions（`.github/workflows/deploy.yml`）build 镜像（server + web/dist 同一镜像）push 到 ghcr → 用 digest 调服务器部署 webhook（repo Secrets：`WEBHOOK_SECRET` + `WEBHOOK_URL`，含路径的完整 URL）。服务器侧 compose / 部署脚本 / Caddy 路由由 deploy 工作区的 Ansible 管理（容器只跑 API，web 静态从镜像拷到 webdist 由宿主机 Caddy serve）；`.env` 变量名 SSOT = 仓库根 `.env.example`，真值服务器手填。weapp 上传**不走 CI**：本地 `pnpm --filter miniapp upload:weapp`（生产 API 域名由 gitignored `miniapp/.env.production.local` 的 `TARO_APP_API_BASE` 构建时注入，缺失即构建报错；需 nvm node24）。`pnpm --filter server db:migrate` 幂等 DDL（server 启动也自动跑，部署无需手动迁移）；干净库开账号用 `pnpm --filter server create-teacher`；忘记密码（无需登录）用 `pnpm --filter server reset-password -- --username <登录名>`：新密码交互输入两次不回显（也接受管道两行），不带/带错 username 时列出库里全部用户名；生产在容器内 `docker compose exec app pnpm --filter server reset-password -- --username <登录名>`（远程要 `ssh -t`）。管理员只能用 CLI 授予/撤销：`pnpm --filter server set-admin -- --username <登录名> [--revoke]`（不带/带错 username 列出全部用户名及 `[admin]` 标记，对方下一次请求即生效）；干净库开首个账号可 `create-teacher ... --admin` 一步到位。⚠️ `is_admin` 迁移不回填，旧库升级后**没有任何管理员**，需手动 set-admin。⚠️ 会话是无状态签名 cookie，改密（CLI 或 /admin）不吊销已签发的会话，怀疑泄露需轮换 `AUTH_SECRET`。
 
 ## 验证套路
 
@@ -107,6 +109,7 @@ localStorage.removeItem('nce.wxToken'); localStorage.removeItem('nce.currentChil
 - **课堂本地优先**：整节课跑在浏览器本地（`classroomStore.ts`，localStorage `nce.classroom.<classId>`），仅「结束课堂」一次性 POST，后端单事务落库。幂等键 `client_session_id` 重试不变，重复提交返回既有 sessionId。默认分组回写用**下课态**分组（课中调组持久化到默认分组）。提交前 payload 自动备份到 `nce.classroom.backup.<clientSessionId>`（成功才清，留最新 10 条，可原样重 POST）。补录课堂（backfill）复用同一套，payload 零改动。编辑上课记录（`?edit_id`）同样复用：`GET /sessions/:id` 的 `ledger`（id 维度原始快照：sessionGroups/memberships/逐条 events/checks/tags）经 `buildEditSession` 反向还原为带 `editOfSessionId` 标记的本地课堂（复用同一 `nce.classroom.<classId>` 槽位，故进行中课堂时编辑会被冲突拦截），结束时走 `PUT /sessions/:id/commit`→`overwriteSession` 原地覆盖同一 session（删 5 张子表→UPDATE 保留 id/client_session_id/作业字段→重写 ledger），**不回写默认分组**，并保留已有 leave/补课更正（含其分组座位）。
 - **⚠️ 结束课堂 schema 向后兼容（protobuf 式，不可破坏）**：课堂进行中服务端可能发新版，旧页面 commit payload 必须照常入库。纪律：①服务端永不新增必填字段，新字段一律可选带默认；②不收紧校验、不改名、不改语义；③未知字段静默忽略（`buildCommitInput` 显式挑字段）。web 端 localStorage 的 `ClassroomSession` shape 同理只加可选字段（先例：teacherId/startedAt/tags/backfill/editOfSessionId/endedAt/homeworkContent）。守卫用例在 `server/tests/api.test.ts`「向后/向前兼容」——挂了改契约不改测试。
 - **鉴权双轨**：老师 = 无状态签名 cookie（HMAC/`AUTH_SECRET`，dev 有 fallback；生产必须显式设置，缺失启动即 throw）；小程序 = wx Bearer token（subject=wechatAccountId），互不通用。写接口的 teacherId/orgId 取自当前登录者。
+- **管理员**：`teachers.is_admin`（0/1）与 `role`（owner/teacher，仅展示）无关，只由 set-admin CLI / `create-teacher --admin` 授予，页面无法提权。高危操作集中在 `/admin`：删除班级（硬删除级联，同 deleteStudent 口径：`org_tags`、`wechat_accounts`、存储照片不删）、修改成员密码；/teachers 不再改密。新增挂靠班级的表时要同步 `deleteClass`——`api.test.ts` admin 用例扫描全部表的 id/引用列做残留断言兜底。
 - **学生状态** `students.status`：active 在读 / suspended 停课 / archived 归档。非 active 不进课前配置、课堂与 session 快照（缺席也不算）；人数口径 = 在读+停课；停课/归档即清默认分组 membership，恢复后需手动拖回组；已绑定家长的历史 recap 不受影响。
 - **账户体系**：student（教学实体）与 wechat_account（微信身份）分离。teacher↔account 走 credentials（bind 页一次绑定）；student↔account 走 `student_wechat_bindings`（N:M）；家长注册只建 `join_requests`（pending 唯一、重复提交覆盖），由老师在小程序关联（回填空字段不覆盖）。邀请 = 一次性 7 天 token（`class_invites`，可并存）。
 - **出勤/作业口径**：commit payload 只有 present/absent；`leave` 只由考勤更正接口产生，读侧一律 `!== 'present'` 视为未到堂；`madeUp` 只进考勤页统计不改当日 recap。作业三态 没交(默认)/完成/需补，缺记录=没交。作业布置文本可在课堂「作业检查」侧栏边上课边写（随 commit 可选字段 `homeworkContent` 落库，仅创建路径），也可课后在 session 详情页 PUT；编辑上课记录不改作业（overwrite 结构性忽略）。
