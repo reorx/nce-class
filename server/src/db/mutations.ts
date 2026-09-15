@@ -106,15 +106,16 @@ export function createClass(
   return id;
 }
 
-/** Update a class's basic info (name / 负责老师 / 教材). */
+/** Update a class's basic info (name / 负责老师 / 教材), plus 归档 when given — undefined keeps it (stale pages don't send it). */
 export function updateClassInfo(
   sqlite: DB,
   classId: string,
-  p: { name: string; teacherId: string; textbook: string | null },
+  p: { name: string; teacherId: string; textbook: string | null; isArchived?: boolean },
 ): void {
+  const archived = p.isArchived === undefined ? null : p.isArchived ? 1 : 0;
   sqlite
-    .prepare(`UPDATE classes SET name=?, teacher_id=?, textbook=? WHERE id=?`)
-    .run(p.name, p.teacherId, p.textbook, classId);
+    .prepare(`UPDATE classes SET name=?, teacher_id=?, textbook=?, is_archived=COALESCE(?, is_archived) WHERE id=?`)
+    .run(p.name, p.teacherId, p.textbook, archived, classId);
 }
 
 /** Add a teacher-created student to a class. Returns the new student id. */

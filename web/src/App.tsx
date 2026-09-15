@@ -57,6 +57,7 @@ export function App() {
           }
         />
         <Route path="/" element={guard(<ClassList me={me} />)} />
+        <Route path="/classes" element={guard(<ClassList me={me} />)} />
         <Route path="/classes/:id" element={guard(<ClassDetail me={me} />)} />
         <Route path="/classes/:id/students/:sid" element={guard(<StudentProfile me={me} />)} />
         <Route path="/classes/:id/sessions/:sid" element={guard(<SessionDetail me={me} />)} />

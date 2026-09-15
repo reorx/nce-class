@@ -31,6 +31,10 @@ export function migrate(sqlite: DB): void {
   if (!classCols.some((c) => c.name === 'homework_template')) {
     sqlite.exec(`ALTER TABLE classes ADD COLUMN homework_template TEXT`);
   }
+  // 班级归档 flag; existing classes stay unarchived.
+  if (!classCols.some((c) => c.name === 'is_archived')) {
+    sqlite.exec(`ALTER TABLE classes ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0`);
+  }
   const sessionCols = sqlite.prepare(`PRAGMA table_info(class_sessions)`).all() as { name: string }[];
   if (!sessionCols.some((c) => c.name === 'homework_content')) {
     sqlite.exec(`ALTER TABLE class_sessions ADD COLUMN homework_content TEXT`);

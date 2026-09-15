@@ -79,6 +79,21 @@ describe('migrate', () => {
     expect(old.prepare(`SELECT is_admin FROM teachers WHERE id='t-new'`).get()).toEqual({ is_admin: 0 });
     old.close();
   });
+
+  it('adds classes.is_archived to a pre-archive database: existing classes stay unarchived, idempotent', () => {
+    const old = new Database(':memory:');
+    old.exec(
+      `CREATE TABLE classes (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, name TEXT NOT NULL, notes TEXT, teacher_id TEXT,
+         textbook TEXT, homework_template TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+    );
+    old.prepare(`INSERT INTO classes (id, org_id, name) VALUES ('c-old','o1','老班')`).run();
+    provision.migrate(old);
+    provision.migrate(old);
+    const col = (old.prepare(`PRAGMA table_info(classes)`).all() as any[]).find((c) => c.name === 'is_archived');
+    expect(col).toMatchObject({ type: 'INTEGER', notnull: 1, dflt_value: '0' });
+    expect(old.prepare(`SELECT is_archived FROM classes WHERE id='c-old'`).get()).toEqual({ is_archived: 0 });
+    old.close();
+  });
 });
 
 // 教材 columns (classes.textbook / class_sessions.review_book) hold string keys

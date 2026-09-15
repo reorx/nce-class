@@ -9,6 +9,7 @@ import { SessionsTable } from '../components/SessionsTable';
 import { TopBar } from '../components/TopBar';
 import { useToast } from '../components/Toast';
 import { api, type ClassDetail as Detail, type JoinRequestItem, type Me, type Student } from '../lib/api';
+import { ARCHIVED_CLASSES_URL } from '../lib/classList';
 import {
   addGroup,
   moveStudent,
@@ -46,7 +47,7 @@ export function ClassDetail({ me }: { me: Me | null }) {
       <TopBar me={me} active="classes" />
       <div style={{ width: '100%', maxWidth: 1140, margin: '0 auto', padding: '22px 26px 64px' }}>
         <Link
-          to="/"
+          to={d?.isArchived ? ARCHIVED_CLASSES_URL : '/'}
           style={{
             display: 'inline-flex',
             alignItems: 'center',
@@ -58,13 +59,29 @@ export function ClassDetail({ me }: { me: Me | null }) {
             marginBottom: 13,
           }}
         >
-          <span style={{ fontSize: 14 }}>←</span>返回班级
+          <span style={{ fontSize: 14 }}>←</span>
+          {d?.isArchived ? '返回已归档班级' : '返回班级'}
         </Link>
 
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: 14, flexWrap: 'wrap', marginBottom: 20 }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
               <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, letterSpacing: '-.3px' }}>{d?.name ?? ' '}</h1>
+              {d?.isArchived && (
+                <span
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: '#7a828f',
+                    background: '#f0f2f5',
+                    padding: '3px 9px',
+                    borderRadius: 7,
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  已归档
+                </span>
+              )}
               {d && <EditClassInfo d={d} me={me} reload={reload} />}
             </div>
             <div style={{ marginTop: 8, fontSize: 13.5, color: '#7a828f', whiteSpace: 'nowrap' }}>
@@ -220,7 +237,7 @@ const ghostBtn: CSSProperties = {
   cursor: 'pointer',
 };
 
-// ===== CLASS INFO EDIT (名称/教材册数/负责老师) =============================
+// ===== CLASS INFO EDIT (名称/教材册数/负责老师/归档) ========================
 function EditClassInfo({ d, me, reload }: { d: Detail; me: Me | null; reload: () => Promise<void> | void }) {
   const toast = useToast();
   const [open, setOpen] = useState(false);
@@ -252,12 +269,18 @@ function EditClassInfo({ d, me, reload }: { d: Detail; me: Me | null; reload: ()
         busyLabel="保存中…"
         errorText="保存失败，请重试"
         // legacy rows may have no 负责老师 — default the pick to the logged-in teacher
-        initial={{ name: d.name, teacherId: d.teacherId ?? me?.id ?? '', textbook: d.textbook }}
+        initial={{
+          name: d.name,
+          teacherId: d.teacherId ?? me?.id ?? '',
+          textbook: d.textbook,
+          isArchived: d.isArchived,
+        }}
         fallbackTeacherName={d.teacherName}
         onSubmit={async (v) => {
           await api.updateClassInfo(d.id, v);
           await reload();
-          toast('班级信息已更新');
+          if (v.isArchived === d.isArchived) toast('班级信息已更新');
+          else toast(v.isArchived ? '班级已归档，首页列表不再显示' : '已取消归档');
         }}
       />
     </>

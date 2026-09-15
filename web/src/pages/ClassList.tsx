@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ClassInfoModal } from '../components/ClassInfoModal';
 import { TopBar } from '../components/TopBar';
 import { useToast } from '../components/Toast';
 import { api, type ClassListItem, type Me } from '../lib/api';
+import { ARCHIVED_CLASSES_URL, classListView } from '../lib/classList';
 import { loadSession } from '../lib/classroomStore';
 import { BOOK_LABELS } from '../lib/homework';
 import { lessonLabel } from '../lib/lesson';
@@ -42,7 +43,15 @@ function useLiveClassroom(classId: string): { sec: number; backfill: boolean } |
   return { sec: Math.max(0, Math.floor((nowMs - meta.startMs) / 1000)), backfill: meta.backfill };
 }
 
+/** 首页（`/`）与已归档班级页（`/classes?is_archived=true`）共用。两种模式各自一份
+ *  加载/搜索状态：按 key 重挂载，来回切换时清空搜索词并重新拉取。 */
 export function ClassList({ me }: { me: Me | null }) {
+  const [params] = useSearchParams();
+  const archived = params.get('is_archived') === 'true';
+  return <ClassListPage key={archived ? 'archived' : 'active'} me={me} archived={archived} />;
+}
+
+function ClassListPage({ me, archived }: { me: Me | null; archived: boolean }) {
   const [classes, setClasses] = useState<ClassListItem[]>([]);
   const [search, setSearch] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
@@ -59,21 +68,57 @@ export function ClassList({ me }: { me: Me | null }) {
     reload();
   }, []);
 
-  const list = useMemo(
-    () => classes.filter((c) => !search.trim() || c.name.includes(search.trim())),
-    [classes, search],
-  );
-  const studentTotal = classes.reduce((a, c) => a + c.studentCount, 0);
+  const view = useMemo(() => classListView(classes, { archived, search }), [classes, archived, search]);
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       <TopBar me={me} active="classes" />
-      <div style={{ flex: 1, width: '100%', maxWidth: 1140, margin: '0 auto', padding: '30px 26px 64px' }}>
+      <div
+        style={{
+          flex: 1,
+          width: '100%',
+          maxWidth: 1140,
+          margin: '0 auto',
+          padding: archived ? '22px 26px 64px' : '30px 26px 64px',
+        }}
+      >
+        {archived && (
+          <Link
+            to="/"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              color: '#7a828f',
+              textDecoration: 'none',
+              fontSize: 13,
+              fontWeight: 600,
+              marginBottom: 13,
+            }}
+          >
+            <span style={{ fontSize: 14 }}>←</span>返回班级
+          </Link>
+        )}
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: 16, marginBottom: 22, flexWrap: 'wrap' }}>
           <div>
-            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, letterSpacing: '-.3px' }}>班级</h1>
+            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, letterSpacing: '-.3px' }}>
+              {archived ? '已归档班级' : '班级'}
+            </h1>
             <div style={{ marginTop: 6, fontSize: 13.5, color: '#7a828f' }}>
-              {classes.length} 个班级 · 共 {studentTotal} 名学生
+              {view.classCount} 个班级 · 共 {view.studentTotal} 名学生
+              {!archived && view.archivedCount > 0 && (
+                <>
+                  {' · '}
+                  <Link
+                    to={ARCHIVED_CLASSES_URL}
+                    className="dc-name-link"
+                    title="查看已归档的班级"
+                    style={{ color: '#7a828f', fontWeight: 600, textDecoration: 'none' }}
+                  >
+                    {view.archivedCount} 个归档 ›
+                  </Link>
+                </>
+              )}
             </div>
           </div>
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -108,39 +153,50 @@ export function ClassList({ me }: { me: Me | null }) {
                 style={{ border: 'none', background: 'transparent', fontSize: 13.5, width: 148, color: '#1e2430' }}
               />
             </div>
-            <button
-              onClick={() => setCreateOpen(true)}
-              style={{
-                height: 38,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '0 16px',
-                background: GREEN,
-                color: '#fff',
-                border: 'none',
-                borderRadius: 9,
-                fontWeight: 600,
-                fontSize: 14,
-                cursor: 'pointer',
-                boxShadow: '0 2px 8px rgba(47,180,87,.26)',
-              }}
-            >
-              <span style={{ fontSize: 17, fontWeight: 400, lineHeight: 1 }}>+</span>新建班级
-            </button>
+            {!archived && (
+              <button
+                onClick={() => setCreateOpen(true)}
+                style={{
+                  height: 38,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '0 16px',
+                  background: GREEN,
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: 9,
+                  fontWeight: 600,
+                  fontSize: 14,
+                  cursor: 'pointer',
+                  boxShadow: '0 2px 8px rgba(47,180,87,.26)',
+                }}
+              >
+                <span style={{ fontSize: 17, fontWeight: 400, lineHeight: 1 }}>+</span>新建班级
+              </button>
+            )}
           </div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(312px,1fr))', gap: 15 }}>
-          {list.map((c, ci) => (
+          {view.list.map((c, ci) => (
             <ClassCard key={c.id} c={c} ci={ci} />
           ))}
         </div>
 
-        {list.length === 0 && (
+        {view.list.length === 0 && (
           <div style={{ textAlign: 'center', padding: '64px 20px', color: '#9aa1ac' }}>
-            <div style={{ fontSize: 15, fontWeight: 600, color: '#5b6472', marginBottom: 5 }}>没有匹配的班级</div>
-            <div style={{ fontSize: 13 }}>试试其他关键词，或新建一个班级</div>
+            {archived && view.classCount === 0 ? (
+              <>
+                <div style={{ fontSize: 15, fontWeight: 600, color: '#5b6472', marginBottom: 5 }}>没有已归档的班级</div>
+                <div style={{ fontSize: 13 }}>课上完的班级可在班级详情页「编辑」里归档</div>
+              </>
+            ) : (
+              <>
+                <div style={{ fontSize: 15, fontWeight: 600, color: '#5b6472', marginBottom: 5 }}>没有匹配的班级</div>
+                <div style={{ fontSize: 13 }}>{archived ? '试试其他关键词' : '试试其他关键词，或新建一个班级'}</div>
+              </>
+            )}
           </div>
         )}
       </div>

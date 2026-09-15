@@ -342,6 +342,7 @@ function classListPayload(orgId: string) {
       name: c.name,
       teacherName: teacher?.name ?? '—',
       textbook: c.textbook ?? null,
+      isArchived: c.is_archived === 1, // web 首页/归档页据此前端分流，列表本身不过滤
       studentCount: counts.get(c.id) ?? 0,
       roster: rosterByClass.get(c.id) ?? [],
       lastSession: ls
@@ -415,6 +416,7 @@ function classDetailPayload(id: string) {
     name: c.name,
     notes: c.notes ?? null,
     textbook: c.textbook ?? null,
+    isArchived: c.is_archived === 1,
     homeworkTemplate: c.homework_template ?? null,
     teacherId: c.teacher_id ?? null,
     teacherName: teacher?.name ?? '—',
@@ -1425,7 +1427,7 @@ export function createApp() {
     res.status(201).json(classDetailPayload(id));
   });
 
-  // ---- class basic info (name / 负责老师, full replace) ----
+  // ---- class basic info (name / 负责老师 / 教材 full replace; 归档 optional) ----
   app.put('/api/classes/:id', (req, res) => {
     const teacher = res.locals.teacher;
     if (!classInOrg(req.params.id, teacher.org_id)) return res.status(404).json({ error: 'class not found' });
@@ -1437,7 +1439,11 @@ export function createApp() {
     if (!t || t.org_id !== teacher.org_id) return res.status(400).json({ error: '负责老师不存在或不属于本校' });
     const textbook = bookOr(req.body?.textbook);
     if (textbook === 'invalid') return res.status(400).json({ error: '教材必须是 青少版A/B 或 第一~四册' });
-    updateClassInfo(sqlite, req.params.id, { name, teacherId, textbook });
+    // 不带 isArchived（旧页面）= 保持原归档状态；带了必须是布尔
+    const isArchived = req.body?.isArchived;
+    if (isArchived !== undefined && typeof isArchived !== 'boolean')
+      return res.status(400).json({ error: '归档状态必须是 true 或 false' });
+    updateClassInfo(sqlite, req.params.id, { name, teacherId, textbook, isArchived });
     res.json(classDetailPayload(req.params.id));
   });
 

@@ -42,6 +42,7 @@ export interface ClassListItem {
   name: string;
   teacherName: string;
   textbook: BookKey | null; // 教材 key（lib/homework BOOKS）
+  isArchived: boolean; // 已归档：首页不显示，只在 /classes?is_archived=true（lib/classList）
   studentCount: number;
   roster: string[];
   lastSession: {
@@ -156,6 +157,7 @@ export interface ClassDetail {
   name: string;
   notes: string | null; // 班级资源 — free-form markdown
   textbook: BookKey | null; // 教材 key (structured, 课文复习默认)
+  isArchived: boolean; // 已归档（纯展示标记）
   homeworkTemplate: string | null; // 作业模板 with {lesson_number}/{date}/{class_name} vars
   teacherId: string | null; // 负责老师; null on legacy rows
   teacherName: string;
@@ -518,8 +520,11 @@ export const api = {
   classDetail: (id: string) => get<ClassDetail>(`/api/classes/${id}`),
   createClass: (p: { name: string; teacherId: string; textbook: BookKey | null }) =>
     req<ClassDetail>('POST', '/api/classes', p),
-  updateClassInfo: (classId: string, p: { name: string; teacherId: string; textbook: BookKey | null }) =>
-    req<ClassDetail>('PUT', `/api/classes/${classId}`, p),
+  // isArchived 不传 = 保持原归档状态
+  updateClassInfo: (
+    classId: string,
+    p: { name: string; teacherId: string; textbook: BookKey | null; isArchived?: boolean },
+  ) => req<ClassDetail>('PUT', `/api/classes/${classId}`, p),
   addStudent: (classId: string, name: string) => req<Student>('POST', `/api/classes/${classId}/students`, { name }),
   updateStudent: (id: string, name: string) =>
     req<{ id: string; name: string; status: StudentStatus }>('PUT', `/api/students/${id}`, { name }),

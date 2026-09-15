@@ -14,14 +14,14 @@ server/  Express + TS · Drizzle ORM + SQLite (better-sqlite3)
   src/app.ts    createApp() 含全部路由；server.ts 仅 listen
   tests/        vitest + supertest 集成测试（helpers.ts 的 setupTestApp 用临时库，request.agent 保持 cookie）
 web/     React + Vite + TS · 老师端桌面 Web（管理页 IBM Plex；课堂系 Nunito/Baloo 2）
-  pages/    ClassList / ClassDetail（学生·分组 DnD·班级资源·作业模板·上课记录）/ StudentProfile（成长档案矩阵）/
+  pages/    ClassList（首页 + ?is_archived=true 已归档班级页）/ ClassDetail（学生·分组 DnD·班级资源·作业模板·上课记录）/ StudentProfile（成长档案矩阵）/
             SessionDetail（作业布置·Recap·课堂信息三 tab，结束课堂后落地）/ ClassAttendance（考勤网格）/
             Sessions（org 级课堂列表）/ Teachers（改名，用户名不可改；添加老师、改密只在 Admin）/ Admin（仅管理员：删除班级·添加老师·修改成员密码）/
             Setup（课前配置；?backfill=1 补录过去的课）/
             Classroom（课堂主界面：看板/背书/作业/出勤/调组/班级信息/日志 七视图 + 上节课 popover + 多选批量 + 投屏 zoom）/ Login
   lib/      classroomStore（课堂本地态 reducer + localStorage 持久化 + commit payload）/ session（事件流计分派生）/
             setup / grouping / attendance / profile / homework / lesson / recapCard / recapV3（v3 战报派生：领奖台/组明细/分类统计）/ classroomLog /
-            tags（奖章归一化，与 server 口径一致）/ multiSelect / prevLesson / zoom / admin（删除影响面文案·改密表单校验）/ api（fetch 客户端）
+            tags（奖章归一化，与 server 口径一致）/ multiSelect / prevLesson / zoom / admin（删除影响面文案·改密表单校验）/ classList（首页/归档页按 isArchived 分流·搜索·计数）/ api（fetch 客户端）
 miniapp/ Taro 4 + React（weapp 正式产物 / h5 开发调试；appid wx19490e22f3580fb0；browserslist 锁 chrome60/ios10——微信 CI 不认 ES2020 语法，勿改）
   pages:    index（按身份分流）/ join（?invite= 落地表单）/ recap / bind（老师绑定）/ teacher/{home,classes,class,sessions}
   lib:      api（Bearer 注入；h5 走 :10086 代理）/ wxAuth（ensureLogin + mock 身份）/ flow / recapView
@@ -29,7 +29,7 @@ miniapp/ Taro 4 + React（weapp 正式产物 / h5 开发调试；appid wx19490e2
 
 ## 页面与 API
 
-web 路由：`/`、`/classes/:id`（?tab=students|groups|notes|homework|invite|sessions）、`/classes/:id/students/:sid`、`/classes/:id/sessions/:sid`（?tab=homework|recap|info）、`/classes/:id/attendance`、`/classes/:id/setup`、`/classes/:id/classroom`、`/sessions`、`/teachers`、`/admin`（非管理员渲染无权限空态，顶导也不显示入口）、`/login`。课堂直连判定：本地 store 有该班进行中课堂→恢复（若 URL `?edit_id` 与本地态不符则弹冲突拦截页）；`?edit_id=<sid>`→拉 `GET /sessions/:id` 的 `ledger` 反向还原为可编辑课堂（编辑上课记录）；`?lesson=4&title=...&duration=120`→boot 新课；否则跳 setup。
+web 路由：`/`、`/classes`（同 `/`；`?is_archived=true` = 已归档班级列表）、`/classes/:id`（?tab=students|groups|notes|homework|invite|sessions）、`/classes/:id/students/:sid`、`/classes/:id/sessions/:sid`（?tab=homework|recap|info）、`/classes/:id/attendance`、`/classes/:id/setup`、`/classes/:id/classroom`、`/sessions`、`/teachers`、`/admin`（非管理员渲染无权限空态，顶导也不显示入口）、`/login`。课堂直连判定：本地 store 有该班进行中课堂→恢复（若 URL `?edit_id` 与本地态不符则弹冲突拦截页）；`?edit_id=<sid>`→拉 `GET /sessions/:id` 的 `ledger` 反向还原为可编辑课堂（编辑上课记录）；`?lesson=4&title=...&duration=120`→boot 新课；否则跳 setup。
 
 API 全在 `server/src/app.ts`，除 `/api/health`、`/api/auth/login`、`/api/wx/login` 外均过认证中间件，orgId 取自当前登录者、跨组织一律 404。字段校验细节以代码为准，速览：
 
@@ -111,6 +111,7 @@ localStorage.removeItem('nce.wxToken'); localStorage.removeItem('nce.currentChil
 - **鉴权双轨**：老师 = 无状态签名 cookie（HMAC/`AUTH_SECRET`，dev 有 fallback；生产必须显式设置，缺失启动即 throw）；小程序 = wx Bearer token（subject=wechatAccountId），互不通用。写接口的 teacherId/orgId 取自当前登录者。
 - **管理员**：`teachers.is_admin`（0/1）与 `role`（owner/teacher，仅展示）无关，只由 set-admin CLI / `create-teacher --admin` 授予，页面无法提权。高危操作集中在 `/admin`：删除班级（硬删除级联，同 deleteStudent 口径：`org_tags`、`wechat_accounts`、存储照片不删）、添加老师（一律普通老师，页面不能提权）、修改成员密码；/teachers 只能改名。新增挂靠班级的表时要同步 `deleteClass`——`api.test.ts` admin 用例扫描全部表的 id/引用列做残留断言兜底。
 - **学生状态** `students.status`：active 在读 / suspended 停课 / archived 归档。非 active 不进课前配置、课堂与 session 快照（缺席也不算）；人数口径 = 在读+停课；停课/归档即清默认分组 membership，恢复后需手动拖回组；已绑定家长的历史 recap 不受影响。
+- **班级归档** `classes.is_archived`（0/1，与学生 `status=archived` 无关）：**纯展示标记**，只为让首页班级列表只剩在上的班。编辑班级信息弹窗里勾选；`GET /api/classes` 照常返回全部班级并带 `isArchived`，由 web `lib/classList` 分流到首页（「n 个归档 ›」入口）与 `/classes?is_archived=true`。详情/开课/排班收款/`/sessions` 筛选/小程序老师端列表/admin 一律不做联动，归档班照常可用。`PUT /api/classes/:id` 不带 `isArchived`（旧页面）= 保持原状态，非布尔 400；新建不接收。
 - **账户体系**：student（教学实体）与 wechat_account（微信身份）分离。teacher↔account 走 credentials（bind 页一次绑定）；student↔account 走 `student_wechat_bindings`（N:M）；家长注册只建 `join_requests`（pending 唯一、重复提交覆盖），由老师在小程序关联（回填空字段不覆盖）。邀请 = 一次性 7 天 token（`class_invites`，可并存）。
 - **出勤/作业口径**：commit payload 只有 present/absent；`leave` 只由考勤更正接口产生，读侧一律 `!== 'present'` 视为未到堂；`madeUp` 只进考勤页统计不改当日 recap。作业三态 没交(默认)/完成/需补，缺记录=没交。作业布置文本可在课堂「作业检查」侧栏边上课边写（随 commit 可选字段 `homeworkContent` 落库，仅创建路径），也可课后在 session 详情页 PUT；编辑上课记录不改作业（overwrite 结构性忽略）。
 - **教材 key**：`classes.textbook` / `class_sessions.review_book` 为 TEXT 列，值 `'1'`-`'4'`（新概念第一~四册）或 `starterA`/`starterB`（青少版A/B：15 单元 × 3 课 = 45 课，课文复习下拉显示 Unit · Lesson，`review_lesson` 仍存 1-45 平铺序号）。课数表 `server/src/app.ts` 与 `web/src/lib/homework.ts` 双处镜像；API 另收旧页面的整数 1-4 并归一为字符串；前端下拉值一律过 `parseBook`（勿 `Number()`）。

@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS classes (
   id TEXT PRIMARY KEY, org_id TEXT NOT NULL, name TEXT NOT NULL,
   notes TEXT, teacher_id TEXT,
   textbook TEXT, homework_template TEXT,
+  is_archived INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS class_invites (

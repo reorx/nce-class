@@ -439,6 +439,76 @@ describe('class textbook (教材)', () => {
   });
 });
 
+// 归档 = 纯展示标记：只决定 web 首页班级列表显不显示（前端按 isArchived 分首页/归档页），
+// 列表接口照常返回全部班级，详情/开课/收款等一律不受影响。
+describe('class archive (归档)', () => {
+  const archivedOf = (id: string) => sqlite.prepare(`SELECT is_archived FROM classes WHERE id=?`).get(id) as any;
+
+  it('defaults to not archived; a new class ignores isArchived', async () => {
+    const { agent } = await login();
+    expect((await agent.get('/api/classes/c1')).body.isArchived).toBe(false);
+    const created = await agent.post('/api/classes').send({ name: '新班', isArchived: true });
+    expect(created.status).toBe(201);
+    expect(created.body.isArchived).toBe(false);
+    const list = (await agent.get('/api/classes')).body;
+    expect(list.map((c: any) => c.isArchived)).toEqual([false, false]);
+  });
+
+  it('archives and restores through the class info PUT; still listed and readable while archived', async () => {
+    const { agent } = await login();
+    const res = await agent
+      .put('/api/classes/c1')
+      .send({ name: '三年级A班', teacherId: 't-wangli', textbook: null, isArchived: true });
+    expect(res.status).toBe(200);
+    expect(res.body.isArchived).toBe(true);
+    expect(archivedOf('c1')).toEqual({ is_archived: 1 });
+    expect((await agent.get('/api/classes')).body.find((c: any) => c.id === 'c1')).toMatchObject({
+      isArchived: true,
+      studentCount: 4,
+    });
+    expect((await agent.get('/api/classes/c1')).body.isArchived).toBe(true);
+
+    const back = await agent
+      .put('/api/classes/c1')
+      .send({ name: '三年级A班', teacherId: 't-wangli', textbook: null, isArchived: false });
+    expect(back.status).toBe(200);
+    expect(back.body.isArchived).toBe(false);
+    expect(archivedOf('c1')).toEqual({ is_archived: 0 });
+  });
+
+  it('keeps the archive state when a stale page saves without isArchived', async () => {
+    const { agent } = await login();
+    await agent.put('/api/classes/c1').send({ name: '三年级A班', teacherId: 't-wangli', isArchived: true });
+    const res = await agent
+      .put('/api/classes/c1')
+      .send({ name: '三年级A班(结课)', teacherId: 't-wangli', textbook: '2' });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ name: '三年级A班(结课)', textbook: '2', isArchived: true });
+    expect(archivedOf('c1')).toEqual({ is_archived: 1 });
+  });
+
+  it('rejects a non-boolean isArchived with 400, leaving the class untouched', async () => {
+    const { agent } = await login();
+    for (const bad of [1, 0, 'true', '', null, {}]) {
+      expect(
+        (await agent.put('/api/classes/c1').send({ name: 'X', teacherId: 't-wangli', isArchived: bad })).status,
+      ).toBe(400);
+    }
+    expect(sqlite.prepare(`SELECT name, is_archived FROM classes WHERE id='c1'`).get()).toEqual({
+      name: '三年级A班',
+      is_archived: 0,
+    });
+  });
+
+  it("cannot archive another org's class", async () => {
+    const out = (await login('waiguo')).agent;
+    expect(
+      (await out.put('/api/classes/c1').send({ name: '三年级A班', teacherId: 't-out', isArchived: true })).status,
+    ).toBe(404);
+    expect(archivedOf('c1')).toEqual({ is_archived: 0 });
+  });
+});
+
 describe('class homework template', () => {
   it('saves the template and echoes it in the class detail', async () => {
     const { agent } = await login();

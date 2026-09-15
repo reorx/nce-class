@@ -9,10 +9,12 @@ export interface ClassInfoValues {
   name: string;
   teacherId: string;
   textbook: BookKey | null;
+  /** 归档：initial 传入当前值才显示「归档此班级」开关并随 onSubmit 回传（编辑）；新建不传 */
+  isArchived?: boolean;
 }
 
 /**
- * 班级基本信息表单弹窗（名称/教材/负责老师），新建班级（ClassList）与
+ * 班级基本信息表单弹窗（名称/教材/负责老师，编辑时另有归档开关），新建班级（ClassList）与
  * 编辑班级信息（ClassDetail）共用。onSubmit 由调用方注入（API 调用 + reload +
  * 成功 toast/跳转），成功后弹窗自动关闭，抛错则留在弹窗并提示 errorText。
  */
@@ -44,13 +46,16 @@ export function ClassInfoModal({
   const [name, setName] = useState('');
   const [textbook, setTextbook] = useState('');
   const [teacherId, setTeacherId] = useState('');
+  const [archived, setArchived] = useState(false);
   const [busy, setBusy] = useState(false);
+  const archivable = initial.isArchived !== undefined;
 
   useEffect(() => {
     if (!open) return;
     setName(initial.name);
     setTextbook(initial.textbook ?? '');
     setTeacherId(initial.teacherId);
+    setArchived(initial.isArchived ?? false);
     api
       .teachers()
       .then(setTeachers)
@@ -62,7 +67,12 @@ export function ClassInfoModal({
     if (!name.trim() || !teacherId || busy) return;
     setBusy(true);
     try {
-      await onSubmit({ name: name.trim(), teacherId, textbook: parseBook(textbook) });
+      await onSubmit({
+        name: name.trim(),
+        teacherId,
+        textbook: parseBook(textbook),
+        isArchived: archivable ? archived : undefined,
+      });
       onClose();
     } catch {
       toast(errorText, 'error');
@@ -110,6 +120,34 @@ export function ClassInfoModal({
           </option>
         ))}
       </select>
+      {archivable && (
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 10,
+            marginTop: 16,
+            padding: '11px 13px',
+            border: '1px solid #e2e5ea',
+            borderRadius: 9,
+            background: archived ? '#f4f5f7' : '#fbfcfd',
+            cursor: 'pointer',
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={archived}
+            onChange={(e) => setArchived(e.target.checked)}
+            style={{ width: 15, height: 15, margin: '2px 0 0', accentColor: GREEN, cursor: 'pointer' }}
+          />
+          <span>
+            <span style={{ display: 'block', fontSize: 13.5, fontWeight: 600, color: '#1e2430' }}>归档此班级</span>
+            <span style={{ display: 'block', marginTop: 3, fontSize: 12, lineHeight: 1.5, color: '#9aa1ac' }}>
+              课已上完、学生已解散的班级可归档：首页班级列表不再显示，随时可取消归档
+            </span>
+          </span>
+        </label>
+      )}
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
         <button style={ghostBtn} onClick={onClose} disabled={busy}>
           取消

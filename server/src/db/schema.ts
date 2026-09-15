@@ -60,6 +60,8 @@ export const classes = sqliteTable('classes', {
   textbook: text('textbook'), // 教材 key: '1'-'4' 第一~四册 | 'starterA'/'starterB' 青少版A/B (for 课文复习 defaults)
   homeworkTemplate: text('homework_template'), // 作业模板 — {lesson_number}/{date}/{class_name} vars
   teacherId: text('teacher_id').references(() => teachers.id), // 负责老师
+  // 归档（0/1）：课上完、学生已解散的班级。纯展示标记——只让 web 首页班级列表不再显示，其余功能不受影响。
+  isArchived: integer('is_archived').notNull().default(0),
   createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
 });
 
