@@ -115,6 +115,7 @@ localStorage.removeItem('nce.wxToken'); localStorage.removeItem('nce.currentChil
 - **出勤/作业口径**：commit payload 只有 present/absent；`leave` 只由考勤更正接口产生，读侧一律 `!== 'present'` 视为未到堂；`madeUp` 只进考勤页统计不改当日 recap。作业三态 没交(默认)/完成/需补，缺记录=没交。作业布置文本可在课堂「作业检查」侧栏边上课边写（随 commit 可选字段 `homeworkContent` 落库，仅创建路径），也可课后在 session 详情页 PUT；编辑上课记录不改作业（overwrite 结构性忽略）。
 - **教材 key**：`classes.textbook` / `class_sessions.review_book` 为 TEXT 列，值 `'1'`-`'4'`（新概念第一~四册）或 `starterA`/`starterB`（青少版A/B：15 单元 × 3 课 = 45 课，课文复习下拉显示 Unit · Lesson，`review_lesson` 仍存 1-45 平铺序号）。课数表 `server/src/app.ts` 与 `web/src/lib/homework.ts` 双处镜像；API 另收旧页面的整数 1-4 并归一为字符串；前端下拉值一律过 `parseBook`（勿 `Number()`）。
 - seed 自带 DDL，`db:reset` 无需 drizzle-kit；生产迁移靠 `provision.migrate()` 幂等 ALTER。SQLite 列声明类型须与存值一致，不借类型亲和性混存；要换列类型写真迁移（参考 `provision.ts` 的 `convertColumnToText`：ADD→CAST→DROP→RENAME，按 PRAGMA 类型判断幂等）。相对时间基准 `REFERENCE_TODAY=2026-07-01`（`server/src/util/time.ts`，保 demo 稳定）。三年级A班刻意留重复学生「浩浩」（该班 13 人、全校 86）；疑似重复只提示不合并。
+- **commit message**：首行只写一句简短总结（一屏放得下，别塞细节），空行后用 `-` 列表写详情（改了什么 / 口径与根因 / 测试与验证结果）。⚠️ 别把整篇细节挤进首行——2026-07~09 有 13 个 commit 这么干过（最长首行 2306 字节 ≈ 770 字），已于 2026-09-14 统一重写为本格式。
 - 全局约定：pnpm 装依赖（`pnpm add`，勿手改 package.json）；勿用 try/catch 除非要求；改完代码不跑 formatter/linter。
 
 ## 待做
