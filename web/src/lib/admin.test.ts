@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deleteImpactLines, paidWarning, resetFormValid } from './admin';
+import { addTeacherFormValid, deleteImpactLines, paidWarning, resetFormValid } from './admin';
 import type { AdminClassItem } from './api';
 
 const item = (p: Partial<AdminClassItem> = {}): AdminClassItem => ({
@@ -52,5 +52,15 @@ describe('resetFormValid', () => {
     expect(resetFormValid('12345', 'x')).toBe(false);
     expect(resetFormValid('fresh1', '')).toBe(false);
     expect(resetFormValid('', '')).toBe(false);
+  });
+});
+
+describe('addTeacherFormValid', () => {
+  it('needs a non-blank name and username and a password of at least 6 characters — no admin password', () => {
+    const ok = { name: '李芳', username: 'lifang', password: 'secret' };
+    expect(addTeacherFormValid(ok)).toBe(true);
+    expect(addTeacherFormValid({ ...ok, name: '  ' })).toBe(false);
+    expect(addTeacherFormValid({ ...ok, username: ' ' })).toBe(false);
+    expect(addTeacherFormValid({ ...ok, password: '12345' })).toBe(false);
   });
 });

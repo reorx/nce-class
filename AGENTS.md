@@ -16,7 +16,7 @@ server/  Express + TS · Drizzle ORM + SQLite (better-sqlite3)
 web/     React + Vite + TS · 老师端桌面 Web（管理页 IBM Plex；课堂系 Nunito/Baloo 2）
   pages/    ClassList / ClassDetail（学生·分组 DnD·班级资源·作业模板·上课记录）/ StudentProfile（成长档案矩阵）/
             SessionDetail（作业布置·Recap·课堂信息三 tab，结束课堂后落地）/ ClassAttendance（考勤网格）/
-            Sessions（org 级课堂列表）/ Teachers（添加/改名，用户名不可改，不能改密）/ Admin（仅管理员：删除班级·修改成员密码）/
+            Sessions（org 级课堂列表）/ Teachers（改名，用户名不可改；添加老师、改密只在 Admin）/ Admin（仅管理员：删除班级·添加老师·修改成员密码）/
             Setup（课前配置；?backfill=1 补录过去的课）/
             Classroom（课堂主界面：看板/背书/作业/出勤/调组/班级信息/日志 七视图 + 上节课 popover + 多选批量 + 投屏 zoom）/ Login
   lib/      classroomStore（课堂本地态 reducer + localStorage 持久化 + commit payload）/ session（事件流计分派生）/
@@ -33,8 +33,8 @@ web 路由：`/`、`/classes/:id`（?tab=students|groups|notes|homework|invite|s
 
 API 全在 `server/src/app.ts`，除 `/api/health`、`/api/auth/login`、`/api/wx/login` 外均过认证中间件，orgId 取自当前登录者、跨组织一律 404。字段校验细节以代码为准，速览：
 
-- 管理员 `/api/admin/*`（cookie 会话 + gate：`teacher.is_admin` 每请求随 teacher 行重读，非管理员 403；写操作 body 带 `adminPassword` 同请求复核，错 403）：`GET /admin/classes`（本 org 班级 + 删除影响面计数）、`DELETE /admin/classes/:id`（`mutations.deleteClass` 单事务硬删该班全部挂靠数据）、`PUT /admin/teachers/:id/password`（复用 `provision.resetPassword`）。
-- 老师 cookie 会话：auth（login/logout/me/verify-password；login/me 带 `isAdmin`）、teachers 增 + 改名（body 带非空 password → 403，改密只走 admin）、classes 增改 + students（增删改名改状态）+ groups（整套 replace）+ notes / homework-template（整篇 replace）、`POST /classes/:id/sessions`（结束课堂一次性提交，见下方兼容纪律）、sessions（详情含 `ledger` 还原块 / `PUT /sessions/:id` 部分更新课堂信息 / `PUT /sessions/:id/commit` 覆盖重提交=编辑上课记录 / homework / attendance 更正 / 删除 / recap）、attendance 矩阵、tags（org 奖章库）、join-requests 只读镜像。
+- 管理员 `/api/admin/*`（cookie 会话 + gate：`teacher.is_admin` 每请求随 teacher 行重读，非管理员 403；删除班级、改密 body 带 `adminPassword` 同请求复核，错 403；添加老师只过 gate）：`GET /admin/classes`（本 org 班级 + 删除影响面计数）、`DELETE /admin/classes/:id`（`mutations.deleteClass` 单事务硬删该班全部挂靠数据）、`POST /admin/teachers`（本 org 普通老师，用户名跨 org 唯一否则 409）、`PUT /admin/teachers/:id/password`（复用 `provision.resetPassword`）。
+- 老师 cookie 会话：auth（login/logout/me/verify-password；login/me 带 `isAdmin`）、teachers 列表 + 改名（body 带非空 password → 403；添加老师、改密只走 admin，旧 `POST /teachers` 已删 → 404）、classes 增改 + students（增删改名改状态）+ groups（整套 replace）+ notes / homework-template（整篇 replace）、`POST /classes/:id/sessions`（结束课堂一次性提交，见下方兼容纪律）、sessions（详情含 `ledger` 还原块 / `PUT /sessions/:id` 部分更新课堂信息 / `PUT /sessions/:id/commit` 覆盖重提交=编辑上课记录 / homework / attendance 更正 / 删除 / recap）、attendance 矩阵、tags（org 奖章库）、join-requests 只读镜像。
 - 小程序 `/api/wx/*`（Bearer，与 cookie 互不通用）：me / bind-teacher；老师侧（需已绑 teacher，否则 403）classes/sessions/invites/join-requests 关联与驳回/students；家长侧 invites 预览 + join（只建 join_request）+ upload/photo + students recap（binding 守卫）。
 
 ## 开发与测试
@@ -109,7 +109,7 @@ localStorage.removeItem('nce.wxToken'); localStorage.removeItem('nce.currentChil
 - **课堂本地优先**：整节课跑在浏览器本地（`classroomStore.ts`，localStorage `nce.classroom.<classId>`），仅「结束课堂」一次性 POST，后端单事务落库。幂等键 `client_session_id` 重试不变，重复提交返回既有 sessionId。默认分组回写用**下课态**分组（课中调组持久化到默认分组）。提交前 payload 自动备份到 `nce.classroom.backup.<clientSessionId>`（成功才清，留最新 10 条，可原样重 POST）。补录课堂（backfill）复用同一套，payload 零改动。编辑上课记录（`?edit_id`）同样复用：`GET /sessions/:id` 的 `ledger`（id 维度原始快照：sessionGroups/memberships/逐条 events/checks/tags）经 `buildEditSession` 反向还原为带 `editOfSessionId` 标记的本地课堂（复用同一 `nce.classroom.<classId>` 槽位，故进行中课堂时编辑会被冲突拦截），结束时走 `PUT /sessions/:id/commit`→`overwriteSession` 原地覆盖同一 session（删 5 张子表→UPDATE 保留 id/client_session_id/作业字段→重写 ledger），**不回写默认分组**，并保留已有 leave/补课更正（含其分组座位）。
 - **⚠️ 结束课堂 schema 向后兼容（protobuf 式，不可破坏）**：课堂进行中服务端可能发新版，旧页面 commit payload 必须照常入库。纪律：①服务端永不新增必填字段，新字段一律可选带默认；②不收紧校验、不改名、不改语义；③未知字段静默忽略（`buildCommitInput` 显式挑字段）。web 端 localStorage 的 `ClassroomSession` shape 同理只加可选字段（先例：teacherId/startedAt/tags/backfill/editOfSessionId/endedAt/homeworkContent）。守卫用例在 `server/tests/api.test.ts`「向后/向前兼容」——挂了改契约不改测试。
 - **鉴权双轨**：老师 = 无状态签名 cookie（HMAC/`AUTH_SECRET`，dev 有 fallback；生产必须显式设置，缺失启动即 throw）；小程序 = wx Bearer token（subject=wechatAccountId），互不通用。写接口的 teacherId/orgId 取自当前登录者。
-- **管理员**：`teachers.is_admin`（0/1）与 `role`（owner/teacher，仅展示）无关，只由 set-admin CLI / `create-teacher --admin` 授予，页面无法提权。高危操作集中在 `/admin`：删除班级（硬删除级联，同 deleteStudent 口径：`org_tags`、`wechat_accounts`、存储照片不删）、修改成员密码；/teachers 不再改密。新增挂靠班级的表时要同步 `deleteClass`——`api.test.ts` admin 用例扫描全部表的 id/引用列做残留断言兜底。
+- **管理员**：`teachers.is_admin`（0/1）与 `role`（owner/teacher，仅展示）无关，只由 set-admin CLI / `create-teacher --admin` 授予，页面无法提权。高危操作集中在 `/admin`：删除班级（硬删除级联，同 deleteStudent 口径：`org_tags`、`wechat_accounts`、存储照片不删）、添加老师（一律普通老师，页面不能提权）、修改成员密码；/teachers 只能改名。新增挂靠班级的表时要同步 `deleteClass`——`api.test.ts` admin 用例扫描全部表的 id/引用列做残留断言兜底。
 - **学生状态** `students.status`：active 在读 / suspended 停课 / archived 归档。非 active 不进课前配置、课堂与 session 快照（缺席也不算）；人数口径 = 在读+停课；停课/归档即清默认分组 membership，恢复后需手动拖回组；已绑定家长的历史 recap 不受影响。
 - **账户体系**：student（教学实体）与 wechat_account（微信身份）分离。teacher↔account 走 credentials（bind 页一次绑定）；student↔account 走 `student_wechat_bindings`（N:M）；家长注册只建 `join_requests`（pending 唯一、重复提交覆盖），由老师在小程序关联（回填空字段不覆盖）。邀请 = 一次性 7 天 token（`class_invites`，可并存）。
 - **出勤/作业口径**：commit payload 只有 present/absent；`leave` 只由考勤更正接口产生，读侧一律 `!== 'present'` 视为未到堂；`madeUp` 只进考勤页统计不改当日 recap。作业三态 没交(默认)/完成/需补，缺记录=没交。作业布置文本可在课堂「作业检查」侧栏边上课边写（随 commit 可选字段 `homeworkContent` 落库，仅创建路径），也可课后在 session 详情页 PUT；编辑上课记录不改作业（overwrite 结构性忽略）。

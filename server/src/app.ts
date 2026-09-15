@@ -1373,7 +1373,7 @@ export function createApp() {
     res.json({ ok: true });
   });
 
-  // ---- teachers (同校老师列表 + 管理页添加; 任何登录老师可加/改名，改密只走 /api/admin) ----
+  // ---- teachers (同校老师列表 + 改名; 添加老师与改密只走 /api/admin) ----
   app.get('/api/teachers', (_req, res) => {
     const rows = q.teachersOfOrg.all(res.locals.teacher.org_id) as any[];
     res.json(rows.map((t) => teacherItem(t)));
@@ -1383,17 +1383,6 @@ export function createApp() {
   app.get('/api/tags', (_req, res) => {
     const rows = q.tagsOfOrg.all(res.locals.teacher.org_id) as any[];
     res.json(rows.map((t) => ({ id: t.id, name: t.name })));
-  });
-
-  app.post('/api/teachers', (req, res) => {
-    const name = str(req.body?.name);
-    const username = str(req.body?.username);
-    const password = typeof req.body?.password === 'string' ? req.body.password : '';
-    if (!name || !username) return res.status(400).json({ error: '姓名和用户名必填' });
-    if (password.length < 6) return res.status(400).json({ error: '密码至少 6 位' });
-    if (q.teacherByUsername.get(username)) return res.status(409).json({ error: '用户名已被使用' });
-    const id = createTeacher(sqlite, { orgId: res.locals.teacher.org_id, name, username, password });
-    res.status(201).json(teacherItem(q.teacherById.get(id)));
   });
 
   // ---- teacher 编辑 (仅改名; username immutable, 任何同校老师可改) ----
@@ -2117,11 +2106,12 @@ export function createApp() {
     res.json({ invoiceId: inv.id, studentId: inv.student_id, rows });
   });
 
-  // ---- 管理员 (/admin 高危操作: 删除班级 / 修改成员密码) ----
+  // ---- 管理员 (/admin: 删除班级 / 添加老师 / 修改成员密码) ----
   // Server-enforced — the web gate is presentation only. is_admin is re-read with
   // the teacher row on every request (auth gate above), so a CLI revoke bites on
-  // the very next call even though cookie sessions are stateless. Every write also
-  // re-checks the acting admin's own password inside the same request.
+  // the very next call even though cookie sessions are stateless. The destructive
+  // writes (删除班级 / 改密) also re-check the acting admin's own password inside
+  // the same request; 添加老师 is additive and passes on the gate alone.
   app.use('/api/admin', (_req, res, next) => {
     if (res.locals.teacher.is_admin !== 1) return res.status(403).json({ error: '需要管理员权限' });
     next();
@@ -2157,6 +2147,21 @@ export function createApp() {
     res.json({ ok: true });
   });
 
+  // 添加老师：落在管理员所在 org，role=teacher、非管理员（页面不能提权，管理员只由 CLI 授予）。
+  // body: { name, username, password }；用户名跨 org 全局唯一。
+  app.post('/api/admin/teachers', (req, res) => {
+    const name = str(req.body?.name);
+    const username = str(req.body?.username);
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    if (!name || !username) return res.status(400).json({ error: '姓名和用户名必填' });
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      return res.status(400).json({ error: `密码至少 ${MIN_PASSWORD_LENGTH} 位` });
+    }
+    if (q.teacherByUsername.get(username)) return res.status(409).json({ error: '用户名已被使用' });
+    const id = createTeacher(sqlite, { orgId: res.locals.teacher.org_id, name, username, password });
+    res.status(201).json(teacherItem(q.teacherById.get(id)));
+  });
+
   // 修改成员密码（与 reset-password CLI 同一实现：缺 password credential 行会补建）。
   // body: { password, adminPassword }。已签发的会话不会失效（无状态 cookie）。
   app.put('/api/admin/teachers/:id/password', (req, res) => {
@@ -2184,7 +2189,7 @@ export function createApp() {
   return app;
 }
 
-/** One teacher as the web sees it (GET/POST/PUT /api/teachers; mePayload builds on it). */
+/** One teacher as the web sees it (GET/PUT /api/teachers, POST /api/admin/teachers; mePayload builds on it). */
 function teacherItem(t: any) {
   return { id: t.id, name: t.name, username: t.username, role: t.role, isAdmin: t.is_admin === 1 };
 }

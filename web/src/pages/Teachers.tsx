@@ -1,4 +1,5 @@
 import { useEffect, useState, type CSSProperties } from 'react';
+import { Link } from 'react-router-dom';
 import { Modal } from '../components/Modal';
 import { TopBar } from '../components/TopBar';
 import { useToast } from '../components/Toast';
@@ -7,11 +8,6 @@ import { GREEN, squareAvatarStyle, teacherBadgeStyle } from '../lib/theme';
 
 export function Teachers({ me }: { me: Me | null }) {
   const [teachers, setTeachers] = useState<TeacherItem[]>([]);
-  const [addOpen, setAddOpen] = useState(false);
-  const [name, setName] = useState('');
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<TeacherItem | null>(null);
   const [editName, setEditName] = useState('');
   const [editBusy, setEditBusy] = useState(false);
@@ -27,32 +23,12 @@ export function Teachers({ me }: { me: Me | null }) {
     reload();
   }, []);
 
-  const valid = name.trim() && username.trim() && password.length >= 6;
-
-  async function submitAdd() {
-    if (!valid || busy) return;
-    setBusy(true);
-    try {
-      await api.createTeacher(name.trim(), username.trim(), password);
-      await reload();
-      toast(`已添加「${name.trim()}」`);
-      setAddOpen(false);
-      setName('');
-      setUsername('');
-      setPassword('');
-    } catch (e) {
-      toast(e instanceof ApiError ? e.message : '添加失败，请重试', 'error');
-    } finally {
-      setBusy(false);
-    }
-  }
-
   function openEdit(t: TeacherItem) {
     setEditing(t);
     setEditName(t.name);
   }
 
-  // 只改姓名（必填）；改密只在 /admin（管理员）。
+  // 只改姓名（必填）；添加老师、改密只在 /admin（管理员）。
   const editValid = editName.trim().length > 0;
 
   async function submitEdit() {
@@ -74,34 +50,21 @@ export function Teachers({ me }: { me: Me | null }) {
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       <TopBar me={me} active="teachers" />
       <div style={{ flex: 1, width: '100%', maxWidth: 1140, margin: '0 auto', padding: '30px 26px 64px' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 16, marginBottom: 22, flexWrap: 'wrap' }}>
-          <div>
-            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, letterSpacing: '-.3px' }}>老师</h1>
-            <div style={{ marginTop: 6, fontSize: 13.5, color: '#7a828f' }}>
-              {teachers.length} 位老师 · 同校老师共享班级与学生 · 修改密码请联系管理员
-            </div>
+        <div style={{ marginBottom: 22 }}>
+          <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, letterSpacing: '-.3px' }}>老师</h1>
+          <div style={{ marginTop: 6, fontSize: 13.5, color: '#7a828f' }}>
+            {teachers.length} 位老师 · 同校老师共享班级与学生 ·{' '}
+            {me?.isAdmin ? (
+              <>
+                添加老师、修改密码请到
+                <Link to="/admin" style={{ color: GREEN, fontWeight: 600, textDecoration: 'none' }}>
+                  管理页
+                </Link>
+              </>
+            ) : (
+              '添加老师、修改密码请联系管理员'
+            )}
           </div>
-          <button
-            onClick={() => setAddOpen(true)}
-            style={{
-              marginLeft: 'auto',
-              height: 38,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              padding: '0 16px',
-              background: GREEN,
-              color: '#fff',
-              border: 'none',
-              borderRadius: 9,
-              fontWeight: 600,
-              fontSize: 14,
-              cursor: 'pointer',
-              boxShadow: '0 2px 8px rgba(47,180,87,.26)',
-            }}
-          >
-            <span style={{ fontSize: 17, fontWeight: 400, lineHeight: 1 }}>+</span>添加老师
-          </button>
         </div>
 
         <div style={{ background: '#fff', border: '1px solid #e7e9ee', borderRadius: 13, overflow: 'hidden' }}>
@@ -156,71 +119,6 @@ export function Teachers({ me }: { me: Me | null }) {
           )}
         </div>
       </div>
-
-      <Modal open={addOpen} onClose={() => setAddOpen(false)} title="添加老师">
-        <label style={labelStyle}>姓名</label>
-        <input
-          value={name}
-          autoFocus
-          onChange={(e) => setName(e.target.value)}
-          placeholder="如 李芳"
-          style={fieldStyle}
-        />
-        <label style={{ ...labelStyle, marginTop: 15 }}>用户名</label>
-        <input
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          placeholder="如 lifang，用于登录"
-          style={fieldStyle}
-        />
-        <label style={{ ...labelStyle, marginTop: 15 }}>密码</label>
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && submitAdd()}
-          placeholder="至少 6 位"
-          style={fieldStyle}
-        />
-        <div style={{ marginTop: 8, fontSize: 12, color: '#9aa1ac' }}>
-          告知对方用户名和密码即可登录；未来将改为微信邀请。
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 22 }}>
-          <button
-            style={{
-              height: 40,
-              padding: '0 18px',
-              background: '#fff',
-              color: '#5b6472',
-              border: '1px solid #e2e5ea',
-              borderRadius: 9,
-              fontWeight: 600,
-              fontSize: 14,
-              cursor: 'pointer',
-            }}
-            onClick={() => setAddOpen(false)}
-          >
-            取消
-          </button>
-          <button
-            style={{
-              height: 40,
-              padding: '0 18px',
-              background: GREEN,
-              color: '#fff',
-              border: 'none',
-              borderRadius: 9,
-              fontWeight: 600,
-              fontSize: 14,
-              cursor: 'pointer',
-              opacity: valid && !busy ? 1 : 0.55,
-            }}
-            onClick={submitAdd}
-          >
-            {busy ? '添加中…' : '添加老师'}
-          </button>
-        </div>
-      </Modal>
 
       <Modal open={editing != null} onClose={() => setEditing(null)} title="编辑老师">
         <label style={labelStyle}>姓名</label>

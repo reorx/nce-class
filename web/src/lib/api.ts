@@ -504,12 +504,12 @@ export const api = {
   verifyPassword: (password: string) => req<{ ok: true }>('POST', '/api/auth/verify-password', { password }),
   teachers: () => get<TeacherItem[]>('/api/teachers'),
   orgTags: () => get<TagItem[]>('/api/tags'),
-  createTeacher: (name: string, username: string, password: string) =>
-    req<TeacherItem>('POST', '/api/teachers', { name, username, password }),
-  // 仅改名（username 不可改）；改密只在 /admin 或 reset-password CLI，带密码会被 403。
+  // 仅改名（username 不可改）；添加老师、改密只在 /admin（改密另有 reset-password CLI），带密码会被 403。
   updateTeacher: (id: string, p: { name: string }) => req<TeacherItem>('PUT', `/api/teachers/${id}`, p),
-  // 管理员（/admin）：服务端按 is_admin 强制鉴权；高危写操作同请求复核管理员自己的密码（错误 → 403）。
+  // 管理员（/admin）：服务端按 is_admin 强制鉴权；删除班级、改密同请求复核管理员自己的密码（错误 → 403），添加老师只过 gate。
   adminClasses: () => get<AdminClassItem[]>('/api/admin/classes'),
+  adminCreateTeacher: (p: { name: string; username: string; password: string }) =>
+    req<TeacherItem>('POST', '/api/admin/teachers', p),
   adminDeleteClass: (classId: string, adminPassword: string) =>
     req<{ ok: true }>('DELETE', `/api/admin/classes/${classId}`, { adminPassword }),
   adminResetPassword: (teacherId: string, password: string, adminPassword: string) =>

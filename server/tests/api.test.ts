@@ -20,6 +20,11 @@ async function login(username = 'wangli', password = 'demo1234') {
   return { agent, res };
 }
 
+/** 添加老师 via POST /api/admin/teachers as `agent` (an admin); defaults to 李芳, never an admin. */
+function addTeacher(agent: request.Agent, p = { name: '李芳', username: 'lifang', password: 'secret66' }) {
+  return agent.post('/api/admin/teachers').send(p);
+}
+
 describe('auth', () => {
   it('logs in with the seeded password and returns the teacher', async () => {
     const { res } = await login();
@@ -37,7 +42,7 @@ describe('auth', () => {
   it('carries isAdmin on login and /api/me: true for the admin, false for a regular teacher', async () => {
     const { agent } = await login();
     expect((await agent.get('/api/me')).body.isAdmin).toBe(true);
-    await agent.post('/api/teachers').send({ name: '李芳', username: 'lifang', password: 'secret66' });
+    await addTeacher(agent);
     const lifang = await login('lifang', 'secret66');
     expect(lifang.res.body.isAdmin).toBe(false);
     expect((await lifang.agent.get('/api/me')).body.isAdmin).toBe(false);
@@ -104,59 +109,21 @@ describe('teachers', () => {
     expect(res.body).toEqual([{ id: 't-wangli', name: '王莉', username: 'wangli', role: 'owner', isAdmin: true }]);
   });
 
-  it('creates a teacher who can log in immediately', async () => {
+  it('no longer adds teachers here: POST /api/teachers is gone (404) for admins and non-admins alike', async () => {
     const { agent } = await login();
-    const created = await agent.post('/api/teachers').send({ name: '李芳', username: 'lifang', password: 'secret66' });
-    expect(created.status).toBe(201);
-    expect(created.body).toMatchObject({ name: '李芳', username: 'lifang', role: 'teacher', isAdmin: false });
-
-    // shows up in the list, pinned to the creator's org
-    const list = (await agent.get('/api/teachers')).body;
-    expect(list.map((t: any) => t.username)).toEqual(['wangli', 'lifang']);
-    const row = sqlite.prepare(`SELECT org_id FROM teachers WHERE username='lifang'`).get() as any;
-    expect(row.org_id).toBe('org-1');
-
-    // the new account works right away
-    const { res } = await login('lifang', 'secret66');
-    expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ name: '李芳', role: 'teacher' });
-  });
-
-  it('rejects a duplicate username with 409, even across orgs', async () => {
-    const { agent } = await login();
-    const sameOrg = await agent
-      .post('/api/teachers')
-      .send({ name: '假王莉', username: 'wangli', password: 'secret66' });
-    expect(sameOrg.status).toBe(409);
-    // 'waiguo' lives in org-2; usernames are globally unique
-    const crossOrg = await agent
-      .post('/api/teachers')
-      .send({ name: '假外老师', username: 'waiguo', password: 'secret66' });
-    expect(crossOrg.status).toBe(409);
-  });
-
-  it('rejects blank fields and short passwords with 400', async () => {
-    const { agent } = await login();
-    expect((await agent.post('/api/teachers').send({ name: ' ', username: 'x1', password: 'secret66' })).status).toBe(
-      400,
-    );
-    expect((await agent.post('/api/teachers').send({ name: '李芳', username: ' ', password: 'secret66' })).status).toBe(
-      400,
-    );
     expect(
-      (await agent.post('/api/teachers').send({ name: '李芳', username: 'lifang', password: '12345' })).status,
-    ).toBe(400);
-    // nothing was created
-    const c = sqlite.prepare(`SELECT COUNT(*) c FROM teachers`).get() as any;
-    expect(c.c).toBe(2);
+      (await agent.post('/api/teachers').send({ name: '张三', username: 'zhangsan', password: 'secret66' })).status,
+    ).toBe(404);
+    expect((await addTeacher(agent)).status).toBe(201); // 添加只走 /api/admin/teachers
+    const lifang = (await login('lifang', 'secret66')).agent;
+    expect(
+      (await lifang.post('/api/teachers').send({ name: '张三', username: 'zhangsan', password: 'secret66' })).status,
+    ).toBe(404);
+    expect(sqlite.prepare(`SELECT id FROM teachers WHERE username='zhangsan'`).get()).toBeUndefined();
   });
 
   it('blocks unauthenticated access with 401', async () => {
     expect((await request(app).get('/api/teachers')).status).toBe(401);
-    expect(
-      (await request(app).post('/api/teachers').send({ name: '李芳', username: 'lifang', password: 'secret66' }))
-        .status,
-    ).toBe(401);
   });
 
   it('renames a teacher without touching the username or password', async () => {
@@ -312,7 +279,7 @@ describe('class creation', () => {
 
   it('accepts an explicit 负责老师, rejecting unknown or cross-org ones with 400', async () => {
     const { agent } = await login();
-    const t2 = await agent.post('/api/teachers').send({ name: '李芳', username: 'lifang', password: 'secret66' });
+    const t2 = await addTeacher(agent);
     const created = await agent.post('/api/classes').send({ name: '五年级D班', teacherId: t2.body.id });
     expect(created.status).toBe(201);
     expect(created.body).toMatchObject({ teacherId: t2.body.id, teacherName: '李芳' });
@@ -325,7 +292,7 @@ describe('class creation', () => {
 describe('class info update', () => {
   it('updates name and 负责老师, echoing the new detail', async () => {
     const { agent } = await login();
-    const created = await agent.post('/api/teachers').send({ name: '李芳', username: 'lifang', password: 'secret66' });
+    const created = await addTeacher(agent);
     const res = await agent.put('/api/classes/c1').send({ name: '三年级B班', teacherId: created.body.id });
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
@@ -1233,7 +1200,7 @@ describe('session info edit (课堂信息 tab: 课次/课题/主讲老师)', () 
 
   it('updates 课次/课题/主讲老师/开始时间 in one PUT and echoes the detail payload', async () => {
     const { agent } = await login();
-    await agent.post('/api/teachers').send({ name: '李芳', username: 'lifang', password: 'secret66' });
+    await addTeacher(agent);
     const tid = (sqlite.prepare(`SELECT id FROM teachers WHERE username='lifang'`).get() as any).id;
     const res = await agent.put('/api/sessions/sess1').send({
       lessonNumber: 9,
@@ -1452,7 +1419,7 @@ describe('end-class commit', () => {
 
   it('stores the chosen 主讲老师 when a same-org teacherId is sent', async () => {
     const { agent } = await login();
-    await agent.post('/api/teachers').send({ name: '李芳', username: 'lifang', password: 'secret66' });
+    await addTeacher(agent);
     const tid = (sqlite.prepare(`SELECT id FROM teachers WHERE username='lifang'`).get() as any).id;
     const res = await agent.post('/api/classes/c1/sessions').send(body({ clientSessionId: 'cs-t1', teacherId: tid }));
     expect(res.status).toBe(201);
@@ -2177,7 +2144,7 @@ describe('admin (/api/admin/*)', () => {
   /** 李芳: a same-org teacher created through the API — never an admin. */
   async function nonAdmin() {
     const { agent } = await login();
-    const created = await agent.post('/api/teachers').send({ name: '李芳', username: 'lifang', password: 'secret66' });
+    const created = await addTeacher(agent);
     expect(created.status).toBe(201);
     return { id: created.body.id as string, agent: (await login('lifang', 'secret66')).agent };
   }
@@ -2274,6 +2241,13 @@ describe('admin (/api/admin/*)', () => {
           .send({ password: 'hacked-1', adminPassword: 'demo1234' })
       ).status,
     ).toBe(401);
+    expect(
+      (
+        await request(app)
+          .post('/api/admin/teachers')
+          .send({ name: '张三', username: 'zhangsan', password: 'secret66' })
+      ).status,
+    ).toBe(401);
 
     const { agent } = await nonAdmin();
     const list = await agent.get('/api/admin/classes');
@@ -2288,7 +2262,11 @@ describe('admin (/api/admin/*)', () => {
           .send({ password: 'hacked-1', adminPassword: 'secret66' })
       ).status,
     ).toBe(403);
+    const add = await addTeacher(agent, { name: '张三', username: 'zhangsan', password: 'secret66' });
+    expect(add.status).toBe(403);
+    expect(add.body.error).toBe('需要管理员权限');
     expect(sqlite.prepare(`SELECT id FROM classes WHERE id='c1'`).get()).toBeTruthy();
+    expect(sqlite.prepare(`SELECT id FROM teachers WHERE username='zhangsan'`).get()).toBeUndefined();
     expect((await login('wangli', 'demo1234')).res.status).toBe(200);
   });
 
@@ -2297,6 +2275,7 @@ describe('admin (/api/admin/*)', () => {
     expect((await agent.get('/api/admin/classes')).status).toBe(200);
     sqlite.prepare(`UPDATE teachers SET is_admin=0 WHERE id='t-wangli'`).run();
     expect((await agent.get('/api/admin/classes')).status).toBe(403);
+    expect((await addTeacher(agent)).status).toBe(403);
     expect((await agent.get('/api/me')).body.isAdmin).toBe(false);
   });
 
@@ -2438,5 +2417,43 @@ describe('admin (/api/admin/*)', () => {
     // nothing changed
     expect((await login('lifang', 'secret66')).res.status).toBe(200);
     expect((await login('waiguo', 'demo1234')).res.status).toBe(200);
+  });
+
+  it('adds a same-org teacher who can log in immediately — gate only, no admin password asked', async () => {
+    const { agent } = await login();
+    const created = await addTeacher(agent); // body carries no adminPassword
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({ name: '李芳', username: 'lifang', role: 'teacher', isAdmin: false });
+
+    // shows up in the list, pinned to the admin's org, never an admin
+    const list = (await agent.get('/api/teachers')).body;
+    expect(list.map((t: any) => t.username)).toEqual(['wangli', 'lifang']);
+    const row = sqlite.prepare(`SELECT org_id, role, is_admin FROM teachers WHERE username='lifang'`).get() as any;
+    expect(row).toEqual({ org_id: 'org-1', role: 'teacher', is_admin: 0 });
+
+    // the new account works right away
+    const { res } = await login('lifang', 'secret66');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ name: '李芳', role: 'teacher', isAdmin: false });
+  });
+
+  it('rejects a duplicate username with 409, even across orgs', async () => {
+    const { agent } = await login();
+    const sameOrg = await addTeacher(agent, { name: '假王莉', username: 'wangli', password: 'secret66' });
+    expect(sameOrg.status).toBe(409);
+    expect(sameOrg.body.error).toBe('用户名已被使用');
+    // 'waiguo' lives in org-2; usernames are globally unique
+    expect((await addTeacher(agent, { name: '假外老师', username: 'waiguo', password: 'secret66' })).status).toBe(409);
+    expect((sqlite.prepare(`SELECT COUNT(*) c FROM teachers`).get() as any).c).toBe(2);
+  });
+
+  it('rejects blank fields and short passwords with 400, creating nothing', async () => {
+    const { agent } = await login();
+    expect((await addTeacher(agent, { name: ' ', username: 'x1', password: 'secret66' })).status).toBe(400);
+    expect((await addTeacher(agent, { name: '李芳', username: ' ', password: 'secret66' })).status).toBe(400);
+    const short = await addTeacher(agent, { name: '李芳', username: 'lifang', password: '12345' });
+    expect(short.status).toBe(400);
+    expect(short.body.error).toBe('密码至少 6 位');
+    expect((sqlite.prepare(`SELECT COUNT(*) c FROM teachers`).get() as any).c).toBe(2);
   });
 });

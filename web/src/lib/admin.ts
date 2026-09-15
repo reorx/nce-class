@@ -1,4 +1,4 @@
-// /admin 管理页的纯派生逻辑：删除班级弹窗的影响面文案 + 修改成员密码表单校验。
+// /admin 管理页的纯派生逻辑：删除班级弹窗的影响面文案 + 修改成员密码 / 添加老师表单校验。
 import type { AdminClassItem } from './api';
 import { fmtMoney } from './money';
 
@@ -24,4 +24,9 @@ export function paidWarning(item: AdminClassItem): string | null {
 /** 修改成员密码表单：新密码至少 6 位，且已输入管理员自己的密码。 */
 export function resetFormValid(password: string, adminPassword: string): boolean {
   return password.length >= MIN_PASSWORD_LENGTH && adminPassword.length > 0;
+}
+
+/** 添加老师表单：姓名、用户名非空，初始密码至少 6 位（不复核管理员密码）。 */
+export function addTeacherFormValid(p: { name: string; username: string; password: string }): boolean {
+  return p.name.trim().length > 0 && p.username.trim().length > 0 && p.password.length >= MIN_PASSWORD_LENGTH;
 }

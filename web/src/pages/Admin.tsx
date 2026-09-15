@@ -1,8 +1,8 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { Modal } from '../components/Modal';
 import { useToast } from '../components/Toast';
 import { TopBar } from '../components/TopBar';
-import { deleteImpactLines, paidWarning, resetFormValid } from '../lib/admin';
+import { addTeacherFormValid, deleteImpactLines, paidWarning, resetFormValid } from '../lib/admin';
 import { api, ApiError, type AdminClassItem, type Me, type TeacherItem } from '../lib/api';
 import { clearSession } from '../lib/classroomStore';
 import { fmtMoney } from '../lib/money';
@@ -10,7 +10,7 @@ import { GREEN, squareAvatarStyle, teacherBadgeStyle } from '../lib/theme';
 
 const RED = '#d94a4a';
 
-// 管理页：删除班级 / 修改成员密码。/api/admin/* 由服务端按 is_admin 强制鉴权，
+// 管理页：删除班级 / 添加老师 / 修改成员密码。/api/admin/* 由服务端按 is_admin 强制鉴权，
 // 这里的门禁只是展示层（非管理员不发请求，直接显示无权限）。
 export function Admin({ me }: { me: Me | null }) {
   return (
@@ -39,6 +39,7 @@ function AdminPanel({ me }: { me: Me }) {
   const [teachers, setTeachers] = useState<TeacherItem[]>([]);
   const [deleting, setDeleting] = useState<AdminClassItem | null>(null);
   const [resetting, setResetting] = useState<TeacherItem | null>(null);
+  const [adding, setAdding] = useState(false);
 
   const reloadClasses = () =>
     api
@@ -46,12 +47,15 @@ function AdminPanel({ me }: { me: Me }) {
       .then(setClasses)
       .catch((e) => toast(e instanceof ApiError ? e.message : '班级加载失败', 'error'));
 
-  useEffect(() => {
-    reloadClasses();
+  const reloadTeachers = () =>
     api
       .teachers()
       .then(setTeachers)
       .catch(() => toast('老师加载失败', 'error'));
+
+  useEffect(() => {
+    reloadClasses();
+    reloadTeachers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -59,7 +63,7 @@ function AdminPanel({ me }: { me: Me }) {
     <>
       <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, letterSpacing: '-.3px' }}>管理</h1>
       <div style={{ marginTop: 6, fontSize: 13.5, color: '#7a828f' }}>
-        高危操作，仅管理员可见 · 每次操作都要再输入一次你的登录密码
+        仅管理员可见 · 删除班级、修改密码需再输入一次你的登录密码
       </div>
 
       <SectionHead title="删除班级" hint="连同该班学生、上课记录、排班与收款数据一并永久删除，无法恢复" />
@@ -103,7 +107,18 @@ function AdminPanel({ me }: { me: Me }) {
         {classes?.length === 0 && <div style={emptyStyle}>没有班级</div>}
       </div>
 
-      <SectionHead title="修改成员密码" hint="为忘记密码的老师设置新密码，设置后请告知对方" />
+      <SectionHead
+        title="成员账号"
+        hint="添加老师 · 为忘记密码的老师设置新密码，设置后请告知对方"
+        action={
+          <button
+            style={{ ...smallBtn, background: GREEN, color: '#fff', borderColor: GREEN }}
+            onClick={() => setAdding(true)}
+          >
+            + 添加老师
+          </button>
+        }
+      />
       <div style={card}>
         {teachers.map((t, i) => (
           <div
@@ -145,15 +160,25 @@ function AdminPanel({ me }: { me: Me }) {
         />
       )}
       {resetting && <ResetPasswordModal teacher={resetting} onClose={() => setResetting(null)} />}
+      {adding && (
+        <AddTeacherModal
+          onClose={() => setAdding(false)}
+          onCreated={() => {
+            setAdding(false);
+            reloadTeachers();
+          }}
+        />
+      )}
     </>
   );
 }
 
-function SectionHead({ title, hint }: { title: string; hint: string }) {
+function SectionHead({ title, hint, action }: { title: string; hint: string; action?: ReactNode }) {
   return (
     <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', margin: '30px 0 12px' }}>
       <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#1e2430' }}>{title}</h2>
       <span style={{ fontSize: 12.5, color: '#9aa1ac' }}>{hint}</span>
+      {action && <div style={{ marginLeft: 'auto', alignSelf: 'center' }}>{action}</div>}
     </div>
   );
 }
@@ -226,6 +251,78 @@ function DeleteClassModal({
           onClick={submit}
         >
           {busy ? '删除中…' : '永久删除'}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+// 添加的一律是普通老师（role=teacher、非管理员）；只过管理员 gate，不复核管理员密码。
+function AddTeacherModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const toast = useToast();
+  const [name, setName] = useState('');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const valid = addTeacherFormValid({ name, username, password });
+
+  async function submit() {
+    if (!valid || busy) return;
+    setBusy(true);
+    try {
+      const t = await api.adminCreateTeacher({ name: name.trim(), username: username.trim(), password });
+      toast(`已添加「${t.name}」，请告知对方用户名和密码`);
+      onCreated();
+    } catch (e) {
+      // 400 / 409（用户名已被使用）/ 403（权限刚被撤销）都直接用服务端文案
+      toast(e instanceof ApiError ? e.message : '添加失败，请重试', 'error');
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal open onClose={onClose} title="添加老师">
+      <label style={labelStyle}>姓名</label>
+      <input
+        autoFocus
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder="如 李芳"
+        style={fieldStyle}
+      />
+      <label style={{ ...labelStyle, marginTop: 15 }}>用户名</label>
+      <input
+        autoComplete="off"
+        spellCheck={false}
+        className="mono"
+        value={username}
+        onChange={(e) => setUsername(e.target.value)}
+        placeholder="如 lifang，用于登录，添加后不可修改"
+        style={fieldStyle}
+      />
+      <label style={{ ...labelStyle, marginTop: 15 }}>初始密码</label>
+      <input
+        autoComplete="off"
+        spellCheck={false}
+        className="mono"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && submit()}
+        placeholder="至少 6 位"
+        style={fieldStyle}
+      />
+      <div style={{ marginTop: 5, fontSize: 12, color: '#9aa1ac' }}>
+        明文显示，方便转告。对方用用户名和密码即可登录；添加的是普通老师，不含管理员权限。
+      </div>
+      <div style={footerStyle}>
+        <button style={cancelBtn} onClick={onClose}>
+          取消
+        </button>
+        <button
+          style={{ ...modalBtn, background: GREEN, color: '#fff', opacity: valid && !busy ? 1 : 0.55 }}
+          onClick={submit}
+        >
+          {busy ? '添加中…' : '添加老师'}
         </button>
       </div>
     </Modal>
