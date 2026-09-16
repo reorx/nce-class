@@ -55,7 +55,7 @@ pnpm --filter server exec tsc --noEmit # 类型检查（web/miniapp 同理）
 - ⚠️ 端口 5173/5177 常被邻近项目 tenderbuddy 占用或混淆；清理前先 `lsof -nP -iTCP:5177 -sTCP:LISTEN` 确认进程 cwd，勿误杀。web 可 `pnpm --filter web exec vite --port 5180`。
 - 新增写接口 **先加测试用例再实现**（TDD）。
 
-**部署**：push master → GitHub Actions（`.github/workflows/deploy.yml`）build 镜像（server + web/dist 同一镜像）push 到 ghcr → 用 digest 调服务器部署 webhook（repo Secrets：`WEBHOOK_SECRET` + `WEBHOOK_URL`，含路径的完整 URL）。服务器侧 compose / 部署脚本 / Caddy 路由由 deploy 工作区的 Ansible 管理（容器只跑 API，web 静态从镜像拷到 webdist 由宿主机 Caddy serve）；`.env` 变量名 SSOT = 仓库根 `.env.example`，真值服务器手填。weapp 上传**不走 CI**：本地 `pnpm --filter miniapp upload:weapp`（生产 API 域名由 gitignored `miniapp/.env.production.local` 的 `TARO_APP_API_BASE` 构建时注入，缺失即构建报错；需 nvm node24）。`pnpm --filter server db:migrate` 幂等 DDL（server 启动也自动跑，部署无需手动迁移）；干净库开账号用 `pnpm --filter server create-teacher`；忘记密码（无需登录）用 `pnpm --filter server reset-password -- --username <登录名>`：新密码交互输入两次不回显（也接受管道两行），不带/带错 username 时列出库里全部用户名；生产在容器内 `docker compose exec app pnpm --filter server reset-password -- --username <登录名>`（远程要 `ssh -t`）。管理员只能用 CLI 授予/撤销：`pnpm --filter server set-admin -- --username <登录名> [--revoke]`（不带/带错 username 列出全部用户名及 `[admin]` 标记，对方下一次请求即生效）；干净库开首个账号可 `create-teacher ... --admin` 一步到位。⚠️ `is_admin` 迁移不回填，旧库升级后**没有任何管理员**，需手动 set-admin。⚠️ 会话是无状态签名 cookie，改密（CLI 或 /admin）不吊销已签发的会话，怀疑泄露需轮换 `AUTH_SECRET`。
+**部署**：push master → GitHub Actions（`.github/workflows/deploy.yml`）build 镜像（server + web/dist 同一镜像）push 到 ghcr → 用 digest 调服务器部署 webhook（repo Secrets：`WEBHOOK_SECRET` + `WEBHOOK_URL`，含路径的完整 URL）。服务器侧 compose / 部署脚本 / Caddy 路由由 deploy 工作区的 Ansible 管理（容器只跑 API，web 静态从镜像拷到 webdist 由宿主机 Caddy serve）；`.env` 变量名 SSOT = 仓库根 `.env.example`，真值服务器手填。weapp 上传**不走 CI**：本地 `pnpm --filter miniapp upload:weapp`（生产 API 域名由 gitignored `miniapp/.env.production.local` 的 `TARO_APP_API_BASE` 构建时注入，缺失即构建报错；node 25 跑不了 miniprogram-ci，用 `mise x node@24 -- pnpm --filter miniapp upload:weapp`）。`pnpm --filter server db:migrate` 幂等 DDL（server 启动也自动跑，部署无需手动迁移）；干净库开账号用 `pnpm --filter server create-teacher`；忘记密码（无需登录）用 `pnpm --filter server reset-password -- --username <登录名>`：新密码交互输入两次不回显（也接受管道两行），不带/带错 username 时列出库里全部用户名；生产在容器内 `docker compose exec app pnpm --filter server reset-password -- --username <登录名>`（远程要 `ssh -t`）。管理员只能用 CLI 授予/撤销：`pnpm --filter server set-admin -- --username <登录名> [--revoke]`（不带/带错 username 列出全部用户名及 `[admin]` 标记，对方下一次请求即生效）；干净库开首个账号可 `create-teacher ... --admin` 一步到位。⚠️ `is_admin` 迁移不回填，旧库升级后**没有任何管理员**，需手动 set-admin。⚠️ 会话是无状态签名 cookie，改密（CLI 或 /admin）不吊销已签发的会话，怀疑泄露需轮换 `AUTH_SECRET`。
 
 ## 验证套路
 
@@ -97,7 +97,7 @@ localStorage.removeItem('nce.wxToken'); localStorage.removeItem('nce.currentChil
 **微信开发者工具（weapp 人工验证）**：h5 只是开发替身，改过分享/授权/原生组件要在工具里过一遍。要点：
 - `pnpm --filter miniapp dev:weapp` watch 编译后 `/Applications/wechatwebdevtools.app/Contents/MacOS/cli open --project <repo>/miniapp`（导入 miniapp/ 不是 dist/；需先在工具里扫码登录并打开「服务端口」设置）。
 - 模拟器 mock 登录：Console 里 `wx.setStorageSync('nce.mockUser','dev-teacher')` + `wx.removeStorageSync('nce.wxToken')` 后点「编译」。
-- 真机预览/上传走 miniprogram-ci：`pnpm --filter miniapp preview:weapp / upload:weapp`。坑：①密钥在 gitignored `tmp/private.<appid>.key`；②node 25 跑不了，要 nvm node24 前缀 PATH。preview 打的是正式构建（直连生产）。
+- 真机预览/上传走 miniprogram-ci：`pnpm --filter miniapp preview:weapp / upload:weapp`。坑：①密钥在 gitignored `tmp/private.<appid>.key`；②node 25 跑不了，用 `mise x node@24 -- pnpm --filter miniapp <script>`。preview 打的是正式构建（直连生产）。
 
 ## 文档
 
@@ -121,6 +121,6 @@ localStorage.removeItem('nce.wxToken'); localStorage.removeItem('nce.currentChil
 
 ## 待做
 
-- **小程序上线**：链路已通（appid/生产凭据/域名/体验版/真机绑定均 ✅），唯一阻塞 = 小程序年度认证（个人主体，未认证禁分享）→ 认证后真机过邀请全流程 → 提审发布。清单见 `kb/notes/2026-07-04-miniapp-invite-launch-gaps.md`。
+- **小程序上线**：年度认证已通过（2026-09-16），0.2.0 已上传（邀请版，不含 recap 分享）。剩余人工：mp 后台设体验版 → 真机过邀请全流程（分享卡片/选图/关联）→ 提审发布。清单与验收步骤见 `kb/notes/2026-07-04-miniapp-invite-launch-gaps.md`。
 - **recap 分享到微信群 + 课后处理**：plan 已写好待实现，见 `kb/plans/2026-07-04-nce-class-recap-wechat-share.md`。
 - 不做（M1）：投屏实时多端同步、已 dismissed/linked 队列历史界面、wx.getPhoneNumber（需企业认证，手机号手填）。

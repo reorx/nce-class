@@ -13,6 +13,8 @@ tags:
 > 结论（2026-07-04 排查）：邀请学生加入班级的**功能代码已是完成态**——生成邀请（`useShareAppMessage` 分享卡片）→ join 页表单 → join_request 队列 → 老师关联，h5 三角色端到端已验证（见 [[2026-07-02-nce-class-wechat-account-invite]]）。剩下的全是「从 mock 到真微信」的壳，按依赖顺序列出。
 >
 > 生产后端已就绪：`https://service.domain/api/health` 返回 200（2026-07-04 验证）。
+>
+> **2026-09-16 更新**：小程序年度认证与备案均已通过，合规面无阻碍。走「先发邀请版」路线：**0.2.0 已上传**（desc `17408ed 2026-09-16`，robot 1；含删班级级别字段 / 老师端导航中枢 + 上课记录页 / API BASE 环境化三处 0.1.0 之后的改动）。剩余人工步骤见文末「体验版验收清单」。recap 分享到群（[[../plans/2026-07-04-nce-class-recap-wechat-share]]）**未实现**，留待下一版。生产库现状：wechat_accounts 2（均为老师绑定）、invites / join_requests / bindings 均为 0——尚无真实家长使用过。
 
 ## 缺失项清单（按依赖顺序）
 
@@ -45,7 +47,7 @@ h5 是可自动化的替身，以下原生能力只能在工具/真机人工验�
 
 - `miniprogram-ci` 已跑通：`pnpm --filter miniapp preview:weapp`（二维码 → `tmp/weapp-preview-qr.jpg`）/ `upload:weapp`（已传 **0.1.0**，描述 `f66b3b9 2026-07-05 邀请+recap M1`，robot 1）。密钥在 `tmp/private.wx19490e22f3580fb0.key`（gitignored）。
 - **踩过的坑（复现必看）**：
-  - Homebrew **node 25 跑不了 miniprogram-ci**（编译期 `getItem is not a function`、`--enable-es6` 时 worker `close` 崩）→ 用 nvm node 24：`PATH="$HOME/.nvm/versions/node/v24.6.0/bin:$PATH" pnpm --filter miniapp <script>`。
+  - Homebrew **node 25 跑不了 miniprogram-ci**（编译期 `getItem is not a function`、`--enable-es6` 时 worker `close` 崩）→ 用 node 24：`mise x node@24 -- pnpm --filter miniapp <script>`（2026-09-16 起 mise 管 node，不再用 nvm 前缀）。
   - 微信 CI 校验器（-80057）**不认 ES2020 语法**（`??`/`?.`），而 Taro 原 browserslist（es6-module）会保留它们 → miniapp `browserslist` 已锁 `chrome >= 60, ios >= 10`，**勿改回**。微信侧 `--enable-es6` 转译不可靠（worker 崩），保持本地转译方案。
 - **剩余人工两步**：mp 后台「版本管理」把 0.1.0 设为**体验版**并把老师/家长加为体验成员；正式发布需过审核（教育类目一般顺利，预留被打回余量）。
 
@@ -53,12 +55,24 @@ h5 是可自动化的替身，以下原生能力只能在工具/真机人工验�
 
 - 生产库是干净库 + `create-teacher` 建号（无 seed mock 账户）。老师首次进小程序走 `pages/bind` 用 web 用户名+密码绑定 wechat_account——**体验版真机实测绑定成功**（真 wx.login → 生产 code2session → bind 全链路通）。要写进给老师的使用说明里。
 
-### 7. ⚠️ 小程序认证（2026-07-05 真机测出，当前唯一阻塞项）
+### 7. ✅ 小程序认证（2026-07-05 真机测出阻塞，2026-09-16 确认已通过）
 
 - **现象**：体验版真机上老师生成邀请后点分享，被提示「由于小程序未完成认证」无法分享。
 - **原因**：微信 2023 底政策——所有小程序（含个人主体）须完成年度「小程序认证」，未认证限制**发版/被搜索/分享**（[蓝点网报道](https://www.landiannews.com/archives/101017.html)、[知乎梳理](https://zhuanlan.zhihu.com/p/716290833)）。
 - **解决**：mp 后台 → 设置 → 基本设置 → 小程序认证，个人主体 **30 元/年** + 人脸核身，当天即可生效。完成后分享卡片（邀请 + 将来的 recap 分享）恢复可用。
 - 注意这是**年审**：每年到期要续认证，过期分享会再次被封。
+
+## 体验版验收清单（2026-09-16，认证通过后人工步骤）
+
+1. **mp 后台 → 版本管理**：把 0.2.0 设为体验版；「体验成员」加自己 + 一位真实老师（线上账号 coco / alice 之一）。
+2. **老师绑定**：老师首次进小程序落 `pages/bind`，用 web 用户名+密码绑定（0.1.0 真机已验过一次，0.2.0 复验）。
+3. **邀请分享**（原被封项）：老师端 → 班级 → 生成邀请 → 「分享到微信群」按钮弹出卡片；确认卡片 path 是 `pages/join/index?invite=<token>`。
+4. **家长 join**：另一微信从群里点卡片 → join 表单 → `chooseImage` 选图上传 → 提交后提示等待老师关联。
+5. **老师关联**：老师端班级页出现待关联请求 → 关联到学生（`showModal` 确认）/ 驳回。
+6. **家长看 recap**：家长重进小程序 → 首页分流到孩子 → 打开最近一节课的战报。
+7. **提审前**：mp 后台「用户隐私保护指引」声明收集项（头像/照片、手填手机号、微信 openid）；类目选教育；填测试账号（老师 web 用户名密码）供审核员绑定。
+8. **验完清数据**：真机验收产生的 `class_invites` / `join_requests` / `student_wechat_bindings` 是生产真数据，验后由老师端驳回或 sqlite 清掉。
+9. **年审提醒**：小程序认证每年到期续，过期分享再封。
 
 ## 不阻塞上线的后续项
 
