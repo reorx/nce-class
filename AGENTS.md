@@ -19,9 +19,10 @@ web/     React + Vite + TS · 老师端桌面 Web（管理页 IBM Plex；课堂�
             Sessions（org 级课堂列表）/ Teachers（改名，用户名不可改；添加老师、改密只在 Admin）/ Admin（仅管理员：删除班级·添加老师·修改成员密码）/
             Setup（课前配置；?backfill=1 补录过去的课）/
             Classroom（课堂主界面：看板/背书/作业/出勤/调组/班级信息/日志 七视图 + 上节课 popover + 多选批量 + 投屏 zoom）/ Login
+  components/ 全局 StudentModalProvider（编辑学生姓名弹窗，useStudentModal() 在任意页面/循环内触发，对标 ToastProvider）
   lib/      classroomStore（课堂本地态 reducer + localStorage 持久化 + commit payload）/ session（事件流计分派生）/
             setup / grouping / attendance / profile / homework / lesson / recapCard / recapV3（v3 战报派生：领奖台/组明细/分类统计）/ classroomLog /
-            tags（奖章归一化，与 server 口径一致）/ multiSelect / prevLesson / zoom / admin（删除影响面文案·改密表单校验）/ classList（首页/归档页按 isArchived 分流·搜索·计数）/ api（fetch 客户端）
+            tags（奖章归一化，与 server 口径一致）/ studentName（英文名/中文名校验与主副名派生）/ multiSelect / prevLesson / zoom / admin（删除影响面文案·改密表单校验）/ classList（首页/归档页按 isArchived 分流·搜索·计数）/ api（fetch 客户端）
 miniapp/ Taro 4 + React（weapp 正式产物 / h5 开发调试；appid wx19490e22f3580fb0；browserslist 锁 chrome60/ios10——微信 CI 不认 ES2020 语法，勿改）
   pages:    index（按身份分流）/ join（?invite= 落地表单）/ recap / bind（老师绑定）/ teacher/{home,classes,class,sessions}
   lib:      api（Bearer 注入；h5 走 :10086 代理）/ wxAuth（ensureLogin + mock 身份）/ flow / recapView
@@ -110,6 +111,7 @@ localStorage.removeItem('nce.wxToken'); localStorage.removeItem('nce.currentChil
 - **⚠️ 结束课堂 schema 向后兼容（protobuf 式，不可破坏）**：课堂进行中服务端可能发新版，旧页面 commit payload 必须照常入库。纪律：①服务端永不新增必填字段，新字段一律可选带默认；②不收紧校验、不改名、不改语义；③未知字段静默忽略（`buildCommitInput` 显式挑字段）。web 端 localStorage 的 `ClassroomSession` shape 同理只加可选字段（先例：teacherId/startedAt/tags/backfill/editOfSessionId/endedAt/homeworkContent）。守卫用例在 `server/tests/api.test.ts`「向后/向前兼容」——挂了改契约不改测试。
 - **鉴权双轨**：老师 = 无状态签名 cookie（HMAC/`AUTH_SECRET`，dev 有 fallback；生产必须显式设置，缺失启动即 throw）；小程序 = wx Bearer token（subject=wechatAccountId），互不通用。写接口的 teacherId/orgId 取自当前登录者。
 - **管理员**：`teachers.is_admin`（0/1）与 `role`（owner/teacher，仅展示）无关，只由 set-admin CLI / `create-teacher --admin` 授予，页面无法提权。高危操作集中在 `/admin`：删除班级（硬删除级联，同 deleteStudent 口径：`org_tags`、`wechat_accounts`、存储照片不删）、添加老师（一律普通老师，页面不能提权）、修改成员密码；/teachers 只能改名。新增挂靠班级的表时要同步 `deleteClass`——`api.test.ts` admin 用例扫描全部表的 id/引用列做残留断言兜底。
+- **学生姓名**：`students.name` = 英文名（必填、主显示名、头像首字母取它，历史列名沿用），`students.cn_name` = 中文名（可空，班级学生卡片 / 分组成员 / 收款单行 / 成长档案头部下方小字；考勤与课堂不显示）。`en_name` 已于 2026-09-15 删除（生产 0 行有值），`join_requests` 的 `cn_name`/`en_name` 是家长注册时点快照，勿混。⚠️ `PUT /api/students/:id` 用 `'cnName' in body` 判定是否写该列——缺 key 不动列（旧页面只发 `{name}` 不会清空中文名）；传空串/空白 = 清空。关联 join_request 时 `cn_name` 按 COALESCE 回填。全程无快照（recap/ledger/收款单都是读时 JOIN），改名刷新即对。
 - **学生状态** `students.status`：active 在读 / suspended 停课 / archived 归档。非 active 不进课前配置、课堂与 session 快照（缺席也不算）；人数口径 = 在读+停课；停课/归档即清默认分组 membership，恢复后需手动拖回组；已绑定家长的历史 recap 不受影响。
 - **班级归档** `classes.is_archived`（0/1，与学生 `status=archived` 无关）：**纯展示标记**，只为让首页班级列表只剩在上的班。编辑班级信息弹窗里勾选；`GET /api/classes` 照常返回全部班级并带 `isArchived`，由 web `lib/classList` 分流到首页（「n 个归档 ›」入口）与 `/classes?is_archived=true`。详情/开课/排班收款/`/sessions` 筛选/小程序老师端列表/admin 一律不做联动，归档班照常可用。`PUT /api/classes/:id` 不带 `isArchived`（旧页面）= 保持原状态，非布尔 400；新建不接收。
 - **账户体系**：student（教学实体）与 wechat_account（微信身份）分离。teacher↔account 走 credentials（bind 页一次绑定）；student↔account 走 `student_wechat_bindings`（N:M）；家长注册只建 `join_requests`（pending 唯一、重复提交覆盖），由老师在小程序关联（回填空字段不覆盖）。邀请 = 一次性 7 天 token（`class_invites`，可并存）。

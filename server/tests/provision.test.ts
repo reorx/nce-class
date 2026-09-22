@@ -186,6 +186,52 @@ describe('migrate: 教材 columns are TEXT', () => {
   });
 });
 
+// 学生中文名: `students.name` 事实上一直存的是英文名（生产 74 行全英文），
+// 2026-09-15 补 cn_name 列承载中文名，同时删掉从未写入过数据的 en_name。
+describe('migrate: students.cn_name replaces en_name', () => {
+  const columns = (db: Database.Database) =>
+    (db.prepare(`PRAGMA table_info(students)`).all() as { name: string }[]).map((c) => c.name);
+
+  it('creates cn_name and no en_name on a fresh database', () => {
+    const db = new Database(':memory:');
+    provision.migrate(db);
+    expect(columns(db)).toContain('cn_name');
+    expect(columns(db)).not.toContain('en_name');
+    db.close();
+  });
+
+  it('drops en_name and adds an empty cn_name on an old database, idempotently', () => {
+    const db = new Database(':memory:');
+    db.exec(
+      `CREATE TABLE students (
+         id TEXT PRIMARY KEY, class_id TEXT NOT NULL, name TEXT NOT NULL,
+         en_name TEXT, parent_phone TEXT, photo_url TEXT, source TEXT NOT NULL,
+         status TEXT NOT NULL DEFAULT 'active', recap_token TEXT NOT NULL UNIQUE,
+         created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+    );
+    db.prepare(
+      `INSERT INTO students (id, class_id, name, en_name, parent_phone, source, recap_token)
+       VALUES ('s-old','c-old','Lucy','Lucy','13800138000','teacher','tok-old')`,
+    ).run();
+
+    provision.migrate(db);
+    provision.migrate(db); // second run must be a no-op
+
+    expect(columns(db)).toContain('cn_name');
+    expect(columns(db)).not.toContain('en_name');
+    // 旧列不回填: 英文名本来就在 name 里, cn_name 留空等老师补
+    expect(db.prepare(`SELECT name, cn_name, parent_phone, source, status FROM students WHERE id='s-old'`).get()).toEqual(
+      { name: 'Lucy', cn_name: null, parent_phone: '13800138000', source: 'teacher', status: 'active' },
+    );
+
+    const fresh = new Database(':memory:');
+    provision.migrate(fresh);
+    expect(columns(db).sort()).toEqual(columns(fresh).sort());
+    fresh.close();
+    db.close();
+  });
+});
+
 describe('createTeacher', () => {
   it('creates org + teacher + password credential that can log in', async () => {
     const { orgId, teacherId } = provision.createTeacher(sqlite, {

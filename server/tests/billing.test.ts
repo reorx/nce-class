@@ -598,4 +598,19 @@ describe('invoices API', () => {
     expect(res.status).toBe(200);
     for (const p of res.body.rows.filter((r: any) => r.kind === 'planned')) expect(p.billable).toBe(false);
   });
+
+  // 收款单的学生姓名是 live join, 从不落快照: 改名后不用 recalculate, 重拉即新值。
+  it('carries 中文名 and follows a rename without recalculating', async () => {
+    sqlite.prepare(`UPDATE students SET cn_name='小明' WHERE id='s1'`).run();
+    const { agent, batch, invOf } = await scene();
+    expect(invOf('s1')).toMatchObject({ studentName: '小明', studentCnName: '小明' });
+    expect(invOf('s2').studentCnName).toBeNull();
+
+    await agent.put('/api/students/s1').send({ name: 'Ming', cnName: '小明明' });
+    const again = (await agent.get(`/api/billing/batches/${batch.id}`)).body;
+    expect(again.invoices.find((r: any) => r.studentId === 's1')).toMatchObject({
+      studentName: 'Ming',
+      studentCnName: '小明明',
+    });
+  });
 });

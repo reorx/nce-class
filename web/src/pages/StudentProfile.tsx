@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { Modal } from '../components/Modal';
-import { useToast } from '../components/Toast';
+import { useStudentModal } from '../components/StudentEditModal';
 import { TopBar } from '../components/TopBar';
 import { api, type Me, type ProfileSession, type StudentProfile as Profile } from '../lib/api';
 import { barGeometry, netColor, netLabel, type BarGeom } from '../lib/profile';
+import { studentNamePair } from '../lib/studentName';
 import { avatarStyle, GREEN, initial, sourceTag, statusTag } from '../lib/theme';
 
 // ---------------------------------------------------------------------------
@@ -17,15 +17,17 @@ export function StudentProfile({ me }: { me: Me | null }) {
   const { id = '', sid = '' } = useParams();
   const [p, setP] = useState<Profile | null>(null);
   const [failed, setFailed] = useState(false);
-  const [editOpen, setEditOpen] = useState(false);
+  const editStudent = useStudentModal();
 
-  useEffect(() => {
+  const reload = useCallback(() => {
     setFailed(false);
     api
       .getStudentProfile(sid)
       .then(setP)
       .catch(() => setFailed(true));
   }, [sid]);
+
+  useEffect(reload, [reload]);
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -54,117 +56,18 @@ export function StudentProfile({ me }: { me: Me | null }) {
         )}
         {p && (
           <>
-            <Header p={p} onEdit={() => setEditOpen(true)} />
+            <Header
+              p={p}
+              onEdit={() =>
+                editStudent({ studentId: p.student.id, name: p.student.name, cnName: p.student.cnName }, reload)
+              }
+            />
             <Tiles p={p} />
             {p.sessions.length === 0 ? <Empty /> : <Matrix sessions={p.sessions} />}
-            <EditNameModal
-              open={editOpen}
-              student={p.student}
-              onClose={() => setEditOpen(false)}
-              onSaved={(name) => {
-                setP((prev) => (prev ? { ...prev, student: { ...prev.student, name } } : prev));
-                setEditOpen(false);
-              }}
-            />
           </>
         )}
       </div>
     </div>
-  );
-}
-
-// ---- edit name modal --------------------------------------------------------
-
-const fieldStyle: CSSProperties = {
-  width: '100%',
-  height: 40,
-  padding: '0 12px',
-  border: '1px solid #e2e5ea',
-  borderRadius: 9,
-  fontSize: 14,
-  color: '#1e2430',
-  background: '#fbfcfd',
-};
-const primaryBtn: CSSProperties = {
-  height: 40,
-  padding: '0 18px',
-  background: GREEN,
-  color: '#fff',
-  border: 'none',
-  borderRadius: 9,
-  fontWeight: 600,
-  fontSize: 14,
-  cursor: 'pointer',
-};
-const ghostBtn: CSSProperties = {
-  height: 40,
-  padding: '0 18px',
-  background: '#fff',
-  color: '#5b6472',
-  border: '1px solid #e2e5ea',
-  borderRadius: 9,
-  fontWeight: 600,
-  fontSize: 14,
-  cursor: 'pointer',
-};
-
-function EditNameModal({
-  open,
-  student,
-  onClose,
-  onSaved,
-}: {
-  open: boolean;
-  student: Profile['student'];
-  onClose: () => void;
-  onSaved: (name: string) => void;
-}) {
-  const toast = useToast();
-  const [name, setName] = useState(student.name);
-  const [busy, setBusy] = useState(false);
-
-  // Reset the draft to the current name whenever the modal (re)opens.
-  useEffect(() => {
-    if (open) setName(student.name);
-  }, [open, student.name]);
-
-  async function save() {
-    const v = name.trim();
-    if (!v || busy) return;
-    setBusy(true);
-    try {
-      await api.updateStudent(student.id, v);
-      toast('学生信息已更新');
-      onSaved(v);
-    } catch {
-      toast('保存失败，请重试', 'error');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Modal open={open} onClose={onClose} title="编辑学生">
-      <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#5b6472', marginBottom: 6 }}>
-        学生姓名
-      </label>
-      <input
-        value={name}
-        autoFocus
-        onChange={(e) => setName(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && save()}
-        placeholder="如 王小明"
-        style={fieldStyle}
-      />
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
-        <button style={ghostBtn} onClick={onClose}>
-          取消
-        </button>
-        <button style={{ ...primaryBtn, opacity: name.trim() && !busy ? 1 : 0.55 }} onClick={save}>
-          {busy ? '保存中…' : '保存'}
-        </button>
-      </div>
-    </Modal>
   );
 }
 
@@ -183,6 +86,7 @@ function badge(t: { label: string; color: string; bg: string }) {
 function Header({ p, onEdit }: { p: Profile; onEdit: () => void }) {
   const s = p.student;
   const sTag = statusTag(s.status);
+  const names = studentNamePair(s);
   return (
     <div
       style={{
@@ -199,10 +103,13 @@ function Header({ p, onEdit }: { p: Profile; onEdit: () => void }) {
       <div style={{ ...avatarStyle(s.id, 62, s.photoUrl != null), fontSize: 26 }}>{initial(s.name)}</div>
       <div style={{ minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 11, flexWrap: 'wrap' }}>
-          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, letterSpacing: '-.3px' }}>{s.name}</h1>
+          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, letterSpacing: '-.3px' }}>{names.primary}</h1>
           {badge(sourceTag(s.source))}
           {sTag && badge(sTag)}
         </div>
+        {names.secondary && (
+          <div style={{ marginTop: 3, fontSize: 14, fontWeight: 600, color: '#8a919c' }}>{names.secondary}</div>
+        )}
         <div style={{ marginTop: 7, fontSize: 13.5, color: '#7a828f', whiteSpace: 'nowrap' }}>
           {p.class.name} · {p.currentGroup ? `${p.currentGroup.emoji ?? ''} ${p.currentGroup.name}`.trim() : '未分组'} ·
           已上课{' '}

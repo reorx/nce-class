@@ -110,3 +110,22 @@ export function squareAvatarStyle(key: string, size: number): CSSProperties {
     flexShrink: 0,
   };
 }
+
+/** 26×26 ✎ 图标按钮 — 学生卡片 / 收款单行的「编辑学生」入口共用。 */
+export function editIconBtnStyle(): CSSProperties {
+  return {
+    width: 26,
+    height: 26,
+    border: 'none',
+    background: 'transparent',
+    borderRadius: 7,
+    color: '#aab1bc',
+    fontSize: 13,
+    lineHeight: 1,
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  };
+}

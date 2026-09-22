@@ -35,7 +35,6 @@ import {
   linkJoinRequest,
   overwriteSession,
   recalculateBatch,
-  renameStudent,
   renameTeacher,
   saveGrouping,
   setAttendance,
@@ -48,6 +47,7 @@ import {
   updateInvoice,
   updateSchedule,
   updateSessionInfo,
+  updateStudentInfo,
   upsertJoinRequest,
   upsertWechatAccount,
   type CommitInput,
@@ -100,7 +100,7 @@ const q = {
   // the commit's classifyStudent must keep suspended/archived students 'own' so
   // a stale local classroom still submits with its snapshot intact.
   studentsOfClass: sqlite.prepare(
-    `SELECT id, name, source, status, photo_url FROM students WHERE class_id=? ORDER BY created_at, id`,
+    `SELECT id, name, cn_name, source, status, photo_url FROM students WHERE class_id=? ORDER BY created_at, id`,
   ),
   scoresOfClass: sqlite.prepare(
     `SELECT s.id sid, COALESCE(SUM(e.delta),0) score
@@ -193,7 +193,7 @@ const q = {
      WHERE class_id=? AND status='ended' ORDER BY date, started_at, lesson_number`,
   ),
   attendanceStudentsOfClass: sqlite.prepare(
-    `SELECT id, name, status FROM students WHERE class_id=? AND status != 'archived' ORDER BY created_at, id`,
+    `SELECT id, name, cn_name, status FROM students WHERE class_id=? AND status != 'archived' ORDER BY created_at, id`,
   ),
   attendanceRecordsOfClass: sqlite.prepare(
     `SELECT sm.session_id sid, sm.student_id stid, sm.attendance, sm.made_up
@@ -258,7 +258,7 @@ const q = {
   joinRequestById: sqlite.prepare(`SELECT * FROM join_requests WHERE id=?`),
   bindingOf: sqlite.prepare(`SELECT * FROM student_wechat_bindings WHERE student_id=? AND wechat_account_id=?`),
   studentsWithLinkFlag: sqlite.prepare(
-    `SELECT s.id, s.name, s.en_name, s.photo_url, COUNT(b.id) links
+    `SELECT s.id, s.name, s.cn_name, s.photo_url, COUNT(b.id) links
      FROM students s LEFT JOIN student_wechat_bindings b ON b.student_id=s.id
      WHERE s.class_id=? AND s.status != 'archived' GROUP BY s.id ORDER BY s.created_at, s.id`,
   ),
@@ -275,12 +275,12 @@ const q = {
      WHERE c.org_id=? ORDER BY bb.created_at DESC, bb.rowid DESC`,
   ),
   invoicesOfBatch: sqlite.prepare(
-    `SELECT iv.*, st.name student_name, st.status student_status FROM invoices iv
+    `SELECT iv.*, st.name student_name, st.cn_name student_cn_name, st.status student_status FROM invoices iv
      JOIN students st ON st.id = iv.student_id
      WHERE iv.batch_id=? ORDER BY st.created_at, st.id`,
   ),
   invoiceWithStudent: sqlite.prepare(
-    `SELECT iv.*, st.name student_name, st.status student_status FROM invoices iv
+    `SELECT iv.*, st.name student_name, st.cn_name student_cn_name, st.status student_status FROM invoices iv
      JOIN students st ON st.id = iv.student_id WHERE iv.id=?`,
   ),
   invoiceStatsOfBatch: sqlite.prepare(
@@ -323,6 +323,19 @@ function actualMin(s: any): number {
         (Date.parse(s.ended_at.replace(' ', 'T') + 'Z') - Date.parse(s.started_at.replace(' ', 'T') + 'Z')) / 60000,
       )
     : s.planned_duration_min;
+}
+
+/** 学生身份三件套——任何提到学生的 payload 的最小集。以后再加名字类字段
+ *  （拼音/昵称）只改这一处。入参行必须带 cn_name。 */
+function studentIdentity(s: any) {
+  return { id: s.id, name: s.name, cnName: s.cn_name ?? null };
+}
+
+/** 身份 + 写接口响应与班级花名册共用的三个侧面（对应 teacherItem 之于老师）。
+ *  需要 resolved photoUrl（成长档案 / wx 自视图）或不要 source/status
+ *  （wx 关联花名册）的站点直接 spread studentIdentity，不硬塞进这里。 */
+function studentItem(s: any) {
+  return { ...studentIdentity(s), source: s.source, status: s.status, hasPhoto: s.photo_url != null };
 }
 
 function classListPayload(orgId: string) {
@@ -393,11 +406,7 @@ function classDetailPayload(id: string) {
   const scores = new Map((q.scoresOfClass.all(id) as any[]).map((r) => [r.sid, r.score]));
   const groupByStudent = new Map((q.membershipsOfClass.all(id) as any[]).map((r) => [r.sid, r.gid]));
   const students = (q.studentsOfClass.all(id) as any[]).map((s) => ({
-    id: s.id,
-    name: s.name,
-    source: s.source,
-    status: s.status,
-    hasPhoto: s.photo_url != null,
+    ...studentItem(s),
     score: scores.get(s.id) ?? 0,
     groupId: groupByStudent.get(s.id) ?? null,
   }));
@@ -681,6 +690,7 @@ function invoicePayload(r: any) {
     id: r.id,
     studentId: r.student_id,
     studentName: r.student_name,
+    studentCnName: r.student_cn_name ?? null,
     studentStatus: r.student_status,
     attendedCount: r.attended_count,
     plannedCount: r.planned_count,
@@ -1199,9 +1209,7 @@ export function createApp() {
     if (!classInOrg(req.params.id, teacher.org_id)) return res.status(404).json({ error: 'class not found' });
     res.json(
       (q.studentsWithLinkFlag.all(req.params.id) as any[]).map((s) => ({
-        id: s.id,
-        name: s.name,
-        enName: s.en_name,
+        ...studentIdentity(s),
         hasPhoto: s.photo_url != null,
         linked: s.links > 0,
       })),
@@ -1308,9 +1316,7 @@ export function createApp() {
     }));
     res.json({
       student: {
-        id: st.id,
-        name: st.name,
-        enName: st.en_name,
+        ...studentIdentity(st),
         photoUrl: st.photo_url ? storageClient.getUrl(st.photo_url) : null,
       },
       class: { id: c.id, name: c.name, ...classPreview(c) },
@@ -1453,29 +1459,23 @@ export function createApp() {
     if (!classInOrg(req.params.id, teacher.org_id)) return res.status(404).json({ error: 'class not found' });
     const name = str(req.body?.name);
     if (!name) return res.status(400).json({ error: '学生姓名必填' });
-    const id = addStudent(sqlite, { classId: req.params.id, name });
-    const s = q.studentById.get(id) as any;
-    res
-      .status(201)
-      .json({ id: s.id, name: s.name, source: s.source, status: s.status, hasPhoto: s.photo_url != null, score: 0 });
+    const id = addStudent(sqlite, { classId: req.params.id, name, cnName: str(req.body?.cnName) });
+    res.status(201).json({ ...studentItem(q.studentById.get(id) as any), score: 0 });
   });
 
-  // ---- student basic info (rename) ----
+  // ---- student basic info (英文名 + 中文名) ----
   app.put('/api/students/:id', (req, res) => {
     const teacher = res.locals.teacher;
     const s = q.studentById.get(req.params.id) as any;
     if (!s || !classInOrg(s.class_id, teacher.org_id)) return res.status(404).json({ error: 'student not found' });
     const name = str(req.body?.name);
     if (!name) return res.status(400).json({ error: '学生姓名必填' });
-    renameStudent(sqlite, s.id, name);
-    const updated = q.studentById.get(s.id) as any;
-    res.json({
-      id: updated.id,
-      name: updated.name,
-      source: updated.source,
-      status: updated.status,
-      hasPhoto: updated.photo_url != null,
-    });
+    // 'cnName' in body — 不是 str(req.body?.cnName)：str() 把「没传这个 key」与
+    // 「传了空串」都归一成 null，缓存着旧页面的标签页一次 {name} PUT 就会静默清空中文名。
+    const patch: { name: string; cnName?: string | null } = { name };
+    if ('cnName' in (req.body ?? {})) patch.cnName = str(req.body.cnName);
+    updateStudentInfo(sqlite, s.id, patch);
+    res.json(studentItem(q.studentById.get(s.id) as any));
   });
 
   // ---- student status (在读/停课/归档; non-active leaves the default grouping) ----
@@ -1488,14 +1488,7 @@ export function createApp() {
       return res.status(400).json({ error: 'status 必须是 active / suspended / archived' });
     }
     setStudentStatus(sqlite, s.id, status);
-    const updated = q.studentById.get(s.id) as any;
-    res.json({
-      id: updated.id,
-      name: updated.name,
-      source: updated.source,
-      status: updated.status,
-      hasPhoto: updated.photo_url != null,
-    });
+    res.json(studentItem(q.studentById.get(s.id) as any));
   });
 
   app.delete('/api/students/:id', (req, res) => {
@@ -1554,8 +1547,7 @@ export function createApp() {
     const tally = q.personalTallyOfStudent.get(st.id) as any;
     res.json({
       student: {
-        id: st.id,
-        name: st.name,
+        ...studentIdentity(st),
         source: st.source,
         status: st.status,
         photoUrl: st.photo_url ? storageClient.getUrl(st.photo_url) : null,
@@ -1782,8 +1774,7 @@ export function createApp() {
       lessonTitle: s.lesson_title,
     }));
     const students = (q.attendanceStudentsOfClass.all(c.id) as any[]).map((s) => ({
-      id: s.id,
-      name: s.name,
+      ...studentIdentity(s),
       status: s.status,
     }));
     const records = (q.attendanceRecordsOfClass.all(c.id) as any[]).map((r) => ({

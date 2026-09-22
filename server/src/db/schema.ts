@@ -85,8 +85,9 @@ export const students = sqliteTable('students', {
   classId: text('class_id')
     .notNull()
     .references(() => classes.id),
+  // 英文名 — 主显示名 (头像首字母取它)。历史上叫 name, 实际一直存英文名。
   name: text('name').notNull(),
-  enName: text('en_name'),
+  cnName: text('cn_name'), // 中文名, 可空, 卡片/收款单下方小字
   parentPhone: text('parent_phone'),
   photoUrl: text('photo_url'),
   source: text('source').notNull(), // parent | teacher

@@ -5,6 +5,7 @@ import { HomeworkTemplateEditor } from '../components/HomeworkTemplateEditor';
 import { Markdown } from '../components/Markdown';
 import { Modal } from '../components/Modal';
 import { ScheduleTab } from '../components/ScheduleTab';
+import { useStudentModal } from '../components/StudentEditModal';
 import { SessionsTable } from '../components/SessionsTable';
 import { TopBar } from '../components/TopBar';
 import { useToast } from '../components/Toast';
@@ -19,7 +20,8 @@ import {
   toPayload,
   type GroupingModel,
 } from '../lib/grouping';
-import { avatarStyle, GREEN, initial, sourceTag, statusTag } from '../lib/theme';
+import { studentNamePair, validateStudentNameForm } from '../lib/studentName';
+import { avatarStyle, editIconBtnStyle, GREEN, initial, sourceTag, statusTag } from '../lib/theme';
 
 type Tab = 'students' | 'groups' | 'notes' | 'homework' | 'invite' | 'schedule' | 'sessions';
 const TABS: Tab[] = ['students', 'groups', 'notes', 'homework', 'invite', 'schedule', 'sessions'];
@@ -373,11 +375,13 @@ function NotesTab({ d, reload }: { d: Detail; reload: () => Promise<void> | void
 function StudentsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | void }) {
   const toast = useToast();
   const navigate = useNavigate();
+  const editStudent = useStudentModal();
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | 'parent' | 'teacher'>('all');
   const [menuId, setMenuId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [newName, setNewName] = useState('');
+  const [newCnName, setNewCnName] = useState('');
   const [busy, setBusy] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Student | null>(null);
   const [pendingArchive, setPendingArchive] = useState<Student | null>(null);
@@ -396,20 +400,25 @@ function StudentsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | v
   const roster = useMemo(() => {
     let list = d.students.filter((s) => (archiveMode ? s.status === 'archived' : s.status !== 'archived'));
     if (filter !== 'all') list = list.filter((s) => s.source === filter);
-    if (search.trim()) list = list.filter((s) => s.name.includes(search.trim()));
+    if (search.trim()) {
+      const kw = search.trim();
+      list = list.filter((s) => s.name.includes(kw) || (s.cnName ?? '').includes(kw));
+    }
     list.sort((a, b) => b.score - a.score);
     return list;
   }, [d.students, filter, search, archiveMode]);
 
   async function submitAdd() {
-    const name = newName.trim();
-    if (!name || busy) return;
+    if (busy) return;
+    const v = validateStudentNameForm({ name: newName, cnName: newCnName });
+    if ('error' in v) return toast(v.error, 'error');
     setBusy(true);
     try {
-      await api.addStudent(d.id, name);
+      await api.addStudent(d.id, v);
       await reload();
-      toast(`已添加「${name}」`);
+      toast(`已添加「${v.name}」`);
       setNewName('');
+      setNewCnName('');
       setAddOpen(false);
     } catch {
       toast('添加失败，请重试', 'error');
@@ -601,6 +610,10 @@ function StudentsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | v
             s={s}
             dup={dupNames.has(s.name)}
             menuOpen={menuId === s.id}
+            onEdit={() => {
+              setMenuId(null);
+              editStudent({ studentId: s.id, name: s.name, cnName: s.cnName }, reload);
+            }}
             onToggleMenu={() => setMenuId((cur) => (cur === s.id ? null : s.id))}
             onCloseMenu={() => setMenuId(null)}
             onView={() => {
@@ -634,12 +647,24 @@ function StudentsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | v
 
       <Modal open={addOpen} onClose={() => setAddOpen(false)} title="手动添加学生">
         <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#5b6472', marginBottom: 6 }}>
-          学生姓名
+          英文名
         </label>
         <input
           value={newName}
           autoFocus
           onChange={(e) => setNewName(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && submitAdd()}
+          placeholder="如 Lucy"
+          style={fieldStyle}
+        />
+        <label
+          style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#5b6472', margin: '14px 0 6px' }}
+        >
+          中文名（选填）
+        </label>
+        <input
+          value={newCnName}
+          onChange={(e) => setNewCnName(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && submitAdd()}
           placeholder="如 王小明"
           style={fieldStyle}
@@ -704,6 +729,7 @@ function StudentCard({
   menuOpen,
   onToggleMenu,
   onCloseMenu,
+  onEdit,
   onView,
   onSuspend,
   onRestore,
@@ -715,6 +741,7 @@ function StudentCard({
   menuOpen: boolean;
   onToggleMenu: () => void;
   onCloseMenu: () => void;
+  onEdit: () => void;
   onView: () => void;
   onSuspend: () => void;
   onRestore: () => void;
@@ -723,6 +750,7 @@ function StudentCard({
 }) {
   const tag = sourceTag(s.source);
   const sTag = statusTag(s.status);
+  const names = studentNamePair(s);
   return (
     <div
       style={{
@@ -733,6 +761,13 @@ function StudentCard({
         padding: '15px 14px 13px',
       }}
     >
+      <button
+        onClick={onEdit}
+        title="编辑学生姓名"
+        style={{ ...editIconBtnStyle(), position: 'absolute', top: 9, right: 38 }}
+      >
+        ✎
+      </button>
       <button
         onClick={onToggleMenu}
         style={{
@@ -815,8 +850,22 @@ function StudentCard({
               maxWidth: '100%',
             }}
           >
-            {s.name}
+            {names.primary}
           </div>
+          {names.secondary && (
+            <div
+              style={{
+                marginTop: 2,
+                fontSize: 12,
+                color: '#8a919c',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
+              {names.secondary}
+            </div>
+          )}
           <div style={{ marginTop: 5, display: 'flex', gap: 5 }}>
             <span
               style={{
@@ -1077,19 +1126,25 @@ function GroupsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | voi
                     }}
                   >
                     <div style={avatarStyle(s.id, 32, s.hasPhoto)}>{initial(s.name)}</div>
-                    <span
-                      style={{
-                        fontWeight: 600,
-                        fontSize: 14,
-                        color: '#1e2430',
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        minWidth: 0,
-                      }}
-                    >
-                      {s.name}
-                    </span>
+                    <div style={{ minWidth: 0, overflow: 'hidden' }}>
+                      <div
+                        style={{
+                          fontWeight: 600,
+                          fontSize: 14,
+                          color: '#1e2430',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                        }}
+                      >
+                        {studentNamePair(s).primary}
+                      </div>
+                      {studentNamePair(s).secondary && (
+                        <div style={{ fontSize: 11.5, color: '#8a919c', whiteSpace: 'nowrap' }}>
+                          {studentNamePair(s).secondary}
+                        </div>
+                      )}
+                    </div>
                     <span style={{ marginLeft: 'auto', color: '#c6ccd4', fontSize: 14 }}>⠿</span>
                   </div>
                 );
@@ -1195,9 +1250,16 @@ function GroupsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | voi
                 }}
               >
                 <div style={avatarStyle(s.id, 32, s.hasPhoto)}>{initial(s.name)}</div>
-                <span style={{ fontWeight: 600, fontSize: 13.5, color: '#5b6472', whiteSpace: 'nowrap' }}>
-                  {s.name}
-                </span>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13.5, color: '#5b6472', whiteSpace: 'nowrap' }}>
+                    {studentNamePair(s).primary}
+                  </div>
+                  {studentNamePair(s).secondary && (
+                    <div style={{ fontSize: 11.5, color: '#9aa1ac', whiteSpace: 'nowrap' }}>
+                      {studentNamePair(s).secondary}
+                    </div>
+                  )}
+                </div>
               </div>
             );
           })}

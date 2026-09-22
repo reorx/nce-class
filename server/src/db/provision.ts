@@ -15,6 +15,14 @@ export function migrate(sqlite: DB): void {
   if (!studentCols.some((c) => c.name === 'status')) {
     sqlite.exec(`ALTER TABLE students ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`);
   }
+  // 中文名: name 事实上已是英文名 (生产 74 行全英文), 补一列 cn_name。
+  // en_name 从未写入过真实数据 (生产 0 行非空), 直接 DROP, 不回填。
+  if (!studentCols.some((c) => c.name === 'cn_name')) {
+    sqlite.exec(`ALTER TABLE students ADD COLUMN cn_name TEXT`);
+  }
+  if (studentCols.some((c) => c.name === 'en_name')) {
+    sqlite.exec(`ALTER TABLE students DROP COLUMN en_name`);
+  }
   // Pre-notes databases: 班级资源 markdown column on classes.
   const classCols = sqlite.prepare(`PRAGMA table_info(classes)`).all() as { name: string }[];
   if (!classCols.some((c) => c.name === 'notes')) {

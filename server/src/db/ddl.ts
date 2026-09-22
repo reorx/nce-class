@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS class_invites (
 );
 CREATE TABLE IF NOT EXISTS students (
   id TEXT PRIMARY KEY, class_id TEXT NOT NULL, name TEXT NOT NULL,
-  en_name TEXT, parent_phone TEXT,
+  cn_name TEXT, parent_phone TEXT,
   photo_url TEXT, source TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'active',
   recap_token TEXT NOT NULL UNIQUE,

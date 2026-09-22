@@ -119,17 +119,28 @@ export function updateClassInfo(
 }
 
 /** Add a teacher-created student to a class. Returns the new student id. */
-export function addStudent(sqlite: DB, p: { classId: string; name: string }): string {
+export function addStudent(sqlite: DB, p: { classId: string; name: string; cnName?: string | null }): string {
   const id = `s-${nanoid(10)}`;
   sqlite
-    .prepare(`INSERT INTO students (id, class_id, name, photo_url, source, recap_token) VALUES (?,?,?,?,?,?)`)
-    .run(id, p.classId, p.name, null, 'teacher', nanoid(24));
+    .prepare(
+      `INSERT INTO students (id, class_id, name, cn_name, photo_url, source, recap_token) VALUES (?,?,?,?,?,?,?)`,
+    )
+    .run(id, p.classId, p.name, p.cnName ?? null, null, 'teacher', nanoid(24));
   return id;
 }
 
-/** Rename a student (基本信息编辑). */
-export function renameStudent(sqlite: DB, studentId: string, name: string): void {
-  sqlite.prepare(`UPDATE students SET name=? WHERE id=?`).run(name, studentId);
+/**
+ * Patch a student's 姓名 (基本信息编辑). Partial: `cnName` absent from `p` leaves
+ * the column alone, so a stale page PUTing only {name} can't wipe 中文名.
+ */
+export function updateStudentInfo(sqlite: DB, studentId: string, p: { name: string; cnName?: string | null }): void {
+  const sets = ['name=?'];
+  const vals: unknown[] = [p.name];
+  if ('cnName' in p) {
+    sets.push('cn_name=?');
+    vals.push(p.cnName ?? null);
+  }
+  sqlite.prepare(`UPDATE students SET ${sets.join(', ')} WHERE id=?`).run(...vals, studentId);
 }
 
 /** wx.login upsert: create the account on first sight, stamp last_login_at. Returns the id. */
@@ -209,7 +220,7 @@ export function upsertJoinRequest(sqlite: DB, p: JoinRequestInput): string {
  * Link a pending join_request to an existing student (single transaction):
  * ① create the student↔account binding (idempotent), ② mark the request
  * linked, ③ backfill the student's EMPTY fields from the registration —
- * photo/en_name/parent_phone never overwrite values the teacher already set.
+ * photo/cn_name/parent_phone never overwrite values the teacher already set.
  */
 export function linkJoinRequest(sqlite: DB, p: { requestId: string; studentId: string; teacherId: string }): void {
   const tx = sqlite.transaction(() => {
@@ -227,9 +238,9 @@ export function linkJoinRequest(sqlite: DB, p: { requestId: string; studentId: s
       .run(p.studentId, p.teacherId, p.requestId);
     sqlite
       .prepare(
-        `UPDATE students SET photo_url=COALESCE(photo_url, ?), en_name=COALESCE(en_name, ?), parent_phone=COALESCE(parent_phone, ?) WHERE id=?`,
+        `UPDATE students SET photo_url=COALESCE(photo_url, ?), cn_name=COALESCE(cn_name, ?), parent_phone=COALESCE(parent_phone, ?) WHERE id=?`,
       )
-      .run(req.photo_key, req.en_name, req.parent_phone, p.studentId);
+      .run(req.photo_key, req.cn_name, req.parent_phone, p.studentId);
   });
   tx();
 }

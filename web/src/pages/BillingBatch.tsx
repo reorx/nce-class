@@ -2,12 +2,14 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { BillingBatchModal } from '../components/BillingBatchModal';
 import { Modal } from '../components/Modal';
+import { useStudentModal } from '../components/StudentEditModal';
 import { useToast } from '../components/Toast';
 import { TopBar } from '../components/TopBar';
 import { api, ApiError, type BillingBatchDetail, type InvoiceItem, type InvoiceLessonRow, type Me } from '../lib/api';
 import { weekdayCN } from '../lib/attendance';
 import { centsToYuan, fmtMoney, yuanToCents } from '../lib/money';
-import { statusTag } from '../lib/theme';
+import { studentNamePair } from '../lib/studentName';
+import { editIconBtnStyle, statusTag } from '../lib/theme';
 
 const md = (d: string | null) => (d ? d.slice(5) : '—');
 
@@ -18,6 +20,7 @@ export function BillingBatch({ me }: { me: Me | null }) {
   const [d, setD] = useState<BillingBatchDetail | null>(null);
   const [editing, setEditing] = useState<InvoiceItem | null>(null);
   const [resetOpen, setResetOpen] = useState(false);
+  const editStudent = useStudentModal();
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -166,6 +169,12 @@ export function BillingBatch({ me }: { me: Me | null }) {
                     key={inv.id}
                     inv={inv}
                     held={d.heldSessionCount}
+                    onEditStudent={() =>
+                      editStudent(
+                        { studentId: inv.studentId, name: inv.studentName, cnName: inv.studentCnName },
+                        reload,
+                      )
+                    }
                     onEdit={() => setEditing(inv)}
                     onConfirm={() => confirmPay(inv)}
                     onUndo={() => undoPay(inv)}
@@ -235,17 +244,21 @@ export function BillingBatch({ me }: { me: Me | null }) {
 function InvoiceRow({
   inv,
   held,
+  onEditStudent,
   onEdit,
   onConfirm,
   onUndo,
 }: {
   inv: InvoiceItem;
   held: number;
+  /** ✎ 图标 — 改学生姓名；与下方文字版「编辑」（改费用）是两个入口，别混。 */
+  onEditStudent: () => void;
   onEdit: () => void;
   onConfirm: () => void;
   onUndo: () => void;
 }) {
   const sTag = statusTag(inv.studentStatus);
+  const names = studentNamePair({ name: inv.studentName, cnName: inv.studentCnName });
   const adjusted = inv.adjusted === 1;
   const suspended = inv.studentStatus !== 'active';
   return (
@@ -256,22 +269,28 @@ function InvoiceRow({
       }}
     >
       <td style={td}>
-        <span style={{ fontWeight: 600, color: '#1e2430' }}>{inv.studentName}</span>
-        {sTag && (
-          <span
-            style={{
-              fontSize: 10.5,
-              fontWeight: 600,
-              color: sTag.color,
-              background: sTag.bg,
-              padding: '2px 7px',
-              borderRadius: 999,
-              marginLeft: 7,
-            }}
-          >
-            {sTag.label}
-          </span>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ fontWeight: 600, color: '#1e2430' }}>{names.primary}</span>
+          {sTag && (
+            <span
+              style={{
+                fontSize: 10.5,
+                fontWeight: 600,
+                color: sTag.color,
+                background: sTag.bg,
+                padding: '2px 7px',
+                borderRadius: 999,
+                marginLeft: 3,
+              }}
+            >
+              {sTag.label}
+            </span>
+          )}
+          <button onClick={onEditStudent} title="编辑学生姓名" style={editIconBtnStyle()}>
+            ✎
+          </button>
+        </div>
+        {names.secondary && <div style={{ fontSize: 11.5, color: '#8a919c', marginTop: 1 }}>{names.secondary}</div>}
       </td>
       <td style={td} className="mono">
         {inv.attendedCount}/{held}

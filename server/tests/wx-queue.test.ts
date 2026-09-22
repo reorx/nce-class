@@ -103,6 +103,11 @@ describe('GET /api/wx/teacher/classes/:id/students 关联花名册', () => {
     const byId = new Map(res.body.map((s: any) => [s.id, s]));
     expect((byId.get('s1') as any).linked).toBe(true); // wa-parent 已绑
     expect((byId.get('s2') as any).linked).toBe(false);
+    // 花名册带中文名, 老师据此把家长填的中文名对上号
+    sqlite.prepare(`UPDATE students SET cn_name='小明' WHERE id='s1'`).run();
+    const again = await request(app).get('/api/wx/teacher/classes/c1/students').set(auth(teacher));
+    expect(again.body.find((s: any) => s.id === 's1')).toMatchObject({ cnName: '小明' });
+    expect(again.body.find((s: any) => s.id === 's2').cnName).toBeNull();
   });
 });
 
@@ -124,7 +129,7 @@ describe('POST /api/wx/join-requests/:id/link 关联', () => {
     const req_ = sqlite.prepare(`SELECT * FROM join_requests WHERE id=?`).get(requestId) as any;
     expect(req_).toMatchObject({ status: 'linked', linked_student_id: 's4', handled_by: 't-wangli' });
     const s4 = sqlite.prepare(`SELECT * FROM students WHERE id='s4'`).get() as any;
-    expect(s4).toMatchObject({ photo_url: 'students/h.png', en_name: 'Harry', parent_phone: '13800138000' });
+    expect(s4).toMatchObject({ photo_url: 'students/h.png', cn_name: '浩浩', parent_phone: '13800138000' });
 
     // 关联后：家长 me.children 出现、可拉个性化 recap，pending 清空
     const me = await request(app).get('/api/wx/me').set(auth(visitorToken));
@@ -137,7 +142,7 @@ describe('POST /api/wx/join-requests/:id/link 关联', () => {
   });
 
   it('回填不覆盖已有值', async () => {
-    sqlite.prepare(`UPDATE students SET photo_url='keep.png', en_name='Kept' WHERE id='s4'`).run();
+    sqlite.prepare(`UPDATE students SET photo_url='keep.png', cn_name='Kept' WHERE id='s4'`).run();
     const { requestId } = await joinAs('brand-new', {
       cnName: '浩浩',
       enName: 'New',
@@ -147,7 +152,7 @@ describe('POST /api/wx/join-requests/:id/link 关联', () => {
     const teacher = await wxLogin(app, 'dev-teacher');
     await request(app).post(`/api/wx/join-requests/${requestId}/link`).set(auth(teacher)).send({ studentId: 's4' });
     const s4 = sqlite.prepare(`SELECT * FROM students WHERE id='s4'`).get() as any;
-    expect(s4).toMatchObject({ photo_url: 'keep.png', en_name: 'Kept', parent_phone: '13800138000' });
+    expect(s4).toMatchObject({ photo_url: 'keep.png', cn_name: 'Kept', parent_phone: '13800138000' });
   });
 
   it('跨组织老师 404；学生不在该班 400；重复关联同一请求 404', async () => {

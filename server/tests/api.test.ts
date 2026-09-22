@@ -169,7 +169,7 @@ describe('students', () => {
     const { agent } = await login();
     const created = await agent.post('/api/classes/c1/students').send({ name: '新同学' });
     expect(created.status).toBe(201);
-    expect(created.body).toMatchObject({ name: '新同学', source: 'teacher', score: 0, status: 'active' });
+    expect(created.body).toMatchObject({ name: '新同学', cnName: null, source: 'teacher', score: 0, status: 'active' });
 
     const detail = (await agent.get('/api/classes/c1')).body;
     expect(detail.studentCount).toBe(5);
@@ -181,15 +181,47 @@ describe('students', () => {
     expect((await agent.post('/api/classes/c1/students').send({ name: '  ' })).status).toBe(400);
   });
 
-  it('renames a student (PUT /api/students/:id) and reflects it in the class detail', async () => {
+  it('stores 中文名 given at creation', async () => {
     const { agent } = await login();
-    const res = await agent.put('/api/students/s1').send({ name: '小明明' });
-    expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ id: 's1', name: '小明明' });
-    expect((sqlite.prepare(`SELECT name FROM students WHERE id='s1'`).get() as any).name).toBe('小明明');
+    const created = await agent.post('/api/classes/c1/students').send({ name: 'Nancy', cnName: '南希' });
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({ name: 'Nancy', cnName: '南希' });
+    expect((sqlite.prepare(`SELECT cn_name FROM students WHERE id=?`).get(created.body.id) as any).cn_name).toBe('南希');
 
     const detail = (await agent.get('/api/classes/c1')).body;
-    expect(detail.students.find((s: any) => s.id === 's1').name).toBe('小明明');
+    expect(detail.students.find((s: any) => s.id === created.body.id).cnName).toBe('南希');
+  });
+
+  it('renames a student (PUT /api/students/:id) and reflects it in the class detail', async () => {
+    const { agent } = await login();
+    const res = await agent.put('/api/students/s1').send({ name: 'Ming', cnName: '小明明' });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: 's1', name: 'Ming', cnName: '小明明' });
+    expect(sqlite.prepare(`SELECT name, cn_name FROM students WHERE id='s1'`).get()).toMatchObject({
+      name: 'Ming',
+      cn_name: '小明明',
+    });
+
+    const detail = (await agent.get('/api/classes/c1')).body;
+    expect(detail.students.find((s: any) => s.id === 's1')).toMatchObject({ name: 'Ming', cnName: '小明明' });
+  });
+
+  it('leaves 中文名 untouched when the body carries no cnName key (stale page safety net)', async () => {
+    const { agent } = await login();
+    await agent.put('/api/students/s1').send({ name: 'Ming', cnName: '小明明' });
+    const res = await agent.put('/api/students/s1').send({ name: 'Mingming' });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ name: 'Mingming', cnName: '小明明' });
+    expect((sqlite.prepare(`SELECT cn_name FROM students WHERE id='s1'`).get() as any).cn_name).toBe('小明明');
+  });
+
+  it('clears 中文名 with a blank cnName', async () => {
+    const { agent } = await login();
+    await agent.put('/api/students/s1').send({ name: 'Ming', cnName: '小明明' });
+    const res = await agent.put('/api/students/s1').send({ name: 'Ming', cnName: '  ' });
+    expect(res.status).toBe(200);
+    expect(res.body.cnName).toBeNull();
+    expect((sqlite.prepare(`SELECT cn_name FROM students WHERE id='s1'`).get() as any).cn_name).toBeNull();
   });
 
   it('rejects a blank rename, unknown ids and cross-org students', async () => {
@@ -960,6 +992,14 @@ describe('student growth profile', () => {
 
   it('blocks unauthenticated access with 401', async () => {
     expect((await request(app).get('/api/students/s1/profile')).status).toBe(401);
+  });
+
+  it('carries 中文名 in the header payload', async () => {
+    const { agent } = await login();
+    await agent.put('/api/students/s1').send({ name: 'Ming', cnName: '小明' });
+    const res = await agent.get('/api/students/s1/profile');
+    expect(res.status).toBe(200);
+    expect(res.body.student).toMatchObject({ id: 's1', name: 'Ming', cnName: '小明' });
   });
 
   it("404s for another org's student and for unknown ids", async () => {

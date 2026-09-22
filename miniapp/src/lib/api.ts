@@ -118,8 +118,8 @@ export interface JoinRequestItem {
 
 export interface LinkableStudent {
   id: string;
-  name: string;
-  enName: string | null;
+  name: string; // 英文名 — 主显示名
+  cnName: string | null; // 中文名 — 老师据此把家长填的中文名对上号
   hasPhoto: boolean;
   linked: boolean;
 }
@@ -134,7 +134,7 @@ export interface SessionBrief {
 }
 
 export interface StudentHome {
-  student: { id: string; name: string; enName: string | null; photoUrl: string | null };
+  student: { id: string; name: string; cnName: string | null; photoUrl: string | null };
   class: { id: string; name: string; teacherName: string; orgName: string };
   sessions: SessionBrief[];
   latestSessionId: string | null;

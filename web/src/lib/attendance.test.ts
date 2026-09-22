@@ -21,9 +21,9 @@ const FIX: ClassAttendance = {
     { id: 'k3', date: '2026-06-20', startedAt: null, lessonNumber: 7, lessonTitle: null },
   ],
   students: [
-    { id: 's1', name: '小明', status: 'active' },
-    { id: 's2', name: '大壮', status: 'suspended' },
-    { id: 's3', name: '婷婷', status: 'active' },
+    { id: 's1', name: '小明', cnName: null, status: 'active' },
+    { id: 's2', name: '大壮', cnName: null, status: 'suspended' },
+    { id: 's3', name: '婷婷', cnName: null, status: 'active' },
   ],
   records: [
     { sessionId: 'k1', studentId: 's1', status: 'present', madeUp: false },

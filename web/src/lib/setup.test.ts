@@ -34,6 +34,7 @@ function fixture(): Pick<ClassDetail, 'groups' | 'students'> {
   ) => ({
     id,
     name,
+    cnName: null,
     source: 'parent' as const,
     status,
     hasPhoto: true,

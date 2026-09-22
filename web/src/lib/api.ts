@@ -61,13 +61,17 @@ export type StudentStatus = 'active' | 'suspended' | 'archived';
 
 export interface Student {
   id: string;
-  name: string;
+  name: string; // 英文名 — 主显示名
+  cnName: string | null; // 中文名 — 卡片/收款单下方小字
   source: 'parent' | 'teacher';
   status: StudentStatus;
   hasPhoto: boolean;
   score: number;
   groupId: string | null;
 }
+
+/** 学生写接口的响应形状（服务端 studentItem）—— 班级详情的 Student 去掉派生的 score/groupId。 */
+export type StudentBasic = Pick<Student, 'id' | 'name' | 'cnName' | 'source' | 'status' | 'hasPhoto'>;
 
 export interface Group {
   id: string;
@@ -273,6 +277,7 @@ export interface StudentProfile {
   student: {
     id: string;
     name: string;
+    cnName: string | null;
     source: 'parent' | 'teacher';
     status: StudentStatus;
     photoUrl: string | null;
@@ -402,6 +407,7 @@ export interface InvoiceItem {
   id: string;
   studentId: string;
   studentName: string;
+  studentCnName: string | null;
   studentStatus: StudentStatus;
   attendedCount: number;
   plannedCount: number;
@@ -481,6 +487,7 @@ export interface AttendanceSession {
 export interface AttendanceStudent {
   id: string;
   name: string;
+  cnName: string | null; // 类型跟随；考勤网格不显示中文名（格子太窄）
   status: StudentStatus;
 }
 
@@ -525,12 +532,14 @@ export const api = {
     classId: string,
     p: { name: string; teacherId: string; textbook: BookKey | null; isArchived?: boolean },
   ) => req<ClassDetail>('PUT', `/api/classes/${classId}`, p),
-  addStudent: (classId: string, name: string) => req<Student>('POST', `/api/classes/${classId}/students`, { name }),
-  updateStudent: (id: string, name: string) =>
-    req<{ id: string; name: string; status: StudentStatus }>('PUT', `/api/students/${id}`, { name }),
+  addStudent: (classId: string, p: { name: string; cnName?: string | null }) =>
+    req<StudentBasic & { score: number }>('POST', `/api/classes/${classId}/students`, p),
+  // cnName 不传 = 保持原中文名（服务端按 key 是否存在判定）
+  updateStudent: (id: string, p: { name: string; cnName?: string | null }) =>
+    req<StudentBasic>('PUT', `/api/students/${id}`, p),
   deleteStudent: (id: string) => req<{ ok: true }>('DELETE', `/api/students/${id}`),
   setStudentStatus: (id: string, status: StudentStatus) =>
-    req<{ id: string; name: string; status: StudentStatus }>('PUT', `/api/students/${id}/status`, { status }),
+    req<StudentBasic>('PUT', `/api/students/${id}/status`, { status }),
   listSessions: () => get<SessionListItem[]>('/api/sessions'),
   deleteSession: (id: string) => req<{ ok: true }>('DELETE', `/api/sessions/${id}`),
   // Partial 课堂信息 update — only keys present in `p` are written server-side.

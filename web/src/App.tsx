@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
+import { StudentModalProvider } from './components/StudentEditModal';
 import { ToastProvider } from './components/Toast';
 import { api, type Me } from './lib/api';
 import { Admin } from './pages/Admin';
@@ -38,38 +39,40 @@ export function App() {
 
   return (
     <ToastProvider>
-      <Routes>
-        <Route
-          path="/login"
-          element={
-            status === 'loading' ? (
-              <Splash />
-            ) : status === 'in' ? (
-              <Navigate to="/" replace />
-            ) : (
-              <Login
-                onLogin={(m) => {
-                  setMe(m);
-                  setStatus('in');
-                }}
-              />
-            )
-          }
-        />
-        <Route path="/" element={guard(<ClassList me={me} />)} />
-        <Route path="/classes" element={guard(<ClassList me={me} />)} />
-        <Route path="/classes/:id" element={guard(<ClassDetail me={me} />)} />
-        <Route path="/classes/:id/students/:sid" element={guard(<StudentProfile me={me} />)} />
-        <Route path="/classes/:id/sessions/:sid" element={guard(<SessionDetail me={me} />)} />
-        <Route path="/classes/:id/attendance" element={guard(<ClassAttendance />)} />
-        <Route path="/classes/:id/setup" element={guard(<Setup />)} />
-        <Route path="/classes/:id/classroom" element={guard(<Classroom />)} />
-        <Route path="/sessions" element={guard(<Sessions me={me} />)} />
-        <Route path="/billing" element={guard(<Billing me={me} />)} />
-        <Route path="/billing/:batchId" element={guard(<BillingBatch me={me} />)} />
-        <Route path="/teachers" element={guard(<Teachers me={me} />)} />
-        <Route path="/admin" element={guard(<Admin me={me} />)} />
-      </Routes>
+      <StudentModalProvider>
+        <Routes>
+          <Route
+            path="/login"
+            element={
+              status === 'loading' ? (
+                <Splash />
+              ) : status === 'in' ? (
+                <Navigate to="/" replace />
+              ) : (
+                <Login
+                  onLogin={(m) => {
+                    setMe(m);
+                    setStatus('in');
+                  }}
+                />
+              )
+            }
+          />
+          <Route path="/" element={guard(<ClassList me={me} />)} />
+          <Route path="/classes" element={guard(<ClassList me={me} />)} />
+          <Route path="/classes/:id" element={guard(<ClassDetail me={me} />)} />
+          <Route path="/classes/:id/students/:sid" element={guard(<StudentProfile me={me} />)} />
+          <Route path="/classes/:id/sessions/:sid" element={guard(<SessionDetail me={me} />)} />
+          <Route path="/classes/:id/attendance" element={guard(<ClassAttendance />)} />
+          <Route path="/classes/:id/setup" element={guard(<Setup />)} />
+          <Route path="/classes/:id/classroom" element={guard(<Classroom />)} />
+          <Route path="/sessions" element={guard(<Sessions me={me} />)} />
+          <Route path="/billing" element={guard(<Billing me={me} />)} />
+          <Route path="/billing/:batchId" element={guard(<BillingBatch me={me} />)} />
+          <Route path="/teachers" element={guard(<Teachers me={me} />)} />
+          <Route path="/admin" element={guard(<Admin me={me} />)} />
+        </Routes>
+      </StudentModalProvider>
     </ToastProvider>
   );
 }

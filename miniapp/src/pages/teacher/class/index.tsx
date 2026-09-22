@@ -175,6 +175,7 @@ export default function TeacherClass() {
                 {students?.map((s) => (
                   <Text key={s.id} className={`stu${s.linked ? ' linked' : ''}`} onClick={() => doLink(r, s)}>
                     {s.name}
+                    {s.cnName ? ` · ${s.cnName}` : ''}
                     {s.linked ? ' ✓' : ''}
                   </Text>
                 ))}
