@@ -429,6 +429,12 @@ function InvoiceEditModal({
       <div style={{ fontSize: 12, color: '#8a929e', margin: '8px 0 16px' }}>
         已上到堂 {inv.attendedCount} · 未上按计划 {inv.plannedCount} → 计费节数 <b>{inv.billableCount}</b>
         {batch.addonCents > 0 && `；附加费 ¥${centsToYuan(batch.addonCents)}/人（计费为 0 时不收）`}
+        {batch.lessonCountOverride != null && (
+          <div style={{ marginTop: 4, color: '#b07a1f' }}>
+            课程次数已手动设为 {batch.lessonCountOverride} 节，未上节数 = {batch.lessonCountOverride} −
+            周期内已上节数，不按上表的排班日期行数计
+          </div>
+        )}
       </div>
 
       <div style={{ display: 'flex', gap: 18, alignItems: 'flex-end', marginBottom: 12, flexWrap: 'wrap' }}>
