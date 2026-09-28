@@ -91,8 +91,8 @@ push master → GitHub Actions 构建镜像 → hookploy 部署，迁移随服�
 - **commit message**：首行只写一句简短总结，空行后用 `-` 列表写详情（改了什么 / 口径与根因 / 测试与验证结果）。
 - pnpm 装依赖用 `pnpm add`，勿手改 package.json；勿用 try/catch 除非要求；改完代码不跑 formatter / linter。
 
-## 待做
+## 待办与已知问题
 
-- **小程序上线**：0.2.0 邀请版已上传。剩余人工：mp 后台设体验版 → 真机过邀请全流程 → 提审发布。清单见 `kb/notes/2026-07-04-miniapp-invite-launch-gaps.md`。
-- **recap 分享到微信群 + 课后处理**：plan 已写好待实现，见 `kb/plans/2026-07-04-nce-class-recap-wechat-share.md`。
-- 不做（M1）：投屏实时多端同步、已 dismissed/linked 队列历史界面、wx.getPhoneNumber（需企业认证，手机号手填）。
+- `kb/todo.md` — 待做事项。问「接下来做什么」时读。
+- `kb/known-issues.md` — 当前已知的缺陷与简化实现。动相关功能前先查，发现新问题记进去，解决了就删。
+- M1 不做：投屏实时多端同步、已 dismissed/linked 队列历史界面、wx.getPhoneNumber（需企业认证，手机号手填）。

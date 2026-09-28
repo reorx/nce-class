@@ -34,7 +34,7 @@ tags:
 - mp 后台 request / uploadFile / downloadFile 三类合法域名已配 `https://service.domain`（用户 2026-07-05 完成）。
 - 开发者工具里 `urlCheck: false` 只对本地调试生效，真机/正式版走白名单。
 
-### 4. 微信开发者工具人工过一遍 weapp 产物（AGENTS.md 待做挂着的）
+### 4. 微信开发者工具人工过一遍 weapp 产物（kb/todo.md 挂着的）
 
 h5 是可自动化的替身，以下原生能力只能在工具/真机人工验证：
 
