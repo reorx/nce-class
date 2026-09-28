@@ -96,4 +96,5 @@ push master → GitHub Actions 构建镜像 → hookploy 部署，迁移随服�
 
 - `kb/todo.md` — 待做事项。问「接下来做什么」时读。
 - `kb/known-issues.md` — 当前已知的缺陷与简化实现。动相关功能前先查，发现新问题记进去，解决了就删。
+- `kb/next-up.md` — 要等某个时间点或条件（如部署后）才能做的核对。进 kb 工作时看有没有到期项。
 - M1 不做：投屏实时多端同步、已 dismissed/linked 队列历史界面、wx.getPhoneNumber（需企业认证，手机号手填）。
