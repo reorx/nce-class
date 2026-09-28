@@ -44,7 +44,7 @@ API 全在 `server/src/app.ts`，字段校验以代码为准。除 `/api/health`
 ## 开发与测试
 
 ```bash
-pnpm install     # 首次编译 better-sqlite3 原生模块
+pnpm install     # better-sqlite3 13 走 N-API 自带预编译，换 node 版本无需重编
 pnpm db:reset    # 重建 seed 数据 → server/data/app.db（dev server 在跑要重启，旧句柄指向被删 inode）
 pnpm dev         # server :5177 + web :5173（vite 代理 /api、/uploads）
 pnpm dev:miniapp # miniapp h5 watch :10086（需 server 在跑）
