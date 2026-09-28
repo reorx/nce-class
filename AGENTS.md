@@ -71,6 +71,7 @@ push master → GitHub Actions 构建镜像 → hookploy 部署，迁移随服�
 - `kb/docs/verification-guide.md` — curl 冒烟、agent-browser 流程与坑、小程序 h5 切角色、微信开发者工具。做端到端验证时读。
 - `kb/docs/miniapp-h5-three-role-e2e.md` — 小程序 h5 三角色流程（生成邀请 → 注册 → 关联 → recap）。改邀请、账户、小程序后跑回归时读。
 - `kb/docs/deploy-and-ops.md` — 发版流水线、环境变量、账号 CLI、小程序上传。
+- `kb/docs/miniapp-status-and-roadmap.md` — 小程序功能范围、上线链路核对表、体验版验收步骤、下一版规划。问小程序进度或做小程序发布前读。
 
 ## 须知 / 约定
 

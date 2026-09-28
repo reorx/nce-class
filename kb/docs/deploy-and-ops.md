@@ -74,7 +74,7 @@ mise x node@24 -- pnpm --filter miniapp upload:weapp    # 上传为开发版，�
 - preview 打的也是正式构建，扫码后直连生产数据。
 - 上传后还需要在微信公众平台后台设为体验版、提审、发布。
 
-上线进度与验收清单见 `kb/notes/2026-07-04-miniapp-invite-launch-gaps.md`。
+上线进度与验收清单见 `kb/docs/miniapp-status-and-roadmap.md`。
 
 ## 相关文件
 
