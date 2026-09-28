@@ -25,11 +25,13 @@ export function relativeDayCN(dateStr: string, today = REFERENCE_TODAY): string 
   return `${diff} 天前`;
 }
 
-/** Real local today (YYYY-MM-DD) — for billing/账务 paths. NOT REFERENCE_TODAY,
- *  which only serves display-layer relative labels on demo data. */
-export function localToday(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const CN_OFFSET_MS = 8 * 3600000;
+
+/** Real today (YYYY-MM-DD) in 北京时间 — for billing/账务 paths. NOT REFERENCE_TODAY,
+ *  which only serves display-layer relative labels on demo data. Fixed UTC+8
+ *  (no DST) so the answer doesn't depend on the container's TZ (prod is UTC). */
+export function localToday(now = new Date()): string {
+  return new Date(now.getTime() + CN_OFFSET_MS).toISOString().slice(0, 10);
 }
 
 /** minutes -> "Xh0Ym" e.g. 118 -> "1h58m" */

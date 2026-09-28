@@ -2,6 +2,7 @@ import type DatabaseType from 'better-sqlite3';
 import type { Express } from 'express';
 import request from 'supertest';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { localToday } from '../src/util/time.js';
 import { setupTestApp } from './helpers.js';
 
 let app: Express;
@@ -19,14 +20,12 @@ async function login(username = 'wangli', password = 'demo1234') {
   return { agent, res };
 }
 
-// 计费口径用真实本地日期切分（生产路径 today = new Date()），测试里的日期
-// 一律相对今天推算，保证任何一天跑都稳定。
-const fmtDate = (d: Date) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+// 计费口径用真实当天（北京时间，localToday）切分，测试里的日期一律相对
+// 同一个「今天」推算，保证任何一天、任何机器时区跑都稳定。
 const day = (offset: number) => {
-  const d = new Date();
-  d.setDate(d.getDate() + offset);
-  return fmtDate(d);
+  const d = new Date(`${localToday()}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + offset);
+  return d.toISOString().slice(0, 10);
 };
 
 /** 默认周期：过去 3 节（D-6/D-4/D-2）+ 未来 2 节（D+2/D+4），18:00–20:00。 */
