@@ -1,5 +1,5 @@
 import type DatabaseType from 'better-sqlite3';
-import type { Express } from 'express';
+import type { Server } from 'node:http';
 import request from 'supertest';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { setupTestApp, wxLogin } from './helpers.js';
@@ -7,7 +7,7 @@ import { setupTestApp, wxLogin } from './helpers.js';
 // 邀请队列与关联：老师看 pending 队列 → 关联到已有 student（建 binding +
 // 回填空字段）或忽略；家长侧 children/recap 全部由 binding 守卫。
 
-let app: Express;
+let app: Server;
 let sqlite: DatabaseType.Database;
 let reseed: () => void;
 

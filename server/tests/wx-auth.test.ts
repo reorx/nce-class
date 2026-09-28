@@ -1,5 +1,5 @@
 import type DatabaseType from 'better-sqlite3';
-import type { Express } from 'express';
+import type { Server } from 'node:http';
 import request from 'supertest';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { setupTestApp, wxLogin } from './helpers.js';
@@ -7,7 +7,7 @@ import { setupTestApp, wxLogin } from './helpers.js';
 // 小程序会话：wx.login code → /api/wx/login 换 Bearer token（WX_MOCK stub），
 // /api/wx/* 走 token 中间件；bind-teacher 一次性把微信账户绑到老师。
 
-let app: Express;
+let app: Server;
 let sqlite: DatabaseType.Database;
 let reseed: () => void;
 

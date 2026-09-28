@@ -13,7 +13,7 @@ server/  Express + TS · Drizzle ORM + SQLite (better-sqlite3)
   src/auth/     老师签名 cookie + 小程序 wx Bearer token（WX_MOCK=1 时 code 用 `mock:<name>`）
   src/lib/      billing.ts 计费纯函数
   src/storage/  StorageClient：local（默认）/ minio / oss，S3_VENDOR 切换；库里存 key，读侧 getUrl 解析
-  tests/        vitest + supertest 集成测试（helpers.ts 的 setupTestApp 用临时库）
+  tests/        vitest + supertest 集成测试（helpers.ts 的 setupTestApp 用临时库，返回绑 127.0.0.1 的 server；勿直接 request(createApp())，见 listenLocal 注释）
 web/     React + Vite + TS · 老师端桌面 Web（管理页 IBM Plex；课堂系 Nunito/Baloo 2）
   src/App.tsx   路由表
   src/pages/    一页一文件；Classroom = 课堂主界面（看板/背书/作业/出勤/调组/班级信息/日志 七视图）

@@ -1,10 +1,10 @@
 import type DatabaseType from 'better-sqlite3';
-import type { Express } from 'express';
+import type { Server } from 'node:http';
 import request from 'supertest';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { setupTestApp, wxLogin } from './helpers.js';
 
-let app: Express;
+let app: Server;
 let sqlite: DatabaseType.Database;
 let reseed: () => void;
 

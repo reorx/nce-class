@@ -1,5 +1,6 @@
 import type DatabaseType from 'better-sqlite3';
 import { mkdtempSync } from 'node:fs';
+import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Express } from 'express';
@@ -8,10 +9,21 @@ import { DDL } from '../src/db/ddl.js';
 
 type DB = DatabaseType.Database;
 
+// supertest 拿到裸 app 时每个请求 listen(0) 绑 '::'。macOS 上 '::' 能分到别的进程
+// 已独占的 127.0.0.1:P，而 supertest 连的是 127.0.0.1:P，请求就落到那个进程上，
+// 随机出 401/404/501/Parse Error。所以一个测试文件只起一个 server，显式绑
+// 127.0.0.1（内核分端口时会避开已占用的），supertest 见已监听就直接复用。
+export async function listenLocal(app: Express): Promise<Server> {
+  const server = createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  server.unref(); // 不拖住 worker 退出
+  return server;
+}
+
 // Boots the real app against a throwaway SQLite file. Must run before any other
 // import of db/client (env is read at client module-load time), so callers use
 // this from beforeAll and never statically import app/client themselves.
-export async function setupTestApp(): Promise<{ app: Express; sqlite: DB; reseed: () => void }> {
+export async function setupTestApp(): Promise<{ app: Server; sqlite: DB; reseed: () => void }> {
   process.env.NCE_DB_PATH = join(mkdtempSync(join(tmpdir(), 'nce-test-')), 'app.db');
   process.env.NCE_UPLOAD_DIR = mkdtempSync(join(tmpdir(), 'nce-uploads-'));
   process.env.AUTH_SECRET = 'test-secret';
@@ -20,7 +32,7 @@ export async function setupTestApp(): Promise<{ app: Express; sqlite: DB; reseed
   sqlite.exec(DDL);
   seed(sqlite);
   const { createApp } = await import('../src/app.js');
-  return { app: createApp(), sqlite, reseed: () => reseed(sqlite) };
+  return { app: await listenLocal(createApp()), sqlite, reseed: () => reseed(sqlite) };
 }
 
 const TABLES = [
@@ -195,7 +207,7 @@ function seed(sqlite: DB) {
 }
 
 /** POST /api/wx/login with a mock code and return the Bearer token. */
-export async function wxLogin(app: Express, name: string): Promise<string> {
+export async function wxLogin(app: Server, name: string): Promise<string> {
   const request = (await import('supertest')).default;
   const res = await request(app)
     .post('/api/wx/login')

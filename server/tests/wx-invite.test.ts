@@ -1,5 +1,5 @@
 import type DatabaseType from 'better-sqlite3';
-import type { Express } from 'express';
+import type { Server } from 'node:http';
 import request from 'supertest';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { setupTestApp, wxLogin } from './helpers.js';
@@ -7,7 +7,7 @@ import { setupTestApp, wxLogin } from './helpers.js';
 // 邀请与注册：老师在小程序生成一次性带过期 token 的邀请 → 家长通过分享卡片
 // 打开预览 → 传照片 → 提交 join_request（不建 student）。
 
-let app: Express;
+let app: Server;
 let sqlite: DatabaseType.Database;
 let reseed: () => void;
 

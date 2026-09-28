@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { DDL } from '../src/db/ddl.js';
+import { listenLocal } from './helpers.js';
 
 // Provisioning a clean production database: no seed, no fixtures. The env must
 // be set before the first import of db/client (read at module-load time), so
@@ -244,7 +245,7 @@ describe('createTeacher', () => {
     expect(teacherId).toBeTruthy();
 
     const { createApp } = await import('../src/app.js');
-    const res = await request(createApp())
+    const res = await request(await listenLocal(createApp()))
       .post('/api/auth/login')
       .send({ username: 'wangli', password: 'real-pass-1' });
     expect(res.status).toBe(200);
@@ -298,7 +299,7 @@ describe('createTeacher', () => {
 
 async function login(username: string, password: string) {
   const { createApp } = await import('../src/app.js');
-  return request(createApp()).post('/api/auth/login').send({ username, password });
+  return request(await listenLocal(createApp())).post('/api/auth/login').send({ username, password });
 }
 
 describe('resetPassword', () => {
