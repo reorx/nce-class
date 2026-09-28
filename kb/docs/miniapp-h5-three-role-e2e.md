@@ -1,5 +1,6 @@
 ---
 created: 2026-07-06
+updated: 2026-09-28
 tags:
   - miniapp
   - e2e
@@ -9,7 +10,7 @@ tags:
 
 # 小程序 h5 三角色端到端验证流程
 
-用 agent-browser 在 h5 端跑通「老师生成邀请 → 新家长注册 → 老师关联 → 家长看 recap」全流程。h5 是 weapp 的可自动化开发替身，此流程已验证可照抄；涉及分享卡片/chooseImage/原生组件的改动仍需微信开发者工具人工过（见 AGENTS.md「验证套路」）。
+用 agent-browser 在 h5 端跑通「老师生成邀请 → 新家长注册 → 老师关联 → 家长看 recap」全流程。h5 是 weapp 的可自动化开发替身，此流程已验证可照抄；涉及分享卡片/chooseImage/原生组件的改动仍需微信开发者工具人工过（见 `kb/docs/verification-guide.md`）。
 
 ## 前置
 
@@ -78,4 +79,4 @@ sqlite3 -header -column server/data/app.db \
    SELECT student_id, wechat_account_id FROM student_wechat_bindings;"
 ```
 
-预期：join_request `status=linked` 且 `linked_student_id` 指向所选学生；bindings 新增一行。关联时服务端会回填 student 的空字段（photo/en_name/parent_phone），不覆盖已有值。
+预期：join_request `status=linked` 且 `linked_student_id` 指向所选学生；bindings 新增一行。关联时服务端会回填 student 的空字段（photo/cn_name/parent_phone），不覆盖已有值。

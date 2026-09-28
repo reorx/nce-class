@@ -41,7 +41,7 @@ h5 是可自动化的替身，以下原生能力只能在工具/真机人工验�
 - teacher/class 页「分享到微信群」：`open-type="share"` 按钮弹分享卡片，确认转发 path 是 `pages/join/index?invite=<token>`。
 - join 页 `chooseImage` 选图 → 上传。
 - 关联/忽略的 `showModal` 确认弹窗。
-- 操作步骤（CLI 打开、mock 登录 console 命令）见 AGENTS.md「微信开发者工具（weapp 本地调试）」一节。
+- 操作步骤（CLI 打开、mock 登录 console 命令）见 `kb/docs/verification-guide.md`「微信开发者工具」一节。
 
 ### 5. ✅(上传) 体验版 → 审核发布（2026-07-05 首个版本已传，待后台设体验版）
 

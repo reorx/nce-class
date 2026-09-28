@@ -9,7 +9,7 @@ export default defineConfig<'webpack5'>(async (merge) => {
   // 放 gitignored 的 miniapp/.env.production.local（TARO_APP_API_BASE=https://...）。
   if (process.env.NODE_ENV === 'production' && process.env.TARO_ENV !== 'h5' && !process.env.TARO_APP_API_BASE) {
     throw new Error(
-      'TARO_APP_API_BASE is not set — create miniapp/.env.production.local (see miniapp/README or AGENTS.md)',
+      'TARO_APP_API_BASE is not set — create miniapp/.env.production.local (see kb/docs/deploy-and-ops.md)',
     );
   }
   const baseConfig: UserConfigExport<'webpack5'> = {
