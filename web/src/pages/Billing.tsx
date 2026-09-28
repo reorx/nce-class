@@ -6,6 +6,7 @@ import { TopBar } from '../components/TopBar';
 import { api, type BillingBatchItem, type Me } from '../lib/api';
 import { centsToYuan, fmtMoney } from '../lib/money';
 import { GREEN } from '../lib/theme';
+import { utcToLocalDate } from '../lib/utcTime';
 
 const md = (d: string | null) => (d ? d.slice(5) : '—');
 
@@ -160,7 +161,7 @@ function BatchCard({ b }: { b: BillingBatchItem }) {
       </div>
       <div className="mono" style={{ fontSize: 12.5, color: '#8a929e', marginTop: 5 }}>
         {md(b.minDate)} ~ {md(b.maxDate)} · {b.lessonCount} 节 · ¥{centsToYuan(b.unitPriceCents)}/节
-        {b.addonCents > 0 && ` · 附加 ¥${centsToYuan(b.addonCents)}/人`} · 创建于 {md(b.createdAt.slice(0, 10))}
+        {b.addonCents > 0 && ` · 附加 ¥${centsToYuan(b.addonCents)}/人`} · 创建于 {md(utcToLocalDate(b.createdAt))}
       </div>
       <div style={{ marginTop: 10, height: 6, borderRadius: 3, background: '#eef1f5', overflow: 'hidden' }}>
         <div style={{ width: `${pct}%`, height: '100%', background: settled ? '#2fb457' : '#4caf7d' }} />

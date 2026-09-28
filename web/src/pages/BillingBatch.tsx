@@ -10,6 +10,7 @@ import { weekdayCN } from '../lib/attendance';
 import { centsToYuan, fmtMoney, yuanToCents } from '../lib/money';
 import { studentNamePair } from '../lib/studentName';
 import { editIconBtnStyle, statusTag } from '../lib/theme';
+import { utcToLocalMinute } from '../lib/utcTime';
 
 const md = (d: string | null) => (d ? d.slice(5) : '—');
 
@@ -99,7 +100,7 @@ export function BillingBatch({ me }: { me: Me | null }) {
                 {d.futureLessonCount}）· 单价 ¥{centsToYuan(d.unitPriceCents)}/节
                 {d.addonCents > 0 &&
                   ` · 附加 ¥${centsToYuan(d.addonCents)}/人${d.addonNote ? `（${d.addonNote}）` : ''}`}
-                {d.snapshotAt && ` · 快照于 ${d.snapshotAt.slice(5, 16)}`}
+                {d.snapshotAt && ` · 快照于 ${utcToLocalMinute(d.snapshotAt)}`}
               </div>
             )}
           </div>
@@ -326,7 +327,7 @@ function InvoiceRow({
           <>
             <span style={{ color: '#2c7a48', fontWeight: 700 }}>✓ 已收款</span>
             <div style={{ fontSize: 11, color: '#8a929e', marginTop: 2 }}>
-              {inv.paidAt?.slice(5, 16)}
+              {inv.paidAt && utcToLocalMinute(inv.paidAt)}
               {inv.paidByName ? ` · ${inv.paidByName}` : ''}
             </div>
           </>
