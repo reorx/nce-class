@@ -20,20 +20,22 @@ const TEACHERS = [
 ];
 
 // 三年级A班 (c1) — the detailed class shown across the class-detail screenshots.
+// `name` = 英文名 (主显示名), `cn` = 中文名 — same split as production.
 const C1_STUDENTS = [
-  { key: 1, name: '小明', source: 'parent', score: 17, photo: true, group: 'g1' },
-  { key: 2, name: '小红', source: 'teacher', score: 12, photo: true, group: 'g1' },
-  { key: 3, name: '小刚', source: 'teacher', score: 4, photo: false, group: 'g1' },
-  { key: 4, name: '乐乐', source: 'parent', score: 23, photo: true, group: 'g1' },
-  { key: 5, name: '丽丽', source: 'parent', score: 9, photo: true, group: 'g2' },
-  { key: 6, name: '大壮', source: 'teacher', score: 6, photo: false, group: 'g2' },
-  { key: 7, name: '欣欣', source: 'parent', score: 16, photo: true, group: 'g2' },
-  { key: 8, name: '明明', source: 'teacher', score: 5, photo: false, group: 'g2' },
-  { key: 9, name: '军军', source: 'parent', score: 21, photo: true, group: 'g3' },
-  { key: 10, name: '悦悦', source: 'parent', score: 8, photo: true, group: 'g3' },
-  { key: 11, name: '婷婷', source: 'teacher', score: 14, photo: true, group: 'g3' },
-  { key: 12, name: '浩浩', source: 'teacher', score: 11, photo: false, group: 'g3' },
-  { key: 13, name: '浩浩', source: 'parent', score: 0, photo: true, group: null }, // ungrouped duplicate
+  { key: 1, name: 'Tom', cn: '小明', source: 'parent', score: 17, photo: true, group: 'g1' },
+  { key: 2, name: 'Lucy', cn: '小红', source: 'teacher', score: 12, photo: true, group: 'g1' },
+  { key: 3, name: 'Gary', cn: '小刚', source: 'teacher', score: 4, photo: false, group: 'g1' },
+  { key: 4, name: 'Leo', cn: '乐乐', source: 'parent', score: 23, photo: true, group: 'g1' },
+  { key: 5, name: 'Lily', cn: '丽丽', source: 'parent', score: 9, photo: true, group: 'g2' },
+  { key: 6, name: 'Martin', cn: '大壮', source: 'teacher', score: 6, photo: false, group: 'g2' },
+  { key: 7, name: 'Cindy', cn: '欣欣', source: 'parent', score: 16, photo: true, group: 'g2' },
+  { key: 8, name: 'Mike', cn: '明明', source: 'teacher', score: 5, photo: false, group: 'g2' },
+  { key: 9, name: 'Jerry', cn: '军军', source: 'parent', score: 21, photo: true, group: 'g3' },
+  { key: 10, name: 'Joy', cn: '悦悦', source: 'parent', score: 8, photo: true, group: 'g3' },
+  { key: 11, name: 'Tina', cn: '婷婷', source: 'teacher', score: 14, photo: true, group: 'g3' },
+  { key: 12, name: 'Harry', cn: '浩浩', source: 'teacher', score: 11, photo: false, group: 'g3' },
+  // 疑似重复 demo: 同英文名 + 同中文名，班级页据此出「疑似重复学生」提示
+  { key: 13, name: 'Harry', cn: '浩浩', source: 'parent', score: 0, photo: true, group: null },
 ];
 const C1_GROUPS = [
   { id: 'g1', name: '第1组', emoji: '🦁' },
@@ -49,6 +51,61 @@ const C1_SESSIONS = [
   { n: 2, title: 'Breakfast or lunch?', date: '2026-05-22', plan: 120, actual: 119 },
   { n: 1, title: 'A private conversation', date: '2026-05-15', plan: 120, actual: 131 },
 ];
+
+// 英文名池 — 其他班学生的主显示名。按全局游标顺序取，一个班内必不重名
+// (最大班 18 人 < 池长)，跨班重名与现实一致。
+const EN_POOL = [
+  'Alice',
+  'Ben',
+  'Cathy',
+  'Daniel',
+  'Ella',
+  'Frank',
+  'Grace',
+  'Henry',
+  'Ivy',
+  'Jack',
+  'Kelly',
+  'Lucas',
+  'Mia',
+  'Nick',
+  'Olivia',
+  'Peter',
+  'Queenie',
+  'Ryan',
+  'Sophie',
+  'Tony',
+  'Vivian',
+  'William',
+  'Yoyo',
+  'Zoe',
+  'Amy',
+  'Bruce',
+  'Chloe',
+  'David',
+  'Emma',
+  'Felix',
+  'Gina',
+  'Hugo',
+  'Iris',
+  'Jason',
+  'Karen',
+  'Leon',
+  'Maggie',
+  'Nathan',
+  'Oscar',
+  'Penny',
+  'Rex',
+  'Sunny',
+  'Tina',
+  'Vera',
+  'Wendy',
+  'Yuki',
+  'Zack',
+  'Andy',
+];
+let enSeq = 0;
+const nextEn = () => EN_POOL[enSeq++ % EN_POOL.length];
 
 // Other classes — only counts, roster preview & last-session date are shown.
 const FILLER = [
@@ -257,6 +314,7 @@ function seedC1() {
         id: sid,
         classId: cls.id,
         name: s.name,
+        cnName: s.cn,
         source: s.source,
         photoUrl: s.photo ? `seed://photo/${s.key}` : null,
         recapToken: token(),
@@ -349,12 +407,13 @@ function seedOtherClass(c: (typeof OTHER_CLASSES)[number]) {
   let fi = 0;
   while (names.length < c.count) names.push(FILLER[fi++ % FILLER.length]);
 
-  names.slice(0, c.count).forEach((name, i) => {
+  names.slice(0, c.count).forEach((cn, i) => {
     db.insert(t.students)
       .values({
         id: `s-${c.id}-${i + 1}`,
         classId: c.id,
-        name,
+        name: nextEn(),
+        cnName: cn,
         source: i % 3 === 0 ? 'teacher' : 'parent',
         photoUrl: `seed://photo/${c.id}/${i}`,
         recapToken: token(),
