@@ -113,6 +113,22 @@ describe('B14 local classroom first', () => {
     expect(loadSession('c1')).not.toBeNull();
   });
 
+  it('when a slow identity read resolves, the classroom is not remounted (view state kept)', async () => {
+    client.removeQueries({ queryKey: authKeys.me() });
+    storeLive();
+    const slowMe = deferred<Response>();
+    server.on('GET', '/api/me', () => slowMe.promise);
+    server.on('GET', '/api/teachers', [f.teacher()]);
+    server.on('GET', '/api/tags', []);
+    renderApp(client, '/classes/c1/classroom');
+    fireEvent.click(screen.getByRole('button', { name: /日志/ }));
+    await screen.findByText('课堂日志');
+    slowMe.resolve(json(f.me()));
+    await waitFor(() => expect(client.getQueryData(authKeys.me())).toEqual(f.me()));
+    await act(async () => {});
+    expect(screen.getByText('课堂日志')).toBeTruthy();
+  });
+
   it('URL lesson params never replace a stored classroom', async () => {
     storeLive();
     renderApp(client, '/classes/c1/classroom?lesson=9&title=New');

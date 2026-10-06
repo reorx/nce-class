@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Navigate, Route, Routes, useLocation, useParams, type Location } from 'react-router-dom';
 import { BackgroundErrorToasts } from './components/BackgroundErrorToasts';
-import { SignOutProvider } from './components/SignOut';
+import { SignOutProvider, useSignOut } from './components/SignOut';
 import { StudentModalProvider } from './components/StudentEditModal';
 import { ToastProvider } from './components/Toast';
 import { Admin } from './pages/Admin';
@@ -46,14 +46,11 @@ export function App() {
     ) : (
       <Splash />
     );
-  const guard = (el: ReactNode) =>
-    status === 'in' ? (
-      el
-    ) : status === 'out' ? (
-      <Navigate to="/login" replace state={{ from: pathOf(location) }} />
-    ) : (
-      pending
-    );
+  const guard = (el: ReactNode) => (
+    <Guard status={status} pending={pending}>
+      {el}
+    </Guard>
+  );
 
   return (
     <ToastProvider>
@@ -83,7 +80,7 @@ export function App() {
             <Route
               path="/classes/:id/classroom"
               element={
-                <LocalClassroomGuard status={status} otherwise={guard(<Classroom />)}>
+                <LocalClassroomGuard status={status} pending={pending}>
                   <Classroom />
                 </LocalClassroomGuard>
               }
@@ -100,19 +97,46 @@ export function App() {
   );
 }
 
-/** 有本地进行中课堂且不是「确认未登录」时直接渲染课堂，其余交给普通守卫。 */
-function LocalClassroomGuard({
+/**
+ * 已登录才渲染；未登录跳登录页（被动退出记来处，主动退出不记）；其余显示加载 / 读取失败。
+ * localOk：本机有可离线进行的内容（进行中的课堂），身份读取中 / 失败时也直接渲染。
+ */
+function Guard({
   status,
-  otherwise,
+  pending,
+  localOk = false,
   children,
 }: {
   status: AuthStatus;
-  otherwise: ReactNode;
+  pending: ReactNode;
+  localOk?: boolean;
+  children: ReactNode;
+}) {
+  const location = useLocation();
+  const { signedOutByUser } = useSignOut();
+  if (status === 'in' || (localOk && status !== 'out')) return <>{children}</>;
+  if (status === 'out') {
+    return <Navigate to="/login" replace state={signedOutByUser() ? undefined : { from: pathOf(location) }} />;
+  }
+  return <>{pending}</>;
+}
+
+/** 课堂页：本机已有该班进行中的课堂时，身份读取中 / 失败也进课堂（同一棵 Guard 树，身份就绪时不重挂载）。 */
+function LocalClassroomGuard({
+  status,
+  pending,
+  children,
+}: {
+  status: AuthStatus;
+  pending: ReactNode;
   children: ReactNode;
 }) {
   const { id = '' } = useParams();
-  const local = (status === 'loading' || status === 'error') && loadSession(id) != null;
-  return <>{local ? children : otherwise}</>;
+  return (
+    <Guard status={status} pending={pending} localOk={status !== 'in' && loadSession(id) != null}>
+      {children}
+    </Guard>
+  );
 }
 
 const centered = {
