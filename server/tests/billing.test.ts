@@ -61,12 +61,11 @@ function insertSession(id: string, date: string, atts: Record<string, { attendan
 
 /**
  * 标准计费现场（今天 = D0）：
- * - 周期 5 节：D-6 / D-4 / D-2 / D+2 / D+4（D-2 没开课 → 临时取消不收钱）
- * - 实际课堂：A@D-6、B@D-4、C@D-5（排班外临时加课，计入）
- * - s1 全勤 3 节 + 未来 2 → billable 5
- * - s2 A 缺席已补、B 请假未补、C 缺席 → 到堂 1 + 未来 2 → 3
- * - s3 中途入班（A 无快照行）、B/C 到堂 → 2 + 2 → 4
- * - s4 停课：A 到堂 → 1 + planned 0 → 1
+ * - 周期 5 节：D-6 / D-4 / D-2 / D+2 / D+4（D-2 没开课）
+ * - 实际课堂：A@D-6、B@D-4、C@D-5（排班外临时加课，计入已上）→ 已上 3、未上 2
+ * - 应收一律 = 单价 × 5 + 附加费，出勤只记「已上到堂」供展示：
+ *   s1 全勤 3；s2 A 缺席已补、B 请假未补、C 缺席 → 1；s3 中途入班（A 无快照行）→ 2；
+ *   s4 停课、A 到堂 → 1
  * - s5 归档且没上过 → 不建单
  */
 function seedBillingScene() {
@@ -208,7 +207,7 @@ describe('schedules API', () => {
 });
 
 describe('billing batches API', () => {
-  it('snapshots per-student counts and amounts on batch creation (全口径)', async () => {
+  it('snapshots the same standard amount for every student; attendance is recorded for display only', async () => {
     const { agent } = await login();
     seedBillingScene();
     const sched = await createSchedule(agent);
@@ -225,24 +224,11 @@ describe('billing batches API', () => {
       adjusted: 0,
       status: 'pending',
     });
-    expect(inv.get('s2')).toMatchObject({
-      attendedCount: 1,
-      plannedCount: 2,
-      billableCount: 3,
-      computedAmountCents: 33000,
-    });
-    expect(inv.get('s3')).toMatchObject({
-      attendedCount: 2,
-      plannedCount: 2,
-      billableCount: 4,
-      computedAmountCents: 43000,
-    });
-    expect(inv.get('s4')).toMatchObject({
-      attendedCount: 1,
-      plannedCount: 0,
-      billableCount: 1,
-      computedAmountCents: 13000,
-    });
+    const standard = { plannedCount: 2, billableCount: 5, computedAmountCents: 53000, finalAmountCents: 53000 };
+    expect(inv.get('s2')).toMatchObject({ attendedCount: 1, ...standard });
+    expect(inv.get('s3')).toMatchObject({ attendedCount: 2, ...standard });
+    // 停课生同样按标准应收，个别情况由老师改最终金额
+    expect(inv.get('s4')).toMatchObject({ attendedCount: 1, ...standard });
     expect(inv.has('s5')).toBe(false);
     expect(res.body).toMatchObject({
       classId: 'c1',
@@ -254,14 +240,13 @@ describe('billing batches API', () => {
     expect(res.body.snapshotAt).toBeTruthy();
   });
 
-  it('charges no addon when billable is 0 (完全没参与的学生 computed=0)', async () => {
+  it('charges the standard amount even when no lesson in the period was held', async () => {
     const { agent } = await login();
-    // 周期全在过去且没上任何课 → 所有 active 学生 billable=0
     const sched = await createSchedule(agent, [{ date: day(-3), startTime: '18:00', endTime: '20:00' }]);
     const res = await createBatch(agent, sched.id);
     expect(res.status).toBe(201);
     for (const r of res.body.invoices) {
-      expect(r).toMatchObject({ billableCount: 0, computedAmountCents: 0, finalAmountCents: 0 });
+      expect(r).toMatchObject({ attendedCount: 0, billableCount: 1, computedAmountCents: 13000, finalAmountCents: 13000 });
     }
   });
 
@@ -305,12 +290,12 @@ describe('billing batches API', () => {
       invoiceCount: 4,
       paidCount: 1,
       paidAmountCents: 53000,
-      pendingAmountCents: 33000 + 43000 + 13000,
-      totalAmountCents: 53000 + 33000 + 43000 + 13000,
+      pendingAmountCents: 53000 * 3,
+      totalAmountCents: 53000 * 4,
     });
   });
 
-  it('creates a batch with a lessonCount override: 全勤按覆盖次数计费, planned = 覆盖 − 已上', async () => {
+  it('creates a batch with a lessonCount override: 人人按覆盖次数计费, planned = 覆盖 − 已上', async () => {
     const { agent } = await login();
     seedBillingScene();
     const sched = await createSchedule(agent);
@@ -325,16 +310,10 @@ describe('billing batches API', () => {
       futureLessonCount: 5,
     });
     const inv = new Map(res.body.invoices.map((r: any) => [r.studentId, r]));
-    // s1 全勤 3 节 → billable 恰为覆盖次数 8
-    expect(inv.get('s1')).toMatchObject({
-      attendedCount: 3,
-      plannedCount: 5,
-      billableCount: 8,
-      computedAmountCents: 10000 * 8 + 3000,
-    });
-    expect(inv.get('s2')).toMatchObject({ attendedCount: 1, plannedCount: 5, billableCount: 6 });
-    // 停课生 planned 仍强制 0
-    expect(inv.get('s4')).toMatchObject({ attendedCount: 1, plannedCount: 0, billableCount: 1 });
+    const standard = { plannedCount: 5, billableCount: 8, computedAmountCents: 10000 * 8 + 3000 };
+    expect(inv.get('s1')).toMatchObject({ attendedCount: 3, ...standard });
+    expect(inv.get('s2')).toMatchObject({ attendedCount: 1, ...standard });
+    expect(inv.get('s4')).toMatchObject({ attendedCount: 1, ...standard });
   });
 
   it('stores no override when lessonCount equals the schedule count (继续跟随排班)', async () => {
@@ -404,29 +383,36 @@ describe('invoices API', () => {
     expect((await agent.post(`/api/invoices/${invOf('s1').id}/unconfirm`)).status).toBe(409);
   });
 
-  it('edits unit price / final amount / note on a pending invoice; adjusted follows final≠computed', async () => {
+  it('edits final amount / note on a pending invoice; adjusted follows final≠computed', async () => {
     const { agent, invOf } = await scene();
-    // s3: billable 4。改单价 → computed 跟着变，final 未覆盖 → 自动跟随，adjusted=0
-    const priced = await agent.put(`/api/invoices/${invOf('s3').id}`).send({ unitPriceCents: 9000 });
-    expect(priced.status).toBe(200);
-    expect(priced.body).toMatchObject({
-      unitPriceCents: 9000,
-      computedAmountCents: 9000 * 4 + 3000,
-      finalAmountCents: 9000 * 4 + 3000,
-      adjusted: 0,
-    });
-
-    // s2: 覆盖最终金额 + 备注 → adjusted=1
+    // s2: 直接填最终金额 + 备注 → adjusted=1，应收不变
     const overridden = await agent
       .put(`/api/invoices/${invOf('s2').id}`)
-      .send({ finalAmountCents: 30000, note: '老学员优惠' });
+      .send({ finalAmountCents: 30000, note: '中途入班' });
     expect(overridden.status).toBe(200);
-    expect(overridden.body).toMatchObject({ finalAmountCents: 30000, adjusted: 1, note: '老学员优惠' });
+    expect(overridden.body).toMatchObject({
+      computedAmountCents: 53000,
+      finalAmountCents: 30000,
+      adjusted: 1,
+      note: '中途入班',
+    });
 
-    // 把最终金额改回 computed → adjusted 归 0
-    const reset = await agent.put(`/api/invoices/${invOf('s2').id}`).send({ finalAmountCents: 33000 });
+    // 只改备注 → 最终金额保持已填的值
+    const noted = await agent.put(`/api/invoices/${invOf('s2').id}`).send({ note: '中途入班，少收 4 节' });
+    expect(noted.status).toBe(200);
+    expect(noted.body).toMatchObject({ finalAmountCents: 30000, adjusted: 1, note: '中途入班，少收 4 节' });
+
+    // 把最终金额改回应收 → adjusted 归 0
+    const reset = await agent.put(`/api/invoices/${invOf('s2').id}`).send({ finalAmountCents: 53000 });
     expect(reset.status).toBe(200);
-    expect(reset.body).toMatchObject({ finalAmountCents: 33000, adjusted: 0 });
+    expect(reset.body).toMatchObject({ finalAmountCents: 53000, adjusted: 0 });
+  });
+
+  it('ignores a per-student unit price on edit (单价只在收款项层面设置)', async () => {
+    const { agent, invOf } = await scene();
+    const res = await agent.put(`/api/invoices/${invOf('s3').id}`).send({ unitPriceCents: 9000 });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ unitPriceCents: 10000, computedAmountCents: 53000, finalAmountCents: 53000 });
   });
 
   it('refuses to edit a paid invoice (409)', async () => {
@@ -435,12 +421,12 @@ describe('invoices API', () => {
     expect((await agent.put(`/api/invoices/${invOf('s1').id}`).send({ finalAmountCents: 1 })).status).toBe(409);
   });
 
-  it('recalculates: pending refreshed (own unit price), adjusted keeps final/note, paid untouched, new student added, billable→0 kept', async () => {
+  it('recalculates: pending refreshed to the batch terms, adjusted keeps final/note, paid untouched, new student added', async () => {
     const { agent, batch, invOf } = await scene();
-    // 现场变化：s1 确认收款；s2 覆盖最终金额；s3 改过单价；
+    // 现场变化：s1 确认收款；s2 覆盖最终金额；s3 是旧版遗留的单独单价
     await agent.post(`/api/invoices/${invOf('s1').id}/confirm`);
     await agent.put(`/api/invoices/${invOf('s2').id}`).send({ finalAmountCents: 30000, note: '优惠' });
-    await agent.put(`/api/invoices/${invOf('s3').id}`).send({ unitPriceCents: 9000 });
+    sqlite.prepare(`UPDATE invoices SET unit_price_cents=9000 WHERE id=?`).run(invOf('s3').id);
     // 新学生入班；补一节 D@D-2（原「临时取消」那天开了课）；s4 到堂记录被更正为缺席
     const s6 = (await agent.post('/api/classes/c1/students').send({ name: '新生' })).body.id;
     insertSession('bD', day(-2), {
@@ -462,41 +448,58 @@ describe('invoices API', () => {
       billableCount: 5,
       finalAmountCents: 53000,
     });
-    // adjusted：三个 count + computed 刷新，final/note 保留
+    // adjusted：到堂刷新、应收照标准，final/note 保留
     expect(inv.get('s2')).toMatchObject({
       attendedCount: 2,
-      billableCount: 4,
-      computedAmountCents: 43000,
+      billableCount: 5,
+      computedAmountCents: 53000,
       finalAmountCents: 30000,
       note: '优惠',
       adjusted: 1,
     });
-    // 单价被覆盖过 → 按覆盖值重算，final 跟随 computed
+    // 遗留的单独单价统一回批次单价
     expect(inv.get('s3')).toMatchObject({
       attendedCount: 3,
-      billableCount: 5,
-      computedAmountCents: 9000 * 5 + 3000,
-      finalAmountCents: 9000 * 5 + 3000,
+      unitPriceCents: 10000,
+      computedAmountCents: 53000,
+      finalAmountCents: 53000,
       adjusted: 0,
     });
-    // 停课生 s4 出勤被更正没了 → billable 0，行保留、computed 归 0
-    expect(inv.get('s4')).toMatchObject({ billableCount: 0, computedAmountCents: 0, finalAmountCents: 0 });
-    // 新学生补建：到堂 1 + 未来 2
+    // 停课生 s4 出勤被更正没了 → 到堂 0，应收不受影响
+    expect(inv.get('s4')).toMatchObject({ attendedCount: 0, billableCount: 5, computedAmountCents: 53000 });
+    // 新学生补建：同样按标准应收，到堂 1（D-2 那节）
     expect(inv.get(s6)).toMatchObject({
       attendedCount: 1,
       plannedCount: 2,
-      billableCount: 3,
+      billableCount: 5,
       unitPriceCents: 10000,
-      computedAmountCents: 33000,
+      computedAmountCents: 53000,
+      finalAmountCents: 53000,
     });
+  });
+
+  // 生产问题复现：批次在开课后才建，旧口径按到堂扣减（缺课的学生应收偏低）。
+  // 重置收款项后，未手动改过的待收款行一律回到标准应收。
+  it('brings invoices snapshotted under the attendance-based rule back to the standard amount on reset', async () => {
+    const { agent, batch, invOf } = await scene();
+    const legacy = sqlite.prepare(
+      `UPDATE invoices SET planned_count=2, billable_count=?, computed_amount_cents=?, final_amount_cents=? WHERE id=?`,
+    );
+    legacy.run(3, 33000, 33000, invOf('s2').id);
+    legacy.run(4, 43000, 43000, invOf('s3').id);
+
+    const res = await agent.post(`/api/billing/batches/${batch.id}/recalculate`).send({ lessonCount: 5 });
+    expect(res.status).toBe(200);
+    for (const r of res.body.invoices) {
+      expect(r).toMatchObject({ billableCount: 5, computedAmountCents: 53000, finalAmountCents: 53000, adjusted: 0 });
+    }
   });
 
   it('resets with new terms: batch fields updated, pending unified to new unit price, adjusted keeps final/note, paid untouched', async () => {
     const { agent, batch, invOf } = await scene();
-    // 现场：s1 已收款；s2 覆盖最终金额；s3 单独改过单价（重置后应被统一）
+    // 现场：s1 已收款；s2 覆盖最终金额
     await agent.post(`/api/invoices/${invOf('s1').id}/confirm`);
     await agent.put(`/api/invoices/${invOf('s2').id}`).send({ finalAmountCents: 30000, note: '优惠' });
-    await agent.put(`/api/invoices/${invOf('s3').id}`).send({ unitPriceCents: 9000 });
 
     const res = await agent
       .post(`/api/billing/batches/${batch.id}/recalculate`)
@@ -515,33 +518,27 @@ describe('invoices API', () => {
 
     // paid 一律不动（旧单价、旧金额）
     expect(inv.get('s1')).toMatchObject({ status: 'paid', unitPriceCents: 10000, finalAmountCents: 53000 });
-    // s3 之前的单价覆盖被统一为新单价；attended 2 + planned (6−3) → billable 5
+    // 待收款行：新单价 × 新课程次数 6 + 新附加费；未上 = 6 − 已上 3
     expect(inv.get('s3')).toMatchObject({
       unitPriceCents: 8000,
       attendedCount: 2,
       plannedCount: 3,
-      billableCount: 5,
-      computedAmountCents: 8000 * 5 + 1000,
-      finalAmountCents: 8000 * 5 + 1000,
+      billableCount: 6,
+      computedAmountCents: 8000 * 6 + 1000,
+      finalAmountCents: 8000 * 6 + 1000,
       adjusted: 0,
     });
-    // adjusted：counts/computed 按新条款刷新，final/note 保留
+    // adjusted：应收按新条款刷新，final/note 保留
     expect(inv.get('s2')).toMatchObject({
       unitPriceCents: 8000,
       attendedCount: 1,
-      plannedCount: 3,
-      billableCount: 4,
-      computedAmountCents: 8000 * 4 + 1000,
+      billableCount: 6,
+      computedAmountCents: 8000 * 6 + 1000,
       finalAmountCents: 30000,
       note: '优惠',
       adjusted: 1,
     });
-    // 停课生：仍只结已上、按新单价
-    expect(inv.get('s4')).toMatchObject({
-      unitPriceCents: 8000,
-      billableCount: 1,
-      computedAmountCents: 8000 * 1 + 1000,
-    });
+    expect(inv.get('s4')).toMatchObject({ unitPriceCents: 8000, billableCount: 6, computedAmountCents: 8000 * 6 + 1000 });
   });
 
   it('reset validates its optional fields like creation', async () => {
@@ -579,23 +576,16 @@ describe('invoices API', () => {
     expect(sessions).toHaveLength(3);
     expect(planned).toHaveLength(2);
     expect(missed).toHaveLength(1);
-    // s2：A 缺席已补 → 计费；B 请假未补 → 不计费；C 缺席 → 不计费
+    // s2：A 缺席已补、B 请假、C 缺席（排班外加课）；逐节只给出勤，不再有计费标记
     const byId = new Map(sessions.map((r) => [r.sessionId, r]));
-    expect(byId.get('bA')).toMatchObject({ attendance: 'absent', madeUp: true, billable: true });
-    expect(byId.get('bB')).toMatchObject({ attendance: 'leave', madeUp: false, billable: false });
-    expect(byId.get('bC')).toMatchObject({ attendance: 'absent', billable: false, inSchedule: false });
-    for (const p of planned) expect(p.billable).toBe(true);
-    expect(missed[0]).toMatchObject({ date: day(-2), billable: false });
+    expect(byId.get('bA')).toMatchObject({ attendance: 'absent', madeUp: true });
+    expect(byId.get('bB')).toMatchObject({ attendance: 'leave', madeUp: false });
+    expect(byId.get('bC')).toMatchObject({ attendance: 'absent', inSchedule: false });
+    expect(missed[0]).toMatchObject({ date: day(-2) });
+    for (const r of rows) expect(r).not.toHaveProperty('billable');
     // 行按日期升序
     const dates = rows.map((r) => r.date);
     expect(dates).toEqual([...dates].sort());
-  });
-
-  it('planned rows are not billable for a suspended student (停课只结已上)', async () => {
-    const { agent, invOf } = await scene();
-    const res = await agent.get(`/api/invoices/${invOf('s4').id}/lessons`);
-    expect(res.status).toBe(200);
-    for (const p of res.body.rows.filter((r: any) => r.kind === 'planned')) expect(p.billable).toBe(false);
   });
 
   // 收款单的学生姓名是 live join, 从不落快照: 改名后不用 recalculate, 重拉即新值。

@@ -85,7 +85,7 @@ push master → GitHub Actions 构建镜像 → hookploy 部署，迁移随服�
 - **班级归档是纯展示标记**，只影响首页列表分流，不要给其他功能加联动。
 - **出勤**：commit payload 只有 present / absent，`leave` 只由考勤更正产生。读侧一律用 `!== 'present'` 判定未到堂。
 - **教材 key 是字符串**（`'1'`-`'4'`、`starterA`、`starterB`）。前端下拉值一律过 `parseBook`，勿 `Number()`。课数表在 `server/src/app.ts` 与 `web/src/lib/homework.ts` 两处镜像，要同步改。
-- **计费**：`billing.ts` 的 `today` 是显式参数，生产传真实当天，**不要用 `REFERENCE_TODAY`**。金额在库里和 API 里一律整数分，字段名带 `Cents`。
+- **计费**：应收 = 单价 × 课程次数 + 附加费，全班一致、不按到堂扣减，例外由老师改最终金额（2026-10 口径变更，勿改回）。`billing.ts` 的 `today` 是显式参数，生产传真实当天，**不要用 `REFERENCE_TODAY`**。金额在库里和 API 里一律整数分，字段名带 `Cents`。
 - **数据库**：seed 自带 DDL，`db:reset` 无需 drizzle-kit；生产迁移靠 `provision.migrate()` 幂等执行。列声明类型须与存值一致，不借 SQLite 类型亲和性混存；换列类型写真迁移，参考 `provision.ts` 的 `convertColumnToText`。
 - **seed**：相对时间基准 `REFERENCE_TODAY=2026-07-01`（只服务展示层，保 demo 稳定）。三年级A班刻意留重复学生「浩浩」。
 - **miniapp** 的 browserslist 锁在 chrome60 / ios10，微信 CI 不认 ES2020 语法，勿改。

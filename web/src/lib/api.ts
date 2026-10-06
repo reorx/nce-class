@@ -409,11 +409,11 @@ export interface InvoiceItem {
   studentName: string;
   studentCnName: string | null;
   studentStatus: StudentStatus;
-  attendedCount: number;
+  attendedCount: number; // 已上到堂（快照），仅展示
   plannedCount: number;
-  billableCount: number;
+  billableCount: number; // 计费节数 = 批次课程次数，人人相同
   unitPriceCents: number;
-  computedAmountCents: number;
+  computedAmountCents: number; // 应收 = 单价 × 计费节数 + 附加费
   finalAmountCents: number;
   adjusted: number; // 1 = final 被手动覆盖过（重算保留 final/note）
   note: string | null;
@@ -426,7 +426,7 @@ export interface BillingBatchDetail extends BillingBatchItem {
   invoices: InvoiceItem[];
 }
 
-/** 编辑弹窗逐节明细行：实际课堂 / 未上按计划 / 过去未开课的排班日。 */
+/** 编辑弹窗逐节明细行：实际课堂 / 未上排班 / 过去未开课的排班日。只看出勤，不决定应收。 */
 export interface InvoiceLessonRow {
   kind: 'session' | 'planned' | 'missed';
   date: string;
@@ -437,7 +437,6 @@ export interface InvoiceLessonRow {
   lessonTitle?: string | null;
   attendance?: 'present' | 'absent' | 'leave' | null; // null = 该节无快照行（未入班）
   madeUp?: boolean;
-  billable: boolean;
   inSchedule?: boolean; // false = 排班外临时加课
 }
 
@@ -592,13 +591,13 @@ export const api = {
     lessonCount?: number;
   }) => req<BillingBatchDetail>('POST', '/api/billing/batches', p),
   billingBatchDetail: (id: string) => get<BillingBatchDetail>(`/api/billing/batches/${id}`),
-  // 无 body = 只刷新快照；带 body = 重置条款（单价统一待收款行、附加费/课程次数随批次更新）
+  // 无 body = 按当前条款刷新待收款行；带 body = 重置条款（单价/附加费/课程次数随批次更新）
   recalculateBillingBatch: (
     id: string,
     p?: { unitPriceCents?: number; addonCents?: number; addonNote?: string; lessonCount?: number },
   ) => req<BillingBatchDetail>('POST', `/api/billing/batches/${id}/recalculate`, p),
   deleteBillingBatch: (id: string) => req<{ ok: true }>('DELETE', `/api/billing/batches/${id}`),
-  updateInvoice: (id: string, p: { unitPriceCents?: number; finalAmountCents?: number; note?: string }) =>
+  updateInvoice: (id: string, p: { finalAmountCents?: number; note?: string }) =>
     req<InvoiceItem>('PUT', `/api/invoices/${id}`, p),
   confirmInvoice: (id: string) => req<InvoiceItem>('POST', `/api/invoices/${id}/confirm`),
   unconfirmInvoice: (id: string) => req<InvoiceItem>('POST', `/api/invoices/${id}/unconfirm`),

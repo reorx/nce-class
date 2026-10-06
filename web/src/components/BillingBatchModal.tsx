@@ -250,7 +250,7 @@ export function BillingBatchModal({
 
       {scheduleChosen && perStudent != null && (
         <div style={{ fontSize: 12.5, color: '#5b6472', margin: '12px 0 2px' }}>
-          {reset ? '重算口径' : '预售金额'}（全勤口径）：{count} 节 × ¥{centsToYuan(priceCents!)}
+          每人应收：{count} 节 × ¥{centsToYuan(priceCents!)}
           {addonCents! > 0 && ` + 附加 ¥${centsToYuan(addonCents!)}`} = <b>{fmtMoney(perStudent)}</b> / 人
           {!reset && cls && (
             <>
@@ -262,8 +262,8 @@ export function BillingBatchModal({
       )}
       <div style={{ fontSize: 12, color: '#9aa1ac', marginTop: 8, lineHeight: 1.6 }}>
         {reset
-          ? '只重算待收款学生：节数与金额按上方条款重新快照、单价统一为上方单价（个别改过单价的行也会被统一），并为新入班学生补建收款单；手动改过金额的行保留最终金额与备注；已收款的行不变。'
-          : '生成时按「已上到堂 + 未上计划」逐学生快照应收；停课学生只结已上部分，完全未参与的学生应收为 0。'}
+          ? '只重算待收款学生：应收按上方条款刷新、单价统一为上方单价，并为新入班学生补建收款单；手动改过金额的行保留最终金额与备注；已收款的行不变。'
+          : '每名学生的应收都按上方条款计算，不看出勤；中途入班、停课等个别情况生成后在详情页直接改最终收款金额。'}
       </div>
 
       <button

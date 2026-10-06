@@ -17,7 +17,7 @@ describe('parseLessonCount', () => {
   });
 });
 
-describe('previewPerStudentCents (全勤口径预售金额)', () => {
+describe('previewPerStudentCents (每人应收)', () => {
   it('is count × price + addon', () => {
     expect(previewPerStudentCents({ lessonCount: 8, unitPriceCents: 10000, addonCents: 3000 })).toBe(83000);
   });

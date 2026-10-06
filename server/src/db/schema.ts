@@ -306,7 +306,7 @@ export const billingBatches = sqliteTable('billing_batches', {
     .notNull()
     .unique()
     .references(() => classSchedules.id),
-  unitPriceCents: integer('unit_price_cents').notNull(), // default 单价, per-invoice overridable
+  unitPriceCents: integer('unit_price_cents').notNull(), // 单价; 重算时待收款行统一为它
   addonCents: integer('addon_cents').notNull().default(0), // 附加费/人 (书本费等)
   addonNote: text('addon_note'),
   lessonCountOverride: integer('lesson_count_override'), // 课程次数覆盖; NULL = 跟随排班节数
@@ -317,7 +317,9 @@ export const billingBatches = sqliteTable('billing_batches', {
 
 // ---- Invoice — 收款单, the per-student payment ledger. Counts/amounts are a
 // snapshot taken at batch creation (or refreshed by 重新计算) — never auto-derived
-// on read, so what the teacher confirmed is what stays on record.
+// on read, so what the teacher confirmed is what stays on record. 应收 is the
+// batch standard (单价 × 课程次数 + 附加费), the same for everyone; attendance is
+// recorded for display only, exceptions go through final_amount_cents.
 export const invoices = sqliteTable(
   'invoices',
   {
@@ -328,10 +330,10 @@ export const invoices = sqliteTable(
     studentId: text('student_id')
       .notNull()
       .references(() => students.id),
-    attendedCount: integer('attended_count').notNull().default(0), // 已上到堂 (present||madeUp)
-    plannedCount: integer('planned_count').notNull().default(0), // 未上计划节数
-    billableCount: integer('billable_count').notNull().default(0), // = attended + planned
-    unitPriceCents: integer('unit_price_cents').notNull(), // inherits batch, per-student overridable
+    attendedCount: integer('attended_count').notNull().default(0), // 已上到堂 (present||madeUp), display only
+    plannedCount: integer('planned_count').notNull().default(0), // 未上计划节数 (batch-wide)
+    billableCount: integer('billable_count').notNull().default(0), // 计费节数 = 批次课程次数 (batch-wide)
+    unitPriceCents: integer('unit_price_cents').notNull(), // = batch unit price at snapshot
     computedAmountCents: integer('computed_amount_cents').notNull().default(0),
     finalAmountCents: integer('final_amount_cents').notNull().default(0), // defaults to computed, hand-overridable
     adjusted: integer('adjusted').notNull().default(0), // 手动改过 → recalculate keeps final/note

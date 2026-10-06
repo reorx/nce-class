@@ -723,25 +723,20 @@ export function createBillingBatch(
 }
 
 /**
- * 重新计算 (recalculate): refresh PENDING invoices' three counts + computed
- * (computed uses each invoice's OWN unit price — an override sticks — unless
- * `resetUnitPriceCents` unifies pending rows, 重置收款项), reset final to
- * computed unless adjusted=1 (hand-set final/note survive), insert invoices
- * for students the snapshot missed (新入班等, at the batch unit price), update
- * batch terms when `batch` is given (重置弹窗改单价/附加费/课程次数), and stamp
- * snapshot_at. paid rows are never touched; billable→0 rows stay (computed
- * drops to 0 via the rows' computed value). `rows` = the full fresh snapshot
- * from lib/billing.ts buildBatchSnapshot, amounts computed per-invoice by the
- * route (it knows each invoice's unit price).
+ * 重新计算 (recalculate): refresh PENDING invoices' three counts + computed and
+ * unify their unit price to the batch's, reset final to computed unless
+ * adjusted=1 (hand-set final/note survive), insert invoices for students the
+ * snapshot missed (新入班等), update batch terms when `batch` is given (重置弹窗
+ * 改单价/附加费/课程次数), and stamp snapshot_at. paid rows are never touched.
+ * Rows arrive pre-computed by the route via lib/billing.ts.
  */
 export function recalculateBatch(
   sqlite: DB,
   batchId: string,
   p: {
-    unitPriceCents: number; // batch default, for newly added students
+    unitPriceCents: number; // batch unit price: pending rows are unified to it, additions get it
     updates: { invoiceId: string; row: InvoiceSnapshotRow; adjusted: boolean }[];
     additions: InvoiceSnapshotRow[];
-    resetUnitPriceCents?: number | null; // set → 待收款行单价统一为该值
     batch?: {
       unitPriceCents: number;
       addonCents: number;
@@ -753,7 +748,7 @@ export function recalculateBatch(
   const tx = sqlite.transaction(() => {
     const upd = sqlite.prepare(
       `UPDATE invoices SET attended_count=?, planned_count=?, billable_count=?, computed_amount_cents=?,
-         unit_price_cents = COALESCE(?, unit_price_cents),
+         unit_price_cents=?,
          final_amount_cents = CASE WHEN ? THEN final_amount_cents ELSE ? END
        WHERE id=? AND status='pending'`,
     );
@@ -763,7 +758,7 @@ export function recalculateBatch(
         u.row.plannedCount,
         u.row.billableCount,
         u.row.computedAmountCents,
-        p.resetUnitPriceCents ?? null,
+        p.unitPriceCents,
         u.adjusted ? 1 : 0,
         u.row.computedAmountCents,
         u.invoiceId,
@@ -811,27 +806,17 @@ export function deleteBillingBatch(sqlite: DB, batchId: string): void {
 }
 
 /**
- * Edit a pending invoice (编辑弹窗): unit price / final amount / note. computed
- * is re-derived by the route; adjusted = final differs from computed after the
- * edit (an override back to the auto value clears the flag).
+ * Edit a pending invoice (编辑弹窗): final amount / note. adjusted = final
+ * differs from computed after the edit (setting it back to 应收 clears the flag).
  */
 export function updateInvoice(
   sqlite: DB,
   invoiceId: string,
-  p: {
-    unitPriceCents: number;
-    computedAmountCents: number;
-    finalAmountCents: number;
-    adjusted: boolean;
-    note: string | null;
-  },
+  p: { finalAmountCents: number; adjusted: boolean; note: string | null },
 ): void {
   sqlite
-    .prepare(
-      `UPDATE invoices SET unit_price_cents=?, computed_amount_cents=?, final_amount_cents=?, adjusted=?, note=?
-       WHERE id=? AND status='pending'`,
-    )
-    .run(p.unitPriceCents, p.computedAmountCents, p.finalAmountCents, p.adjusted ? 1 : 0, p.note, invoiceId);
+    .prepare(`UPDATE invoices SET final_amount_cents=?, adjusted=?, note=? WHERE id=? AND status='pending'`)
+    .run(p.finalAmountCents, p.adjusted ? 1 : 0, p.note, invoiceId);
 }
 
 /** 确认收款: pending → paid, stamping who + when. */

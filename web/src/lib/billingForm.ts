@@ -8,7 +8,7 @@ export function parseLessonCount(s: string): number | null {
   return n >= 1 ? n : null;
 }
 
-/** 全勤口径的预售金额（分）/人；任一输入缺失 → null。 */
+/** 每人应收（分）= 课程次数 × 单价 + 附加费；任一输入缺失 → null。 */
 export function previewPerStudentCents(p: {
   lessonCount: number | null;
   unitPriceCents: number | null;

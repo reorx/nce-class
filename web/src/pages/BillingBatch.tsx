@@ -156,8 +156,6 @@ export function BillingBatch({ me }: { me: Me | null }) {
                 <tr style={{ color: '#8a929e', textAlign: 'left', borderBottom: '1px solid #ebedf1' }}>
                   <th style={th}>学生</th>
                   <th style={th}>已上到堂</th>
-                  <th style={th}>未上计划</th>
-                  <th style={th}>计费节数</th>
                   <th style={th}>应收</th>
                   <th style={th}>备注</th>
                   <th style={th}>状态</th>
@@ -186,8 +184,9 @@ export function BillingBatch({ me }: { me: Me | null }) {
           </div>
         )}
         <p style={{ fontSize: 12, color: '#9aa1ac', marginTop: 12, lineHeight: 1.7 }}>
-          「重置收款项」只刷新<b>待收款</b>学生的快照（并为新入班学生补建收款单）；已收款的行不动。
-          手动改过金额的行重算时保留最终金额与备注、仅更新节数统计并标黄提醒。
+          应收 = 单价 × 课程次数 + 附加费，每名学生一致，不按出勤扣减；中途入班、停课等个别情况点「编辑」直接填最终收款金额。
+          <br />
+          「重置收款项」只刷新<b>待收款</b>学生（并为新入班学生补建收款单）；已收款的行不动，改过金额的行保留最终金额与备注并标黄提醒。
         </p>
       </div>
 
@@ -261,7 +260,6 @@ function InvoiceRow({
   const sTag = statusTag(inv.studentStatus);
   const names = studentNamePair({ name: inv.studentName, cnName: inv.studentCnName });
   const adjusted = inv.adjusted === 1;
-  const suspended = inv.studentStatus !== 'active';
   return (
     <tr
       style={{
@@ -295,18 +293,6 @@ function InvoiceRow({
       </td>
       <td style={td} className="mono">
         {inv.attendedCount}/{held}
-      </td>
-      <td style={td} className="mono">
-        {suspended && inv.plannedCount === 0 ? (
-          <span style={{ color: '#aab1bc' }}>
-            0 <span style={{ fontSize: 11 }}>(不计未来)</span>
-          </span>
-        ) : (
-          inv.plannedCount
-        )}
-      </td>
-      <td style={td} className="mono">
-        {inv.billableCount}
       </td>
       <td style={td}>
         {adjusted && (
@@ -357,6 +343,7 @@ function InvoiceRow({
 }
 
 // ===== 学生费用编辑弹窗 ======================================================
+// 应收是全班一致的标准值（单价 × 课程次数 + 附加费），这里只看出勤明细、直接填最终收款金额。
 function InvoiceEditModal({
   inv,
   batch,
@@ -370,7 +357,6 @@ function InvoiceEditModal({
 }) {
   const toast = useToast();
   const [rows, setRows] = useState<InvoiceLessonRow[] | null>(null);
-  const [price, setPrice] = useState(centsToYuan(inv.unitPriceCents));
   const [finalAmount, setFinalAmount] = useState(centsToYuan(inv.finalAmountCents));
   const [note, setNote] = useState(inv.note ?? '');
   const [busy, setBusy] = useState(false);
@@ -383,18 +369,16 @@ function InvoiceEditModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inv.id]);
 
-  const priceCents = yuanToCents(price);
-  const computed =
-    priceCents == null ? null : inv.billableCount === 0 ? 0 : priceCents * inv.billableCount + batch.addonCents;
+  const computed = inv.computedAmountCents;
   const finalCents = yuanToCents(finalAmount);
-  const overridden = computed != null && finalCents != null && finalCents !== computed;
-  const canSubmit = priceCents != null && finalCents != null && !busy;
+  const overridden = finalCents != null && finalCents !== computed;
+  const canSubmit = finalCents != null && !busy;
 
   async function submit() {
     if (!canSubmit) return;
     setBusy(true);
     try {
-      await api.updateInvoice(inv.id, { unitPriceCents: priceCents!, finalAmountCents: finalCents!, note });
+      await api.updateInvoice(inv.id, { finalAmountCents: finalCents!, note });
       toast(`已保存 ${inv.studentName} 的费用`);
       await onSaved();
     } catch (e) {
@@ -405,7 +389,12 @@ function InvoiceEditModal({
 
   return (
     <Modal open onClose={onClose} title={`编辑费用 — ${inv.studentName} · ${batch.scheduleName}`} width={640}>
-      <div style={{ fontSize: 12.5, fontWeight: 700, color: '#5b6472', marginBottom: 6 }}>周期出勤明细</div>
+      <div style={{ display: 'flex', alignItems: 'baseline', marginBottom: 6 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 700, color: '#5b6472' }}>周期出勤明细</div>
+        <div className="mono" style={{ marginLeft: 'auto', fontSize: 12, color: '#8a929e' }}>
+          到堂 {inv.attendedCount} / 已上 {batch.heldSessionCount} 节
+        </div>
+      </div>
       <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid #eef0f3', borderRadius: 9 }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
           <thead>
@@ -415,7 +404,6 @@ function InvoiceEditModal({
               <th style={thSm}>时间</th>
               <th style={thSm}>课堂</th>
               <th style={thSm}>出勤</th>
-              <th style={{ ...thSm, textAlign: 'right' }}>计费</th>
             </tr>
           </thead>
           <tbody>
@@ -426,27 +414,16 @@ function InvoiceEditModal({
         </table>
         {rows == null && <div style={{ padding: 14, color: '#9aa1ac', fontSize: 12.5 }}>加载中…</div>}
       </div>
-      <div style={{ fontSize: 12, color: '#8a929e', margin: '8px 0 16px' }}>
-        已上到堂 {inv.attendedCount} · 未上按计划 {inv.plannedCount} → 计费节数 <b>{inv.billableCount}</b>
-        {batch.addonCents > 0 && `；附加费 ¥${centsToYuan(batch.addonCents)}/人（计费为 0 时不收）`}
-        {batch.lessonCountOverride != null && (
-          <div style={{ marginTop: 4, color: '#b07a1f' }}>
-            课程次数已手动设为 {batch.lessonCountOverride} 节，未上节数 = {batch.lessonCountOverride} −
-            周期内已上节数，不按上表的排班日期行数计
-          </div>
-        )}
-      </div>
 
-      <div style={{ display: 'flex', gap: 18, alignItems: 'flex-end', marginBottom: 12, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 22, alignItems: 'flex-end', margin: '18px 0 12px', flexWrap: 'wrap' }}>
         <div>
-          <div style={lbl}>该生单价（元）</div>
-          <input value={price} onChange={(e) => setPrice(e.target.value)} style={{ ...fieldSm, width: 100 }} />
-        </div>
-        <div style={{ fontSize: 13, color: '#8a929e', paddingBottom: 9 }}>× {inv.billableCount} 节 =</div>
-        <div>
-          <div style={lbl}>应收（自动）</div>
+          <div style={lbl}>应收</div>
           <div className="mono" style={{ fontSize: 16, fontWeight: 700, padding: '7px 0', color: '#1e2430' }}>
-            {computed == null ? '—' : fmtMoney(computed)}
+            {fmtMoney(computed)}
+          </div>
+          <div className="mono" style={{ fontSize: 11.5, color: '#8a929e' }}>
+            {inv.billableCount} 节 × ¥{centsToYuan(inv.unitPriceCents)}
+            {batch.addonCents > 0 && ` + 附加 ¥${centsToYuan(batch.addonCents)}`}
           </div>
         </div>
         <div>
@@ -454,29 +431,30 @@ function InvoiceEditModal({
           <input
             value={finalAmount}
             onChange={(e) => setFinalAmount(e.target.value)}
-            style={{ ...fieldSm, width: 110, borderColor: overridden ? '#e8913a' : undefined }}
+            style={{ ...fieldSm, width: 120, borderColor: overridden ? '#e8913a' : undefined }}
           />
         </div>
-        {computed != null && (
-          <button
-            style={{ ...linkBtn('#8a929e'), paddingBottom: 9 }}
-            title="最终金额恢复为自动应收"
-            onClick={() => setFinalAmount(centsToYuan(computed))}
-          >
-            = 应收
-          </button>
-        )}
+        <button
+          style={{ ...linkBtn('#8a929e'), paddingBottom: 9 }}
+          title="最终金额恢复为应收"
+          onClick={() => setFinalAmount(centsToYuan(computed))}
+        >
+          = 应收
+        </button>
       </div>
+      {finalAmount.trim() !== '' && finalCents == null && (
+        <div style={{ fontSize: 12, color: '#d94a4a', marginBottom: 10 }}>金额需为非负数字，至多两位小数</div>
+      )}
       {overridden && (
         <div style={{ fontSize: 12, color: '#b06c22', marginBottom: 10 }}>
-          最终金额已覆盖自动应收，「重新计算」将保留此金额与备注。
+          最终金额与应收不同，「重置收款项」时会保留此金额与备注。
         </div>
       )}
       <div style={lbl}>备注</div>
       <input
         value={note}
         onChange={(e) => setNote(e.target.value)}
-        placeholder="如 老学员优惠 -40"
+        placeholder="如 中途入班，按 15 节收"
         style={{ ...fieldSm, width: '100%', margin: '4px 0 18px' }}
       />
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 9 }}>
@@ -532,15 +510,6 @@ function LessonRow({ r, idx }: { r: InvoiceLessonRow; idx: number }) {
           )
         ) : (
           <span style={{ color: '#8a929e' }}>○ 未上</span>
-        )}
-      </td>
-      <td style={{ ...tdSm, textAlign: 'right' }}>
-        {r.billable ? (
-          <span style={{ color: '#1e2430' }}>
-            ✓{r.kind === 'planned' && <span style={{ fontSize: 11, color: '#8a929e', marginLeft: 4 }}>按计划</span>}
-          </span>
-        ) : (
-          <span style={{ color: '#c0c6cf' }}>—</span>
         )}
       </td>
     </tr>

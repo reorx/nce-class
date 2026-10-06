@@ -60,6 +60,7 @@ import { MIN_PASSWORD_LENGTH, resetPassword } from './db/provision.js';
 import {
   buildBatchSnapshot,
   computeAmountCents,
+  computeBatchCounts,
   computeStudentCounts,
   scheduleRange,
   type MembershipRecord,
@@ -713,29 +714,26 @@ function batchPayload(b: any) {
   const lessons = q.lessonsOfSchedule.all(b.schedule_id) as any[];
   const range = scheduleRange(lessons);
   const stats = q.invoiceStatsOfBatch.get(b.id) as any;
-  const today = localToday();
-  const sessions = (q.endedSessionsOfClass.all(b.class_id) as any[]).filter(
-    (s) => range && s.date >= range.minDate && s.date <= range.maxDate,
-  );
-  const sessionDates = new Set(sessions.map((s) => s.date));
   const override = (b.lesson_count_override ?? null) as number | null;
-  const futureLessonCount =
-    override != null
-      ? Math.max(0, override - sessions.length)
-      : lessons.filter((l) => l.date > today || (l.date === today && !sessionDates.has(today))).length;
+  const counts = computeBatchCounts({
+    lessons,
+    sessions: q.endedSessionsOfClass.all(b.class_id) as any[],
+    today: localToday(),
+    lessonCountOverride: override,
+  });
   return {
     id: b.id,
     classId: b.class_id,
     className: c?.name ?? '—',
     scheduleId: b.schedule_id,
     scheduleName: sch?.name ?? '—',
-    lessonCount: override ?? lessons.length,
+    lessonCount: counts.lessonCount,
     scheduleLessonCount: lessons.length,
     lessonCountOverride: override,
     minDate: range?.minDate ?? null,
     maxDate: range?.maxDate ?? null,
-    heldSessionCount: sessions.length,
-    futureLessonCount,
+    heldSessionCount: counts.heldCount,
+    futureLessonCount: counts.futureCount,
     unitPriceCents: b.unit_price_cents,
     addonCents: b.addon_cents,
     addonNote: b.addon_note ?? null,
@@ -1912,10 +1910,9 @@ export function createApp() {
     res.json(batchDetailPayload(b));
   });
 
-  // 重新计算：只动 pending（computed 按各自单价），adjusted 保留 final/note，
-  // 给快照后新入班的学生补建收款单；paid 与 billable→0 的行一律保留。
-  // 「重置收款项」走同一路由：body 可带新条款（单价/附加费/课程次数），批次字段
-  // 随之更新；带 unitPriceCents 时待收款行的单价统一为新值（个别改过的也重置）。
+  // 重新计算：只动 pending——单价统一为批次单价、应收刷新为标准值，adjusted 保留
+  // final/note；给快照后新入班的学生补建收款单；paid 一律不动。
+  // 「重置收款项」走同一路由：body 可带新条款（单价/附加费/课程次数），批次字段随之更新。
   app.post('/api/billing/batches/:id/recalculate', (req, res) => {
     const b = batchInOrg(req.params.id, res.locals.teacher.org_id);
     if (!b) return res.status(404).json({ error: 'batch not found' });
@@ -1932,7 +1929,6 @@ export function createApp() {
     const inputs = billingInputsOfClass(b.class_id);
     const lessons = q.lessonsOfSchedule.all(b.schedule_id) as any[];
     const today = localToday();
-    const statusById = new Map(inputs.students.map((s) => [s.id, s.status]));
     const batchUnit = hasUnit ? resetUnit! : (b.unit_price_cents as number);
     const addonCents = hasAddon ? newAddon! : (b.addon_cents as number);
     const addonNote = 'addonNote' in body ? str(body.addonNote) : ((b.addon_note ?? null) as string | null);
@@ -1949,7 +1945,6 @@ export function createApp() {
       .map((iv) => {
         const counts = computeStudentCounts({
           studentId: iv.student_id,
-          status: statusById.get(iv.student_id) ?? 'archived',
           lessons,
           sessions: inputs.sessions,
           memberships: inputs.memberships,
@@ -1963,7 +1958,7 @@ export function createApp() {
             studentId: iv.student_id as string,
             ...counts,
             computedAmountCents: computeAmountCents({
-              unitPriceCents: hasUnit ? resetUnit! : iv.unit_price_cents,
+              unitPriceCents: batchUnit,
               billableCount: counts.billableCount,
               addonCents,
             }),
@@ -1989,7 +1984,6 @@ export function createApp() {
       unitPriceCents: batchUnit,
       updates,
       additions,
-      resetUnitPriceCents: hasUnit ? resetUnit : null,
       batch: { unitPriceCents: batchUnit, addonCents, addonNote, lessonCountOverride },
     });
     res.json(batchDetailPayload(q.batchById.get(b.id)));
@@ -2006,21 +2000,11 @@ export function createApp() {
   app.put('/api/invoices/:id', (req, res) => {
     const found = invoiceInOrg(req.params.id, res.locals.teacher.org_id);
     if (!found) return res.status(404).json({ error: 'invoice not found' });
-    const { inv, batch } = found;
+    const { inv } = found;
     if (inv.status === 'paid') return res.status(409).json({ error: '已确认收款的收款单不可修改，请先撤销' });
+    // 只改最终收款金额与备注；单价只在收款项层面设置，body 里的 unitPriceCents 忽略
     const b = req.body ?? {};
-    let unitPriceCents = inv.unit_price_cents;
-    if ('unitPriceCents' in b) {
-      const v = centsOr(b.unitPriceCents);
-      if (v == null) return res.status(400).json({ error: '单价必须是非负整数（分）' });
-      unitPriceCents = v;
-    }
-    const computedAmountCents = computeAmountCents({
-      unitPriceCents,
-      billableCount: inv.billable_count,
-      addonCents: batch.addon_cents,
-    });
-    let finalAmountCents = computedAmountCents;
+    let finalAmountCents = inv.final_amount_cents as number;
     if ('finalAmountCents' in b) {
       const v = centsOr(b.finalAmountCents);
       if (v == null) return res.status(400).json({ error: '最终收款金额必须是非负整数（分）' });
@@ -2029,10 +2013,8 @@ export function createApp() {
     const note =
       'note' in b ? (typeof b.note === 'string' && b.note.trim() ? b.note.trim() : null) : (inv.note ?? null);
     updateInvoice(sqlite, inv.id, {
-      unitPriceCents,
-      computedAmountCents,
       finalAmountCents,
-      adjusted: finalAmountCents !== computedAmountCents,
+      adjusted: finalAmountCents !== inv.computed_amount_cents,
       note,
     });
     res.json(invoicePayload(q.invoiceWithStudent.get(inv.id)));
@@ -2054,7 +2036,8 @@ export function createApp() {
     res.json(invoicePayload(q.invoiceWithStudent.get(found.inv.id)));
   });
 
-  // 编辑弹窗逐节明细：范围内实际课堂（含排班外加课）+ 过去未开课排班日 + 未上按计划行。
+  // 编辑弹窗逐节明细：范围内实际课堂（含排班外加课）+ 过去未开课排班日 + 未上排班。
+  // 只给出勤，供老师判断要不要改最终金额；应收不按逐节出勤计。
   app.get('/api/invoices/:id/lessons', (req, res) => {
     const found = invoiceInOrg(req.params.id, res.locals.teacher.org_id);
     if (!found) return res.status(404).json({ error: 'invoice not found' });
@@ -2062,8 +2045,6 @@ export function createApp() {
     const lessons = q.lessonsOfSchedule.all(batch.schedule_id) as any[];
     const range = scheduleRange(lessons);
     const today = localToday();
-    const student = q.studentById.get(inv.student_id) as any;
-    const active = student?.status === 'active';
     const allSessions = q.endedSessionsOfClass.all(batch.class_id) as any[];
     const sessionDates = new Set(allSessions.map((s) => s.date));
     const lessonDates = new Set(lessons.map((l) => l.date));
@@ -2086,17 +2067,16 @@ export function createApp() {
         lessonTitle: s.lesson_title ?? null,
         attendance: mem?.attendance ?? null, // null = 未入班（该节无快照行）
         madeUp: mem?.made_up === 1,
-        billable: mem != null && (mem.attendance === 'present' || mem.made_up === 1),
         inSchedule: lessonDates.has(s.date),
       });
     }
     for (const l of lessons) {
       const planned = l.date > today || (l.date === today && !sessionDates.has(today));
       if (planned) {
-        rows.push({ kind: 'planned', date: l.date, startTime: l.start_time, endTime: l.end_time, billable: active });
+        rows.push({ kind: 'planned', date: l.date, startTime: l.start_time, endTime: l.end_time });
       } else if (!sessionDates.has(l.date)) {
-        // 已过去但没开课的排班日：临时取消，不计费
-        rows.push({ kind: 'missed', date: l.date, startTime: l.start_time, endTime: l.end_time, billable: false });
+        // 已过去但没开课的排班日（临时取消）
+        rows.push({ kind: 'missed', date: l.date, startTime: l.start_time, endTime: l.end_time });
       }
     }
     rows.sort((a, b2) => (a.date + (a.startTime ?? '')).localeCompare(b2.date + (b2.startTime ?? '')));
