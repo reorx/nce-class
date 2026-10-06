@@ -1,27 +1,25 @@
 import { useState, type CSSProperties, type FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { api, ApiError, type Me } from '../lib/api';
+import { ApiError, NetworkError } from '../api/client';
 import { GREEN, GREEN_DARK } from '../lib/theme';
+import { useLoginMutation } from '../queries/auth';
 
-export function Login({ onLogin }: { onLogin: (me: Me) => void }) {
-  const nav = useNavigate();
+// 登录成功由 useLoginMutation 隔离旧会话并写入 me，App 的 /login 路由随之跳回来处；
+// 这里只管表单。密码类 Mutation 完成即 reset，失败信息靠 mutateAsync 的 rejection 留在表单里。
+export function Login() {
+  const login = useLoginMutation();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
+  const busy = login.isPending;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (busy) return;
-    setBusy(true);
     setError('');
     try {
-      const me = await api.login(username.trim(), password);
-      onLogin(me);
-      nav('/', { replace: true });
+      await login.mutateAsync({ username: username.trim(), password });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : '登录失败，请稍后重试');
-      setBusy(false);
+      setError(err instanceof ApiError || err instanceof NetworkError ? err.message : '登录失败，请稍后重试');
     }
   }
 

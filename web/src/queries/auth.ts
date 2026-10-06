@@ -21,6 +21,18 @@ export const meQueryOptions = () =>
 
 export const useMeQuery = () => useQuery(meQueryOptions());
 
+export type AuthStatus = 'loading' | 'in' | 'out' | 'error';
+
+/**
+ * 路由守卫用的身份状态：有 me = 已登录（后台刷新失败也保持登录）；null = 未登录；
+ * 没有数据且读取失败（断网 / 5xx / 403）= error，要给重试而不是当成退出。
+ */
+export function authStatus(q: { data: Me | null | undefined; isError: boolean }): AuthStatus {
+  if (q.data) return 'in';
+  if (q.data === null) return 'out';
+  return q.isError ? 'error' : 'loading';
+}
+
 export interface LoginVariables {
   username: string;
   password: string;
