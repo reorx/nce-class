@@ -1,606 +1,190 @@
+// ⚠️ 迁移期兼容出口（Plan 2 迁移完成后删除）。新代码：组件用 queries/<domain> 的 hooks，
+// 类型从 api/<domain> 导入。这里保持旧方法名、签名、返回值与错误语义不变：
+// - 读取直接委托领域 API；
+// - 写入委托领域 API，成功后执行与领域 Mutation 相同的 cache-effects，让尚未迁移的页面
+//   写入后，已迁移页面的缓存也随之失效；发起时记下会话代次，身份已切换则跳过缓存写入；
+// - 登录 / 退出走同一套会话切换（取消并清空服务端缓存，本地课堂草稿不动）。
+
+import type { QueryClient } from '@tanstack/react-query';
+import * as admin from '../api/admin';
+import * as attendance from '../api/attendance';
+import * as auth from '../api/auth';
+import * as billing from '../api/billing';
+import * as classes from '../api/classes';
+import * as invites from '../api/invites';
+import * as schedules from '../api/schedules';
+import * as sessions from '../api/sessions';
+import * as students from '../api/students';
+import * as tags from '../api/tags';
+import * as teachers from '../api/teachers';
+import * as effects from '../queries/cache-effects';
+import { queryClient } from '../queries/client';
+import { sessionGeneration, switchSession } from '../queries/session';
 import type { BookKey } from './homework';
 
-export interface Me {
-  id: string;
-  name: string;
-  username: string;
-  role: string;
-  isAdmin: boolean; // 管理员 → 顶导「管理」入口；/api/admin/* 由服务端强制鉴权
-  orgName: string;
-}
+export { ApiError } from '../api/client';
+export type { AdminClassItem } from '../api/admin';
+export type {
+  AttendanceRecord,
+  AttendanceSession,
+  AttendanceStatus,
+  AttendanceStudent,
+  ClassAttendance,
+} from '../api/attendance';
+export type { Me } from '../api/auth';
+export type { BillingBatchDetail, BillingBatchItem, InvoiceItem, InvoiceLessonRow } from '../api/billing';
+export type { ClassDetail, ClassListItem, Group, GroupSave } from '../api/classes';
+export type { JoinRequestItem } from '../api/invites';
+export type { ScheduleDetail, ScheduleItem, ScheduleLessonItem } from '../api/schedules';
+export type {
+  CommitGroup,
+  CommitPayload,
+  CommitResult,
+  LastRecap,
+  OverviewGroup,
+  OverviewMember,
+  PrevHomework,
+  Recap,
+  RecapGroup,
+  RecapMember,
+  RecapStar,
+  RecapStudentTags,
+  Session,
+  SessionDetail,
+  SessionLedger,
+  SessionListItem,
+  SessionOverview,
+} from '../api/sessions';
+export type {
+  ProfileMine,
+  ProfileSession,
+  Student,
+  StudentBasic,
+  StudentProfile,
+  StudentStatus,
+} from '../api/students';
+export type { TagItem } from '../api/tags';
+export type { TeacherItem } from '../api/teachers';
 
-export interface TeacherItem {
-  id: string;
-  name: string;
-  username: string;
-  role: string;
-  isAdmin: boolean;
-}
-
-/** /admin 删除班级列表的一行：删除该班会一并硬删的数据量（GET /api/admin/classes）。 */
-export interface AdminClassItem {
-  id: string;
-  name: string;
-  teacherName: string;
-  studentCount: number; // 不分状态：在读/停课/归档都会被删
-  sessionCount: number;
-  scheduleCount: number;
-  batchCount: number;
-  invoiceCount: number;
-  paidInvoiceCount: number; // 已确认收款的收款单
-  paidAmountCents: number;
-}
-
-/** One org-library 奖章 tag (GET /api/tags). */
-export interface TagItem {
-  id: string;
-  name: string;
-}
-
-export interface ClassListItem {
-  id: string;
-  name: string;
-  teacherName: string;
-  textbook: BookKey | null; // 教材 key（lib/homework BOOKS）
-  isArchived: boolean; // 已归档：首页不显示，只在 /classes?is_archived=true（lib/classList）
-  studentCount: number;
-  roster: string[];
-  lastSession: {
-    id: string;
-    date: string;
-    weekday: string;
-    relative: string;
-    lessonNumber: number | null;
-    lessonTitle: string | null;
-    startedAt: string | null;
-    endedAt: string | null;
-  } | null;
-}
-
-export type StudentStatus = 'active' | 'suspended' | 'archived';
-
-export interface Student {
-  id: string;
-  name: string; // 英文名 — 主显示名
-  cnName: string | null; // 中文名 — 卡片/收款单下方小字
-  source: 'parent' | 'teacher';
-  status: StudentStatus;
-  hasPhoto: boolean;
-  score: number;
-  groupId: string | null;
-}
-
-/** 学生写接口的响应形状（服务端 studentItem）—— 班级详情的 Student 去掉派生的 score/groupId。 */
-export type StudentBasic = Pick<Student, 'id' | 'name' | 'cnName' | 'source' | 'status' | 'hasPhoto'>;
-
-export interface Group {
-  id: string;
-  name: string;
-  emoji: string | null;
-  orderIndex: number;
-  memberIds: string[];
-}
-
-export interface Session {
-  id: string;
-  date: string;
-  year: string;
-  weekday: string;
-  lessonNumber: number | null;
-  lessonTitle: string | null;
-  teacherId: string | null; // 主讲老师 id — 课堂信息 tab form prefill
-  teacherName: string | null; // 主讲老师
-  plannedDurationMin: number;
-  actualDurationMin: number;
-  durationLabel: string;
-  startedAt: string | null; // 'YYYY-MM-DD HH:mm:ss'; null on legacy rows
-  endedAt: string | null;
-  groupCount: number;
-  hasHomework: boolean; // 作业已布置 (homework_content non-null)
-  attendancePresent: number; // 出勤人数；缺勤 = total - present
-  attendanceTotal: number; // 0 when the session has no membership snapshot
-}
-
-/** One row of the org-wide 课堂 list (GET /api/sessions): a session plus its owning class. */
-export interface SessionListItem extends Session {
-  classId: string;
-  className: string;
-}
-
-/** One student row inside a recap group (v3 战报成员明细); absent on legacy payloads. */
-export interface RecapMember {
-  name: string;
-  attendance: 'present' | 'absent' | 'leave';
-  score: number; // 该节个人净分
-  recitation: string | null; // '已背完' | '背完部分' | '没背'; null = 未检查
-  homework: string | null; // '完成' | '需补' | '没交'; null = 没交 (缺记录)
-  warns: number; // 该节被扣分的事件次数
-}
-
-export interface RecapGroup {
-  name: string;
-  emoji: string | null;
-  orderIndex: number;
-  score: number;
-  warns?: number; // 该节整组被扣分的事件次数（不含组员个人扣分）; absent on legacy payloads
-  members?: RecapMember[]; // roster order; absent on legacy payloads
-}
-
-export interface RecapStar {
-  name: string;
-  net: number;
-  photoUrl?: string | null; // resolved storage URL; absent on legacy payloads
-}
-
-/** One student's 奖章 tags in a recap (name-keyed like stars/warned). */
-export interface RecapStudentTags {
-  name: string;
-  tags: string[];
-}
-
-export interface Recap {
-  date: string;
-  weekday: string;
-  lessonNumber: number | null;
-  lessonTitle: string | null;
-  actualDurationMin: number;
-  attendancePresent: number;
-  attendanceTotal: number;
-  groups: RecapGroup[];
-  ungrouped?: RecapMember[]; // 无组学生（通常是缺席未拖入组的）; absent on legacy payloads
-  stars: RecapStar[];
-  warned: { name: string }[];
-  studentTags: RecapStudentTags[];
-}
-
-// The 课前配置 side rail consumes the same shape as a full recap.
-export type LastRecap = Recap;
-
-export interface ClassDetail {
-  id: string;
-  name: string;
-  notes: string | null; // 班级资源 — free-form markdown
-  textbook: BookKey | null; // 教材 key (structured, 课文复习默认)
-  isArchived: boolean; // 已归档：禁止新建课程周期和收款项
-  homeworkTemplate: string | null; // 作业模板 with {lesson_number}/{date}/{class_name} vars
-  teacherId: string | null; // 负责老师; null on legacy rows
-  teacherName: string;
-  studentCount: number;
-  groupCount: number;
-  sessionCount: number;
-  students: Student[];
-  groups: Group[];
-  sessions: Session[];
-  lastRecap: LastRecap | null;
-}
-
-/** One student inside a 课堂情况 group card; score is the session net, '—' shown for absentees. */
-export interface OverviewMember {
-  name: string;
-  score: number;
-  absent: boolean;
-}
-
-export interface OverviewGroup {
-  id: string;
-  name: string;
-  emoji: string | null;
-  score: number;
-  members: OverviewMember[];
-}
-
-/** 课堂情况 overview derived from the session ledger (attendance + group scores + check buckets). */
-export interface SessionOverview {
-  totalStudents: number;
-  present: string[];
-  absent: string[];
-  classScore: number;
-  homework: { done: string[]; redo: string[]; miss: string[] };
-  recitation: { full: string[]; part: string[]; none: string[]; unchecked: string[] };
-  groups: OverviewGroup[];
-}
-
-/** 上节课作业参考 — 同班里当前课之前最近一节已布置作业的课（无则 null）. */
-export interface PrevHomework {
-  sessionId: string;
-  date: string;
-  year: string;
-  weekday: string;
-  lessonNumber: number | null;
-  lessonTitle: string | null;
-  content: string;
-  reviewBook: BookKey | null;
-  reviewLesson: number | null;
-}
-
-/** Raw id-keyed snapshot of a committed session, for reopening it in the classroom (编辑上课记录).
- *  Unlike recap/overview (name-keyed, aggregated) this keeps student ids and the per-event ledger. */
-export interface SessionLedger {
-  clientSessionId: string | null;
-  sessionGroups: { id: string; name: string; emoji: string | null; orderIndex: number }[];
-  memberships: {
-    studentId: string;
-    name: string;
-    sessionGroupId: string | null;
-    attendance: 'present' | 'absent' | 'leave';
-  }[];
-  events: {
-    targetType: 'student' | 'group';
-    targetId: string; // student id, or session group id for group events
-    sessionGroupId: string | null; // group at fire time
-    delta: 1 | -1;
-    createdAt: string;
-  }[];
-  checks: { studentId: string; type: 'recitation' | 'homework'; status: string }[];
-  tags: { studentId: string; tag: string }[];
-}
-
-/** GET /api/sessions/:id — session summary + owning-class context + 作业布置 + embedded recap + 课堂情况 + 编辑 ledger. */
-export interface SessionDetail extends Session {
-  classId: string;
-  className: string;
-  classTextbook: BookKey | null;
-  homeworkTemplate: string | null;
-  homeworkContent: string | null;
-  reviewBook: BookKey | null; // 课文复习: 教材
-  reviewLesson: number | null; // 课文复习: 第几课（1-based 平铺序号）
-  prevHomework: PrevHomework | null;
-  recap: Recap;
-  overview: SessionOverview;
-  ledger: SessionLedger;
-}
-
-// ---- student growth profile (§7.4, read-only) ------------------------------
-
-/** One matrix cell; null when the student had no membership row (未入班). */
-export interface ProfileMine {
-  attended: boolean;
-  groupName: string | null;
-  groupEmoji: string | null;
-  groupScore: number | null;
-  personalScore: number;
-  homework: string; // '完成' | '没交' (missing record = 没交)
-  recitation: string; // '已背完' | '背完部分' | '没背' | '未检查' (missing record = 未检查)
-}
-
-export interface ProfileSession {
-  id: string;
-  date: string;
-  year: string;
-  weekday: string;
-  lessonNumber: number | null;
-  lessonTitle: string | null;
-  mine: ProfileMine | null;
-}
-
-export interface StudentProfile {
-  student: {
-    id: string;
-    name: string;
-    cnName: string | null;
-    source: 'parent' | 'teacher';
-    status: StudentStatus;
-    photoUrl: string | null;
-  };
-  class: { id: string; name: string };
-  currentGroup: { name: string; emoji: string | null } | null;
-  totals: { attended: number; personalTotal: number; plus: number; minus: number };
-  sessions: ProfileSession[]; // ended sessions, oldest → newest
-}
-
-/** A pending miniapp join request (read-only here; handled inside the miniapp). */
-export interface JoinRequestItem {
-  id: string;
-  cnName: string;
-  enName: string | null;
-  parentPhone: string | null;
-  photoUrl: string | null;
-  nickname: string | null;
-  createdAt: string;
-}
-
-/** A group as sent to the default-grouping save endpoint (replace semantics). */
-export interface GroupSave {
-  id?: string | null;
-  name: string;
-  emoji: string | null;
-  orderIndex: number;
-  memberIds: string[];
-}
-
-// ---- classroom commit (end-class one-shot POST) ---------------------------
-
-export interface CommitGroup {
-  clientId: string;
-  name: string;
-  emoji: string | null;
-  orderIndex: number;
-}
-
-/** The whole session, assembled locally and POSTed once when class ends.
- *
- * ⚠️ SCHEMA COMPAT (protobuf-style — do NOT break): a classroom page loaded
- * before a deploy still POSTs this OLD shape to the NEW server, and old
- * localStorage sessions feed buildCommitPayload after a reload. So: never
- * rename/remove/repurpose a field; new fields must be optional server-side
- * with a default (mirror of buildCommitInput's compat note in server/src/app.ts). */
-export interface CommitPayload {
-  clientSessionId: string; // idempotency key (stable across retries)
-  lessonNumber: number | null;
-  lessonTitle: string | null;
-  teacherId: string | null; // 主讲老师; null → server falls back to the committing teacher
-  plannedDurationMin: number;
-  startedAt: string; // 'YYYY-MM-DD HH:mm:ss'
-  endedAt: string; // 'YYYY-MM-DD HH:mm:ss'
-  defaultGrouping: { groups: (CommitGroup & { memberIds: string[] })[] }; // §7.2 writeback
-  sessionGroups: CommitGroup[];
-  memberships: { studentId: string; clientGroupId: string | null; attendance: 'present' | 'absent' }[];
-  events: {
-    targetType: 'student' | 'group';
-    targetId: string;
-    clientGroupId: string | null;
-    delta: 1 | -1;
-    createdAt: string;
-  }[];
-  checks: { studentId: string; type: 'recitation' | 'homework'; status: string }[];
-  tags: { studentId: string; tag: string }[]; // 奖章 (server upserts the org library by name)
-  // 课堂内提前布置的作业（post-release optional field, 缺省/空白 → 不布置）。
-  // 仅创建路径落库；编辑上课记录的 overwrite 忽略它（改作业走详情页 PUT）。
-  homeworkContent?: string | null;
-}
-
-export interface CommitResult {
-  sessionId: string;
-  recap: Recap;
-  created: boolean; // false when an existing session was returned (idempotent replay)
-}
-
-// ---- 排班 (课程周期) + 收费 (收款批次/收款单) -------------------------------
-
-export interface ScheduleLessonItem {
-  id: string;
-  date: string; // YYYY-MM-DD
-  startTime: string; // HH:MM
-  endTime: string; // HH:MM
-}
-
-export interface ScheduleItem {
-  id: string;
-  name: string;
-  createdAt: string;
-  lessonCount: number;
-  minDate: string | null; // 派生自节次 min/max，无节次为 null
-  maxDate: string | null;
-  batchId: string | null; // 已生成的收款批次（1:1）
-}
-
-export interface ScheduleDetail extends ScheduleItem {
-  lessons: ScheduleLessonItem[];
-}
-
-export interface BillingBatchItem {
-  id: string;
-  classId: string;
-  className: string;
-  scheduleId: string;
-  scheduleName: string;
-  lessonCount: number; // 计费课程次数 = override ?? 排班节数
-  scheduleLessonCount: number; // 排班表本身的节数
-  lessonCountOverride: number | null; // 用户覆盖的课程次数；null = 跟随排班
-  minDate: string | null;
-  maxDate: string | null;
-  heldSessionCount: number; // 周期范围内实际已上节数（live）
-  futureLessonCount: number; // 未上的计划节数（live）
-  unitPriceCents: number;
-  addonCents: number;
-  addonNote: string | null;
-  snapshotAt: string | null;
-  createdAt: string;
-  invoiceCount: number;
-  paidCount: number;
-  paidAmountCents: number;
-  pendingAmountCents: number;
-  totalAmountCents: number;
-}
-
-export interface InvoiceItem {
-  id: string;
-  studentId: string;
-  studentName: string;
-  studentCnName: string | null;
-  studentStatus: StudentStatus;
-  attendedCount: number; // 已上到堂（快照），仅展示
-  plannedCount: number;
-  billableCount: number; // 计费节数 = 批次课程次数，人人相同
-  unitPriceCents: number;
-  computedAmountCents: number; // 应收 = 单价 × 计费节数 + 附加费
-  finalAmountCents: number;
-  adjusted: number; // 1 = final 被手动覆盖过（重算保留 final/note）
-  note: string | null;
-  status: 'pending' | 'paid';
-  paidAt: string | null;
-  paidByName: string | null;
-}
-
-export interface BillingBatchDetail extends BillingBatchItem {
-  invoices: InvoiceItem[];
-}
-
-/** 编辑弹窗逐节明细行：实际课堂 / 未上排班 / 过去未开课的排班日。只看出勤，不决定应收。 */
-export interface InvoiceLessonRow {
-  kind: 'session' | 'planned' | 'missed';
-  date: string;
-  startTime: string | null;
-  endTime?: string;
-  sessionId?: string;
-  lessonNumber?: number | null;
-  lessonTitle?: string | null;
-  attendance?: 'present' | 'absent' | 'leave' | null; // null = 该节无快照行（未入班）
-  madeUp?: boolean;
-  inSchedule?: boolean; // false = 排班外临时加课
-}
-
-export class ApiError extends Error {
-  constructor(
-    public status: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
-
-async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
-  const res = await fetch(url, {
-    method,
-    credentials: 'include',
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  if (!res.ok) {
-    let message = `${res.status} ${url}`;
-    try {
-      const j = await res.json();
-      if (j?.error) message = j.error;
-    } catch {
-      /* non-JSON error body */
-    }
-    throw new ApiError(res.status, message);
-  }
-  if (res.status === 204) return undefined as T;
-  return res.json() as Promise<T>;
-}
-
-const get = <T>(url: string) => req<T>('GET', url);
-
-// ---- 考勤 (attendance history grid) ----
-export type AttendanceStatus = 'present' | 'absent' | 'leave';
-
-export interface AttendanceSession {
-  id: string;
-  date: string; // YYYY-MM-DD
-  startedAt: string | null;
-  lessonNumber: number | null;
-  lessonTitle: string | null;
-}
-
-export interface AttendanceStudent {
-  id: string;
-  name: string;
-  cnName: string | null; // 类型跟随；考勤网格不显示中文名（格子太窄）
-  status: StudentStatus;
-}
-
-export interface AttendanceRecord {
-  sessionId: string;
-  studentId: string;
-  status: AttendanceStatus;
-  madeUp: boolean;
-}
-
-export interface ClassAttendance {
-  classId: string;
-  className: string;
-  sessions: AttendanceSession[];
-  students: AttendanceStudent[];
-  records: AttendanceRecord[];
+/** 写入成功后执行缓存规则；会话已切换（登录/退出/过期）则不写缓存。返回值与错误原样透传。 */
+async function write<T>(send: () => Promise<T>, effect?: (client: QueryClient, data: T) => unknown): Promise<T> {
+  const generation = sessionGeneration(queryClient);
+  const data = await send();
+  if (effect && generation === sessionGeneration(queryClient)) await effect(queryClient, data);
+  return data;
 }
 
 export const api = {
-  me: () => get<Me>('/api/me'),
-  login: (username: string, password: string) => req<Me>('POST', '/api/auth/login', { username, password }),
-  logout: () => req<{ ok: true }>('POST', '/api/auth/logout'),
-  verifyPassword: (password: string) => req<{ ok: true }>('POST', '/api/auth/verify-password', { password }),
-  teachers: () => get<TeacherItem[]>('/api/teachers'),
-  orgTags: () => get<TagItem[]>('/api/tags'),
-  // 仅改名（username 不可改）；添加老师、改密只在 /admin（改密另有 reset-password CLI），带密码会被 403。
-  updateTeacher: (id: string, p: { name: string }) => req<TeacherItem>('PUT', `/api/teachers/${id}`, p),
-  // 管理员（/admin）：服务端按 is_admin 强制鉴权；删除班级、改密同请求复核管理员自己的密码（错误 → 403），添加老师只过 gate。
-  adminClasses: () => get<AdminClassItem[]>('/api/admin/classes'),
-  adminCreateTeacher: (p: { name: string; username: string; password: string }) =>
-    req<TeacherItem>('POST', '/api/admin/teachers', p),
+  me: () => auth.getMe(),
+  login: (username: string, password: string) =>
+    auth.login(username, password).then(async (m) => {
+      await switchSession(queryClient, m);
+      return m;
+    }),
+  logout: () =>
+    auth.logout().then(async (r) => {
+      await switchSession(queryClient, null);
+      return r;
+    }),
+  verifyPassword: (password: string) => auth.verifyPassword(password),
+  teachers: () => teachers.listTeachers(),
+  orgTags: () => tags.listTags(),
+  updateTeacher: (id: string, p: { name: string }) =>
+    write(() => teachers.updateTeacher(id, p), effects.teacherUpdated),
+  adminClasses: () => admin.listAdminClasses(),
+  adminCreateTeacher: (p: admin.CreateTeacherInput) =>
+    write(
+      () => admin.createAdminTeacher(p),
+      (client) => effects.teacherCreated(client),
+    ),
   adminDeleteClass: (classId: string, adminPassword: string) =>
-    req<{ ok: true }>('DELETE', `/api/admin/classes/${classId}`, { adminPassword }),
+    write(
+      () => admin.deleteAdminClass(classId, adminPassword),
+      (client) => effects.adminClassDeleted(client, classId),
+    ),
   adminResetPassword: (teacherId: string, password: string, adminPassword: string) =>
-    req<{ ok: true }>('PUT', `/api/admin/teachers/${teacherId}/password`, { password, adminPassword }),
-  classes: () => get<ClassListItem[]>('/api/classes'),
-  classDetail: (id: string) => get<ClassDetail>(`/api/classes/${id}`),
-  createClass: (p: { name: string; teacherId: string; textbook: BookKey | null }) =>
-    req<ClassDetail>('POST', '/api/classes', p),
-  // isArchived 不传 = 保持原归档状态
+    admin.resetAdminTeacherPassword(teacherId, password, adminPassword),
+  classes: () => classes.listClasses(),
+  classDetail: (id: string) => classes.getClass(id),
+  createClass: (p: classes.CreateClassInput) => write(() => classes.createClass(p), effects.classCreated),
   updateClassInfo: (
     classId: string,
     p: { name: string; teacherId: string; textbook: BookKey | null; isArchived?: boolean },
-  ) => req<ClassDetail>('PUT', `/api/classes/${classId}`, p),
-  addStudent: (classId: string, p: { name: string; cnName?: string | null }) =>
-    req<StudentBasic & { score: number }>('POST', `/api/classes/${classId}/students`, p),
-  // cnName 不传 = 保持原中文名（服务端按 key 是否存在判定）
-  updateStudent: (id: string, p: { name: string; cnName?: string | null }) =>
-    req<StudentBasic>('PUT', `/api/students/${id}`, p),
-  deleteStudent: (id: string) => req<{ ok: true }>('DELETE', `/api/students/${id}`),
-  setStudentStatus: (id: string, status: StudentStatus) =>
-    req<StudentBasic>('PUT', `/api/students/${id}/status`, { status }),
-  listSessions: () => get<SessionListItem[]>('/api/sessions'),
-  deleteSession: (id: string) => req<{ ok: true }>('DELETE', `/api/sessions/${id}`),
-  // Partial 课堂信息 update — only keys present in `p` are written server-side.
-  updateSessionInfo: (
-    id: string,
-    p: {
-      lessonNumber?: number | null;
-      lessonTitle?: string | null;
-      teacherId?: string | null;
-      startedAt?: string;
-      endedAt?: string;
-    },
-  ) => req<SessionDetail>('PUT', `/api/sessions/${id}`, p),
-  saveGrouping: (classId: string, groups: GroupSave[]) =>
-    req<ClassDetail>('PUT', `/api/classes/${classId}/groups`, { groups }),
+  ) => write(() => classes.updateClass(classId, p), effects.classInfoUpdated),
+  addStudent: (classId: string, p: students.StudentInput) =>
+    write(
+      () => students.createStudent(classId, p),
+      (client) => effects.studentCreated(client, classId),
+    ),
+  updateStudent: (id: string, p: students.StudentInput) =>
+    write(() => students.updateStudent(id, p), effects.studentRenamed),
+  deleteStudent: (id: string) =>
+    write(
+      () => students.deleteStudent(id),
+      (client) => effects.studentDeleted(client, id),
+    ),
+  setStudentStatus: (id: string, status: students.StudentStatus) =>
+    write(() => students.updateStudentStatus(id, status), effects.studentStatusChanged),
+  listSessions: () => sessions.listSessions(),
+  deleteSession: (id: string) =>
+    write(
+      () => sessions.deleteSession(id),
+      (client) => effects.sessionDeleted(client, id),
+    ),
+  updateSessionInfo: (id: string, p: sessions.UpdateSessionInput) =>
+    write(() => sessions.updateSession(id, p), effects.sessionInfoUpdated),
+  saveGrouping: (classId: string, groups: classes.GroupSave[]) =>
+    write(() => classes.saveClassGrouping(classId, groups), effects.classGroupingSaved),
   updateClassNotes: (classId: string, notes: string) =>
-    req<ClassDetail>('PUT', `/api/classes/${classId}/notes`, { notes }),
+    write(() => classes.updateClassNotes(classId, notes), effects.classNotesSaved),
   updateHomeworkTemplate: (classId: string, template: string) =>
-    req<ClassDetail>('PUT', `/api/classes/${classId}/homework-template`, { template }),
-  sessionDetail: (sessionId: string) => get<SessionDetail>(`/api/sessions/${sessionId}`),
-  saveSessionHomework: (
-    sessionId: string,
-    p: { content: string; reviewBook: BookKey | null; reviewLesson: number | null },
-  ) => req<SessionDetail>('PUT', `/api/sessions/${sessionId}/homework`, p),
-  getStudentProfile: (studentId: string) => get<StudentProfile>(`/api/students/${studentId}/profile`),
-  getJoinRequests: (classId: string) => get<JoinRequestItem[]>(`/api/classes/${classId}/join-requests`),
-  commitSession: (classId: string, payload: CommitPayload) =>
-    req<CommitResult>('POST', `/api/classes/${classId}/sessions`, payload),
-  // 编辑上课记录: re-commit the whole ledger onto an existing session (same payload shape).
-  overwriteSession: (sessionId: string, payload: CommitPayload) =>
-    req<CommitResult>('PUT', `/api/sessions/${sessionId}/commit`, payload),
-  classAttendance: (classId: string) => get<ClassAttendance>(`/api/classes/${classId}/attendance`),
-  updateAttendance: (sessionId: string, studentId: string, p: { status: AttendanceStatus; madeUp?: boolean }) =>
-    req<AttendanceRecord>('PUT', `/api/sessions/${sessionId}/attendance/${studentId}`, p),
-  // 排班（课程周期）
-  listSchedules: (classId: string) => get<ScheduleItem[]>(`/api/classes/${classId}/schedules`),
-  createSchedule: (classId: string, p: { name: string; lessons: Omit<ScheduleLessonItem, 'id'>[] }) =>
-    req<ScheduleDetail>('POST', `/api/classes/${classId}/schedules`, p),
-  scheduleDetail: (id: string) => get<ScheduleDetail>(`/api/schedules/${id}`),
-  updateSchedule: (id: string, p: { name?: string; lessons?: Omit<ScheduleLessonItem, 'id'>[] }) =>
-    req<ScheduleDetail>('PUT', `/api/schedules/${id}`, p),
-  deleteSchedule: (id: string) => req<{ ok: true }>('DELETE', `/api/schedules/${id}`),
-  // 收银台（收款批次 + 收款单）
-  listBillingBatches: () => get<BillingBatchItem[]>('/api/billing/batches'),
-  createBillingBatch: (p: {
-    scheduleId: string;
-    unitPriceCents: number;
-    addonCents?: number;
-    addonNote?: string;
-    lessonCount?: number;
-  }) => req<BillingBatchDetail>('POST', '/api/billing/batches', p),
-  billingBatchDetail: (id: string) => get<BillingBatchDetail>(`/api/billing/batches/${id}`),
-  // 无 body = 按当前条款刷新待收款行；带 body = 重置条款（单价/附加费/课程次数随批次更新）
-  recalculateBillingBatch: (
-    id: string,
-    p?: { unitPriceCents?: number; addonCents?: number; addonNote?: string; lessonCount?: number },
-  ) => req<BillingBatchDetail>('POST', `/api/billing/batches/${id}/recalculate`, p),
-  deleteBillingBatch: (id: string) => req<{ ok: true }>('DELETE', `/api/billing/batches/${id}`),
-  updateInvoice: (id: string, p: { finalAmountCents?: number; note?: string }) =>
-    req<InvoiceItem>('PUT', `/api/invoices/${id}`, p),
-  confirmInvoice: (id: string) => req<InvoiceItem>('POST', `/api/invoices/${id}/confirm`),
-  unconfirmInvoice: (id: string) => req<InvoiceItem>('POST', `/api/invoices/${id}/unconfirm`),
-  invoiceLessons: (id: string) =>
-    get<{ invoiceId: string; studentId: string; rows: InvoiceLessonRow[] }>(`/api/invoices/${id}/lessons`),
+    write(() => classes.updateHomeworkTemplate(classId, template), effects.homeworkTemplateSaved),
+  sessionDetail: (sessionId: string) => sessions.getSession(sessionId),
+  saveSessionHomework: (sessionId: string, p: sessions.SessionHomeworkInput) =>
+    write(() => sessions.updateSessionHomework(sessionId, p), effects.sessionHomeworkUpdated),
+  getStudentProfile: (studentId: string) => students.getStudentProfile(studentId),
+  getJoinRequests: (classId: string) => invites.listJoinRequests(classId),
+  commitSession: (classId: string, payload: sessions.CommitPayload) =>
+    write(
+      () => sessions.commitSession(classId, payload),
+      (client) => effects.sessionCommitted(client, classId),
+    ),
+  overwriteSession: (sessionId: string, payload: sessions.CommitPayload) =>
+    write(
+      () => sessions.overwriteSession(sessionId, payload),
+      (client) => effects.sessionOverwritten(client, sessionId),
+    ),
+  classAttendance: (classId: string) => attendance.getClassAttendance(classId),
+  updateAttendance: (sessionId: string, studentId: string, p: attendance.AttendanceInput) =>
+    write(() => attendance.updateAttendance(sessionId, studentId, p), effects.attendanceUpdated),
+  listSchedules: (classId: string) => schedules.listSchedules(classId),
+  createSchedule: (classId: string, p: { name: string; lessons: schedules.ScheduleLessonInput[] }) =>
+    write(
+      () => schedules.createSchedule(classId, p),
+      (client, d) => effects.scheduleSaved(client, d, classId),
+    ),
+  scheduleDetail: (id: string) => schedules.getSchedule(id),
+  updateSchedule: (id: string, p: { name?: string; lessons?: schedules.ScheduleLessonInput[] }) =>
+    write(() => schedules.updateSchedule(id, p), effects.scheduleSaved),
+  deleteSchedule: (id: string) =>
+    write(
+      () => schedules.deleteSchedule(id),
+      (client) => effects.scheduleDeleted(client, id),
+    ),
+  listBillingBatches: () => billing.listBillingBatches(),
+  createBillingBatch: (p: billing.CreateBillingBatchInput) =>
+    write(() => billing.createBillingBatch(p), effects.billingBatchCreated),
+  billingBatchDetail: (id: string) => billing.getBillingBatch(id),
+  recalculateBillingBatch: (id: string, p?: billing.BillingTermsInput) =>
+    write(() => billing.recalculateBillingBatch(id, p), effects.billingBatchRecalculated),
+  deleteBillingBatch: (id: string) =>
+    write(
+      () => billing.deleteBillingBatch(id),
+      (client) => effects.billingBatchDeleted(client, id),
+    ),
+  updateInvoice: (id: string, p: billing.UpdateInvoiceInput) =>
+    write(() => billing.updateInvoice(id, p), effects.invoiceChanged),
+  confirmInvoice: (id: string) => write(() => billing.confirmInvoice(id), effects.invoiceChanged),
+  unconfirmInvoice: (id: string) => write(() => billing.unconfirmInvoice(id), effects.invoiceChanged),
+  invoiceLessons: (id: string) => billing.getInvoiceLessons(id),
 };
