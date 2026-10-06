@@ -359,8 +359,19 @@ describe('write → cache matrix (c2 is the untouched control)', () => {
       await mutate(useDeleteBillingBatchMutation, { batchId: 'b1' });
       expectSnapshot({
         removed: ['billing/b1', 'invoice-lessons/i1'],
+        changed: ['billing/list'],
         invalidated: ['billing/list', 'schedules/list/c1', 'schedules/p1', 'admin/classes'],
       });
+    });
+
+    // Plan 2 新增：收银台列表在删除时通常没挂载，返回时先画缓存——已删的批次不能在那一帧里还在。
+    it('delete batch: the deleted batch drops out of the cached list right away (other items untouched)', async () => {
+      const before = client.getQueryData<{ id: string }[]>(billingKeys.lists())!;
+      server.on('DELETE', '/api/billing/batches/b1', { ok: true });
+      await mutate(useDeleteBillingBatchMutation, { batchId: 'b1' });
+      const after = client.getQueryData<{ id: string }[]>(billingKeys.lists())!;
+      expect(after.map((b) => b.id)).toEqual(['b9']);
+      expect(after[0]).toEqual(before[1]);
     });
 
     const paid = f.invoice({ status: 'paid', paidAt: '2026-10-06 10:00:00', paidByName: '王丽' });

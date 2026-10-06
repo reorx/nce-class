@@ -339,11 +339,16 @@ export async function billingBatchRecalculated(client: QueryClient, detail: Bill
   );
 }
 
-/** 删除批次：收款单随之删除，周期解除占用。归属从删除前的缓存采集。 */
+/**
+ * 删除批次：收款单随之删除，周期解除占用。归属从删除前的缓存采集。
+ * 列表里先拿掉这一项（删除是确定结果，不是推算）：收银台列表此时多半没挂载，返回时先画缓存，
+ * 不能让已删的批次在那一帧里还在；其余项仍等失效后重读。
+ */
 export async function billingBatchDeleted(client: QueryClient, batchId: string) {
   const detail = client.getQueryData<BillingBatchDetail>(billingKeys.detail(batchId));
   const item = detail ?? client.getQueryData<BillingBatchItem[]>(billingKeys.lists())?.find((b) => b.id === batchId);
   client.removeQueries({ queryKey: billingKeys.detail(batchId), exact: true });
+  client.setQueryData<BillingBatchItem[]>(billingKeys.lists(), (old) => old?.filter((b) => b.id !== batchId));
   const invoiceIds = detail ? new Set(detail.invoices.map((i) => i.id)) : undefined;
   client.removeQueries({
     queryKey: billingKeys.invoiceLessonsAll(),

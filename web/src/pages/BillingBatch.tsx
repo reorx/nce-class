@@ -1,71 +1,55 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import type { Me } from '../api/auth';
+import type { BillingBatchDetail, InvoiceItem, InvoiceLessonRow } from '../api/billing';
+import { ApiError } from '../api/client';
 import { BillingBatchModal } from '../components/BillingBatchModal';
 import { Modal } from '../components/Modal';
+import { LoadErrorBlock, LoadingBlock, QueryBlock, RefreshStatus } from '../components/QueryState';
 import { useStudentModal } from '../components/StudentEditModal';
 import { useToast } from '../components/Toast';
 import { TopBar } from '../components/TopBar';
-import { api, ApiError, type BillingBatchDetail, type InvoiceItem, type InvoiceLessonRow, type Me } from '../lib/api';
 import { weekdayCN } from '../lib/attendance';
 import { centsToYuan, fmtMoney, yuanToCents } from '../lib/money';
+import { queryView } from '../lib/queryView';
 import { studentNamePair } from '../lib/studentName';
 import { editIconBtnStyle, statusTag } from '../lib/theme';
 import { utcToLocalMinute } from '../lib/utcTime';
+import {
+  useBillingBatchQuery,
+  useConfirmInvoiceMutation,
+  useDeleteBillingBatchMutation,
+  useInvoiceLessonsQuery,
+  useUnconfirmInvoiceMutation,
+  useUpdateInvoiceMutation,
+} from '../queries/billing';
 
 const md = (d: string | null) => (d ? d.slice(5) : '—');
+const errText = (e: unknown, fallback: string) => (e instanceof Error && e.message ? e.message : fallback);
 
 export function BillingBatch({ me }: { me: Me | null }) {
   const { batchId = '' } = useParams();
   const toast = useToast();
   const navigate = useNavigate();
-  const [d, setD] = useState<BillingBatchDetail | null>(null);
-  const [editing, setEditing] = useState<InvoiceItem | null>(null);
+  const del = useDeleteBillingBatchMutation();
+  // 删除进行中 / 已删除：不再读取这个批次（删除后缓存被移除，挂着的观察者不能再发 GET）。
+  const detailQuery = useBillingBatchQuery(batchId, { enabled: !del.isPending && !del.isSuccess });
+  const d = detailQuery.data;
+  const view = queryView(detailQuery);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const editing = d?.invoices.find((i) => i.id === editingId) ?? null;
   const [resetOpen, setResetOpen] = useState(false);
   const editStudent = useStudentModal();
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-
-  const reload = () =>
-    api
-      .billingBatchDetail(batchId)
-      .then(setD)
-      .catch(() => toast('收款项加载失败', 'error'));
-
-  useEffect(() => {
-    reload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [batchId]);
 
   async function confirmDelete() {
-    if (busy) return;
-    setBusy(true);
+    if (del.isPending) return;
     try {
-      await api.deleteBillingBatch(batchId);
+      await del.mutateAsync({ batchId });
       toast('收款项已删除');
       navigate('/billing');
     } catch (e) {
       toast(e instanceof ApiError ? e.message : '删除失败', 'error');
-      setBusy(false);
-    }
-  }
-
-  async function confirmPay(inv: InvoiceItem) {
-    try {
-      await api.confirmInvoice(inv.id);
-      await reload();
-      toast(`已确认收款：${inv.studentName} ${fmtMoney(inv.finalAmountCents)}`);
-    } catch (e) {
-      toast(e instanceof ApiError ? e.message : '操作失败', 'error');
-    }
-  }
-
-  async function undoPay(inv: InvoiceItem) {
-    try {
-      await api.unconfirmInvoice(inv.id);
-      await reload();
-      toast(`已撤销收款：${inv.studentName}`);
-    } catch (e) {
-      toast(e instanceof ApiError ? e.message : '操作失败', 'error');
     }
   }
 
@@ -89,99 +73,98 @@ export function BillingBatch({ me }: { me: Me | null }) {
           <span style={{ fontSize: 14 }}>←</span>返回收银台
         </Link>
 
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, flexWrap: 'wrap', marginBottom: 8 }}>
-          <div>
-            <h1 style={{ margin: 0, fontSize: 21, fontWeight: 700, letterSpacing: '-.3px' }}>
-              {d ? `${d.className} · ${d.scheduleName}` : ' '}
-            </h1>
-            {d && (
-              <div className="mono" style={{ fontSize: 12.5, color: '#8a929e', marginTop: 6 }}>
-                周期 {md(d.minDate)} ~ {md(d.maxDate)} · 计划 {d.lessonCount} 节（已上 {d.heldSessionCount} / 未上{' '}
-                {d.futureLessonCount}）· 单价 ¥{centsToYuan(d.unitPriceCents)}/节
-                {d.addonCents > 0 &&
-                  ` · 附加 ¥${centsToYuan(d.addonCents)}/人${d.addonNote ? `（${d.addonNote}）` : ''}`}
-                {d.snapshotAt && ` · 快照于 ${utcToLocalMinute(d.snapshotAt)}`}
-              </div>
-            )}
-          </div>
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 9 }}>
-            <button style={ghostBtn} onClick={() => setResetOpen(true)} disabled={d == null}>
-              ↻ 重置收款项
-            </button>
-            <button style={{ ...ghostBtn, color: '#d94a4a' }} onClick={() => setDeleteOpen(true)}>
-              删除收款项
-            </button>
-          </div>
-        </div>
-
-        {d && (
-          <div
-            style={{
-              display: 'flex',
-              gap: 26,
-              flexWrap: 'wrap',
-              fontSize: 13,
-              margin: '12px 0 18px',
-              padding: '11px 16px',
-              background: 'rgba(79,110,247,.05)',
-              borderRadius: 9,
-              color: '#3c4451',
-            }}
-          >
-            <span>
-              学生 <b>{d.invoiceCount}</b>
-            </span>
-            <span>
-              已收款{' '}
-              <b style={{ color: '#2c7a48' }}>
-                {d.paidCount} 人 · {fmtMoney(d.paidAmountCents)}
-              </b>
-            </span>
-            <span>
-              待收款{' '}
-              <b style={{ color: '#b06c22' }}>
-                {d.invoiceCount - d.paidCount} 人 · {fmtMoney(d.pendingAmountCents)}
-              </b>
-            </span>
-            <span>
-              应收合计 <b>{fmtMoney(d.totalAmountCents)}</b>
-            </span>
-          </div>
+        {view === 'loading' && <LoadingBlock />}
+        {view === 'error' && (
+          <LoadErrorBlock error={detailQuery.error} what="收款项" onRetry={detailQuery.refetch} />
         )}
-
         {d && (
-          <div style={{ background: '#fff', border: '1px solid #e7e9ee', borderRadius: 13, overflow: 'hidden' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead>
-                <tr style={{ color: '#8a929e', textAlign: 'left', borderBottom: '1px solid #ebedf1' }}>
-                  <th style={th}>学生</th>
-                  <th style={th}>已上到堂</th>
-                  <th style={th}>应收</th>
-                  <th style={th}>备注</th>
-                  <th style={th}>状态</th>
-                  <th style={{ ...th, textAlign: 'right' }}>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {d.invoices.map((inv) => (
-                  <InvoiceRow
-                    key={inv.id}
-                    inv={inv}
-                    held={d.heldSessionCount}
-                    onEditStudent={() =>
-                      editStudent(
-                        { studentId: inv.studentId, name: inv.studentName, cnName: inv.studentCnName },
-                        reload,
-                      )
-                    }
-                    onEdit={() => setEditing(inv)}
-                    onConfirm={() => confirmPay(inv)}
-                    onUndo={() => undoPay(inv)}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, flexWrap: 'wrap', marginBottom: 8 }}>
+              <div>
+                <h1 style={{ margin: 0, fontSize: 21, fontWeight: 700, letterSpacing: '-.3px' }}>
+                  {`${d.className} · ${d.scheduleName}`}
+                </h1>
+                <div className="mono" style={{ fontSize: 12.5, color: '#8a929e', marginTop: 6 }}>
+                  周期 {md(d.minDate)} ~ {md(d.maxDate)} · 计划 {d.lessonCount} 节（已上 {d.heldSessionCount} / 未上{' '}
+                  {d.futureLessonCount}）· 单价 ¥{centsToYuan(d.unitPriceCents)}/节
+                  {d.addonCents > 0 &&
+                    ` · 附加 ¥${centsToYuan(d.addonCents)}/人${d.addonNote ? `（${d.addonNote}）` : ''}`}
+                  {d.snapshotAt && ` · 快照于 ${utcToLocalMinute(d.snapshotAt)}`}
+                  <RefreshStatus query={detailQuery} style={{ marginLeft: 10, fontFamily: 'inherit' }} />
+                </div>
+              </div>
+              <div style={{ marginLeft: 'auto', display: 'flex', gap: 9 }}>
+                <button style={ghostBtn} onClick={() => setResetOpen(true)}>
+                  ↻ 重置收款项
+                </button>
+                <button style={{ ...ghostBtn, color: '#d94a4a' }} onClick={() => setDeleteOpen(true)}>
+                  删除收款项
+                </button>
+              </div>
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                gap: 26,
+                flexWrap: 'wrap',
+                fontSize: 13,
+                margin: '12px 0 18px',
+                padding: '11px 16px',
+                background: 'rgba(79,110,247,.05)',
+                borderRadius: 9,
+                color: '#3c4451',
+              }}
+            >
+              <span>
+                学生 <b>{d.invoiceCount}</b>
+              </span>
+              <span>
+                已收款{' '}
+                <b style={{ color: '#2c7a48' }}>
+                  {d.paidCount} 人 · {fmtMoney(d.paidAmountCents)}
+                </b>
+              </span>
+              <span>
+                待收款{' '}
+                <b style={{ color: '#b06c22' }}>
+                  {d.invoiceCount - d.paidCount} 人 · {fmtMoney(d.pendingAmountCents)}
+                </b>
+              </span>
+              <span>
+                应收合计 <b>{fmtMoney(d.totalAmountCents)}</b>
+              </span>
+            </div>
+
+            <div style={{ background: '#fff', border: '1px solid #e7e9ee', borderRadius: 13, overflow: 'hidden' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead>
+                  <tr style={{ color: '#8a929e', textAlign: 'left', borderBottom: '1px solid #ebedf1' }}>
+                    <th style={th}>学生</th>
+                    <th style={th}>已上到堂</th>
+                    <th style={th}>应收</th>
+                    <th style={th}>备注</th>
+                    <th style={th}>状态</th>
+                    <th style={{ ...th, textAlign: 'right' }}>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {d.invoices.map((inv) => (
+                    <InvoiceRow
+                      key={inv.id}
+                      inv={inv}
+                      batchId={d.id}
+                      held={d.heldSessionCount}
+                      onEditStudent={() =>
+                        editStudent({ studentId: inv.studentId, name: inv.studentName, cnName: inv.studentCnName })
+                      }
+                      onEdit={() => setEditingId(inv.id)}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
         <p style={{ fontSize: 12, color: '#9aa1ac', marginTop: 12, lineHeight: 1.7 }}>
           应收 = 单价 × 课程次数 + 附加费，每名学生一致，不按出勤扣减；中途入班、停课等个别情况点「编辑」直接填最终收款金额。
@@ -190,29 +173,9 @@ export function BillingBatch({ me }: { me: Me | null }) {
         </p>
       </div>
 
-      {d && (
-        <BillingBatchModal
-          open={resetOpen}
-          onClose={() => setResetOpen(false)}
-          batch={d}
-          onReset={(next) => {
-            setD(next);
-            setResetOpen(false);
-          }}
-        />
-      )}
+      {d && <BillingBatchModal open={resetOpen} onClose={() => setResetOpen(false)} batch={d} />}
 
-      {editing && d && (
-        <InvoiceEditModal
-          inv={editing}
-          batch={d}
-          onClose={() => setEditing(null)}
-          onSaved={async () => {
-            setEditing(null);
-            await reload();
-          }}
-        />
-      )}
+      {editing && d && <InvoiceEditModal inv={editing} batch={d} onClose={() => setEditingId(null)} />}
 
       <Modal open={deleteOpen} onClose={() => setDeleteOpen(false)} title="删除收款项">
         <div style={{ fontSize: 14, color: '#3c4451', lineHeight: 1.7 }}>
@@ -230,10 +193,11 @@ export function BillingBatch({ me }: { me: Me | null }) {
             取消
           </button>
           <button
-            style={{ ...primaryBtn, background: '#d94a4a', boxShadow: 'none', opacity: busy ? 0.6 : 1 }}
+            style={{ ...primaryBtn, background: '#d94a4a', boxShadow: 'none', opacity: del.isPending ? 0.6 : 1 }}
             onClick={confirmDelete}
+            disabled={del.isPending}
           >
-            {busy ? '删除中…' : '删除'}
+            {del.isPending ? '删除中…' : '删除'}
           </button>
         </div>
       </Modal>
@@ -241,22 +205,49 @@ export function BillingBatch({ me }: { me: Me | null }) {
   );
 }
 
+/**
+ * 一行收款单。确认 / 撤销各自一个 Mutation 观察者：多行可同时进行，pending 只锁本行，
+ * 缓存维护（行回写 + 批次与列表失效）在 hook 层完成，行组件卸载也照常执行。
+ */
 function InvoiceRow({
   inv,
+  batchId,
   held,
   onEditStudent,
   onEdit,
-  onConfirm,
-  onUndo,
 }: {
   inv: InvoiceItem;
+  batchId: string;
   held: number;
   /** ✎ 图标 — 改学生姓名；与下方文字版「编辑」（改费用）是两个入口，别混。 */
   onEditStudent: () => void;
   onEdit: () => void;
-  onConfirm: () => void;
-  onUndo: () => void;
 }) {
+  const toast = useToast();
+  const confirm = useConfirmInvoiceMutation();
+  const unconfirm = useUnconfirmInvoiceMutation();
+  const pending = confirm.isPending || unconfirm.isPending;
+
+  async function onConfirm() {
+    if (pending) return;
+    try {
+      await confirm.mutateAsync({ invoiceId: inv.id, batchId });
+      toast(`已确认收款：${inv.studentName} ${fmtMoney(inv.finalAmountCents)}`);
+    } catch (e) {
+      toast(errText(e, '操作失败'), 'error');
+    }
+  }
+
+  async function onUndo() {
+    if (pending) return;
+    try {
+      await unconfirm.mutateAsync({ invoiceId: inv.id, batchId });
+      toast(`已撤销收款：${inv.studentName}`);
+    } catch (e) {
+      toast(errText(e, '操作失败'), 'error');
+    }
+  }
+
   const sTag = statusTag(inv.studentStatus);
   const names = studentNamePair({ name: inv.studentName, cnName: inv.studentCnName });
   const adjusted = inv.adjusted === 1;
@@ -323,17 +314,17 @@ function InvoiceRow({
       </td>
       <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
         {inv.status === 'paid' ? (
-          <button style={linkBtn('#8a929e')} onClick={onUndo}>
-            撤销
+          <button style={linkBtn('#8a929e')} onClick={onUndo} disabled={pending}>
+            {unconfirm.isPending ? '撤销中…' : '撤销'}
           </button>
         ) : (
           <>
-            <button style={linkBtn('#4f6ef7')} onClick={onEdit}>
+            <button style={linkBtn('#4f6ef7')} onClick={onEdit} disabled={pending}>
               编辑
             </button>
             <span style={{ color: '#d3d9df' }}> · </span>
-            <button style={linkBtn('#2c7a48')} onClick={onConfirm}>
-              确认收款
+            <button style={linkBtn('#2c7a48')} onClick={onConfirm} disabled={pending}>
+              {confirm.isPending ? '确认中…' : '确认收款'}
             </button>
           </>
         )}
@@ -348,26 +339,18 @@ function InvoiceEditModal({
   inv,
   batch,
   onClose,
-  onSaved,
 }: {
   inv: InvoiceItem;
   batch: BillingBatchDetail;
   onClose: () => void;
-  onSaved: () => Promise<void>;
 }) {
   const toast = useToast();
-  const [rows, setRows] = useState<InvoiceLessonRow[] | null>(null);
-  const [finalAmount, setFinalAmount] = useState(centsToYuan(inv.finalAmountCents));
-  const [note, setNote] = useState(inv.note ?? '');
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    api
-      .invoiceLessons(inv.id)
-      .then((r) => setRows(r.rows))
-      .catch(() => toast('出勤明细加载失败', 'error'));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inv.id]);
+  const lessons = useInvoiceLessonsQuery(inv.id);
+  const update = useUpdateInvoiceMutation();
+  // 草稿只在打开弹窗时从当前收款单建立一次；之后的后台刷新不覆盖输入。
+  const [finalAmount, setFinalAmount] = useState(() => centsToYuan(inv.finalAmountCents));
+  const [note, setNote] = useState(() => inv.note ?? '');
+  const busy = update.isPending;
 
   const computed = inv.computedAmountCents;
   const finalCents = yuanToCents(finalAmount);
@@ -376,14 +359,12 @@ function InvoiceEditModal({
 
   async function submit() {
     if (!canSubmit) return;
-    setBusy(true);
     try {
-      await api.updateInvoice(inv.id, { finalAmountCents: finalCents!, note });
+      await update.mutateAsync({ invoiceId: inv.id, batchId: batch.id, input: { finalAmountCents: finalCents!, note } });
       toast(`已保存 ${inv.studentName} 的费用`);
-      await onSaved();
+      onClose();
     } catch (e) {
       toast(e instanceof ApiError ? e.message : '保存失败，请重试', 'error');
-      setBusy(false);
     }
   }
 
@@ -407,12 +388,14 @@ function InvoiceEditModal({
             </tr>
           </thead>
           <tbody>
-            {(rows ?? []).map((r, i) => (
+            {(lessons.data?.rows ?? []).map((r, i) => (
               <LessonRow key={`${r.kind}-${r.sessionId ?? r.date + (r.startTime ?? '')}-${i}`} r={r} idx={i + 1} />
             ))}
           </tbody>
         </table>
-        {rows == null && <div style={{ padding: 14, color: '#9aa1ac', fontSize: 12.5 }}>加载中…</div>}
+        <QueryBlock query={lessons} what="出勤明细" style={{ padding: 14, fontSize: 12.5 }}>
+          {() => null}
+        </QueryBlock>
       </div>
 
       <div style={{ display: 'flex', gap: 22, alignItems: 'flex-end', margin: '18px 0 12px', flexWrap: 'wrap' }}>

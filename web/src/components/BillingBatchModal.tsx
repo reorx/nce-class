@@ -1,8 +1,12 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { api, ApiError, type BillingBatchDetail, type ClassListItem, type ScheduleItem } from '../lib/api';
+import type { BillingBatchDetail } from '../api/billing';
+import { ApiError } from '../api/client';
 import { billingClassSelection, parseLessonCount, previewPerStudentCents } from '../lib/billingForm';
 import { centsToYuan, fmtMoney, yuanToCents } from '../lib/money';
+import { useCreateBillingBatchMutation, useRecalculateBillingBatchMutation } from '../queries/billing';
+import { useClassesQuery } from '../queries/classes';
+import { useSchedulesQuery } from '../queries/schedules';
 import { Modal } from './Modal';
 import { useToast } from './Toast';
 
@@ -13,75 +17,65 @@ const md = (d: string | null) => (d ? d.slice(5) : '—');
  * - 创建（batch 不传）：选班级 → 选课程周期 → 课程次数/单价/附加费 → 生成收款项
  * - 重置（batch 传入）：班级与周期锁定为该批次，条款可改 → 重新计算收款项
  * 课程次数默认取自课程周期的排班节数，可手动修改，以输入值为准。
+ *
+ * 读取：班级列表与所选班级的周期列表都是共享查询，只在创建模式打开时启用；换班即换 key，
+ * 旧班级的请求随观察者离开被取消，晚到也只落在它自己的缓存里，不会覆盖新班级的周期列表。
+ * 写入：创建 / 重算的响应是完整批次详情，由 Mutation 写进详情缓存，跳详情页无需再等读取。
  */
 export function BillingBatchModal({
   open,
   onClose,
   batch,
-  onReset,
 }: {
   open: boolean;
   onClose: () => void;
   batch?: BillingBatchDetail | null;
-  onReset?: (d: BillingBatchDetail) => void;
 }) {
   const toast = useToast();
   const navigate = useNavigate();
   const reset = batch != null;
-  const [classes, setClasses] = useState<ClassListItem[]>([]);
-  const [classesLoading, setClassesLoading] = useState(true);
-  const [classId, setClassId] = useState('');
-  const [schedules, setSchedules] = useState<ScheduleItem[] | null>(null);
+  const create = useCreateBillingBatchMutation();
+  const recalc = useRecalculateBillingBatchMutation();
+  const busy = create.isPending || recalc.isPending;
+  const classesQuery = useClassesQuery({ enabled: open && !reset });
+  const [pickedClassId, setPickedClassId] = useState('');
+  // 只列未归档班级；原选择已归档或删除时自动落到首个可用班级（纯派生，再次打开弹窗也适用）。
+  const selection = useMemo(
+    () => billingClassSelection(classesQuery.data ?? [], pickedClassId),
+    [classesQuery.data, pickedClassId],
+  );
+  const { classes, classId } = selection;
+  const classesLoading = classesQuery.data === undefined;
+  const schedulesQuery = useSchedulesQuery(classId || undefined, { enabled: open && !reset });
+  const schedules = schedulesQuery.data;
   const [scheduleId, setScheduleId] = useState('');
   const [lessonCount, setLessonCount] = useState('');
   const [price, setPrice] = useState('');
   const [addon, setAddon] = useState('');
   const [addonNote, setAddonNote] = useState('');
-  const [busy, setBusy] = useState(false);
 
+  // 创建模式每次打开都重新选周期（班级选择与条款保留）。
   useEffect(() => {
     if (!open || reset) return;
-    let cancelled = false;
-    setClassesLoading(true);
-    setClasses([]);
-    api
-      .classes()
-      .then((cs) => {
-        if (cancelled) return;
-        setClasses(billingClassSelection(cs, '').classes);
-        setClassId((cur) => billingClassSelection(cs, cur).classId);
-        setClassesLoading(false);
-      })
-      .catch(() => toast('班级加载失败', 'error'));
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, reset]);
-
-  useEffect(() => {
-    if (!open || reset) return;
-    let cancelled = false;
-    setSchedules(null);
     setScheduleId('');
     setLessonCount('');
-    if (!classId || classesLoading) return;
-    api
-      .listSchedules(classId)
-      .then((items) => { if (!cancelled) setSchedules(items); })
-      .catch(() => toast('课程周期加载失败', 'error'));
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, reset, classId, classesLoading]);
+  }, [open, reset]);
 
-  // 重置模式：打开时用批次当前条款回填
+  // 重置模式：打开时用批次当前条款回填一次；之后批次的后台刷新不覆盖正在编辑的条款。
   useEffect(() => {
     if (!open || !batch) return;
     setLessonCount(String(batch.lessonCount));
     setPrice(centsToYuan(batch.unitPriceCents));
     setAddon(batch.addonCents > 0 ? centsToYuan(batch.addonCents) : '');
     setAddonNote(batch.addonNote ?? '');
-    setBusy(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, batch?.id]);
+
+  function pickClass(id: string) {
+    setPickedClassId(id);
+    setScheduleId('');
+    setLessonCount('');
+  }
 
   const cls = classes.find((c) => c.id === classId) ?? null;
   const sched = (schedules ?? []).find((s) => s.id === scheduleId) ?? null;
@@ -95,19 +89,21 @@ export function BillingBatchModal({
 
   async function submit() {
     if (!canSubmit) return;
-    setBusy(true);
     try {
       if (reset) {
-        const d = await api.recalculateBillingBatch(batch.id, {
-          unitPriceCents: priceCents!,
-          addonCents: addonCents!,
-          addonNote: addonNote.trim(),
-          lessonCount: count!,
+        await recalc.mutateAsync({
+          batchId: batch.id,
+          terms: {
+            unitPriceCents: priceCents!,
+            addonCents: addonCents!,
+            addonNote: addonNote.trim(),
+            lessonCount: count!,
+          },
         });
         toast('已重新计算：待收款行已按新条款刷新，新入班学生已补建');
-        onReset?.(d);
+        onClose();
       } else {
-        const d = await api.createBillingBatch({
+        const d = await create.mutateAsync({
           scheduleId: sched!.id,
           unitPriceCents: priceCents!,
           addonCents: addonCents!,
@@ -119,7 +115,6 @@ export function BillingBatchModal({
       }
     } catch (e) {
       toast(e instanceof ApiError ? e.message : reset ? '重新计算失败' : '创建失败，请重试', 'error');
-      setBusy(false);
     }
   }
 
@@ -146,14 +141,27 @@ export function BillingBatchModal({
       ) : (
         <>
           <div style={label}>1. 选择班级</div>
-          <select aria-label="选择班级" disabled={classesLoading || classes.length === 0} value={classId} onChange={(e) => setClassId(e.target.value)} style={{ ...field, marginBottom: 16 }}>
-            {classes.length === 0 && <option value="">{classesLoading ? '加载班级中…' : '暂无未归档班级'}</option>}
+          <select
+            aria-label="选择班级"
+            disabled={classesLoading || classes.length === 0}
+            value={classId}
+            onChange={(e) => pickClass(e.target.value)}
+            style={{ ...field, marginBottom: classesQuery.isError && classesLoading ? 6 : 16 }}
+          >
+            {classes.length === 0 && (
+              <option value="">
+                {classesQuery.isError ? '班级加载失败' : classesLoading ? '加载班级中…' : '暂无未归档班级'}
+              </option>
+            )}
             {classes.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}（{c.studentCount} 人）
               </option>
             ))}
           </select>
+          {classesQuery.isError && classesLoading && (
+            <InlineRetry text="班级加载失败" onRetry={() => classesQuery.refetch()} />
+          )}
 
           <div style={label}>2. 选择课程周期（排班表）</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 7, margin: '8px 0 6px' }}>
@@ -189,6 +197,12 @@ export function BillingBatchModal({
                 </button>
               );
             })}
+            {cls && !schedules && schedulesQuery.isError && (
+              <InlineRetry text="课程周期加载失败" onRetry={() => schedulesQuery.refetch()} />
+            )}
+            {cls && !schedules && !schedulesQuery.isError && (
+              <div style={{ fontSize: 12.5, color: '#9aa1ac', padding: '6px 0' }}>加载课程周期中…</div>
+            )}
             {cls && schedules && schedules.length === 0 && (
               <div style={{ fontSize: 12.5, color: '#8a929e', padding: '6px 0' }}>
                 该班还没有排班？
@@ -297,6 +311,20 @@ export function BillingBatchModal({
         {busy ? (reset ? '重算中…' : '生成中…') : reset ? '重新计算收款项' : '生成收款项'}
       </button>
     </Modal>
+  );
+}
+
+function InlineRetry({ text, onRetry }: { text: string; onRetry: () => void }) {
+  return (
+    <div role="alert" style={{ fontSize: 12.5, color: '#d94a4a', padding: '6px 0', marginBottom: 10 }}>
+      {text} ·{' '}
+      <button
+        onClick={onRetry}
+        style={{ border: 'none', background: 'transparent', padding: 0, color: '#4f6ef7', fontWeight: 600, cursor: 'pointer' }}
+      >
+        重试
+      </button>
+    </div>
   );
 }
 

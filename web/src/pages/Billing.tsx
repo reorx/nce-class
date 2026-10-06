@@ -1,33 +1,25 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import type { Me } from '../api/auth';
+import type { BillingBatchItem } from '../api/billing';
 import { BillingBatchModal } from '../components/BillingBatchModal';
-import { useToast } from '../components/Toast';
+import { QueryBlock, RefreshStatus } from '../components/QueryState';
 import { TopBar } from '../components/TopBar';
-import { api, type BillingBatchItem, type Me } from '../lib/api';
 import { centsToYuan, fmtMoney } from '../lib/money';
 import { GREEN } from '../lib/theme';
 import { utcToLocalDate } from '../lib/utcTime';
+import { useBillingBatchesQuery, usePrefetchBillingBatch } from '../queries/billing';
 
 const md = (d: string | null) => (d ? d.slice(5) : '—');
 
 type Filter = 'all' | 'pending' | 'settled';
 
 export function Billing({ me }: { me: Me | null }) {
-  const toast = useToast();
-  const [batches, setBatches] = useState<BillingBatchItem[] | null>(null);
+  const batchesQuery = useBillingBatchesQuery();
+  const prefetch = usePrefetchBillingBatch();
+  const batches = batchesQuery.data;
   const [filter, setFilter] = useState<Filter>('all');
   const [createOpen, setCreateOpen] = useState(false);
-
-  const reload = () =>
-    api
-      .listBillingBatches()
-      .then(setBatches)
-      .catch(() => toast('收款项加载失败', 'error'));
-
-  useEffect(() => {
-    reload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const shown = useMemo(() => {
     const list = batches ?? [];
@@ -45,6 +37,7 @@ export function Billing({ me }: { me: Me | null }) {
             <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, letterSpacing: '-.3px' }}>收银台</h1>
             <div style={{ marginTop: 6, fontSize: 13, color: '#7a828f' }}>
               按「班级 + 课程周期」发起收款，逐学生结算与确认到账
+              <RefreshStatus query={batchesQuery} style={{ marginLeft: 10 }} />
             </div>
           </div>
           <button
@@ -100,27 +93,31 @@ export function Billing({ me }: { me: Me | null }) {
           })}
         </div>
 
-        {batches && shown.length === 0 && (
-          <div
-            style={{
-              textAlign: 'center',
-              padding: '56px 20px',
-              color: '#9aa1ac',
-              fontSize: 13.5,
-              background: '#fff',
-              border: '1px dashed #d3d9df',
-              borderRadius: 14,
-            }}
-          >
-            {batches.length === 0 ? '还没有收款项，点右上角「创建收款项」开始' : '没有匹配的收款项'}
-          </div>
-        )}
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {shown.map((b) => (
-            <BatchCard key={b.id} b={b} />
-          ))}
-        </div>
+        <QueryBlock query={batchesQuery} what="收款项">
+          {(list) =>
+            shown.length === 0 ? (
+              <div
+                style={{
+                  textAlign: 'center',
+                  padding: '56px 20px',
+                  color: '#9aa1ac',
+                  fontSize: 13.5,
+                  background: '#fff',
+                  border: '1px dashed #d3d9df',
+                  borderRadius: 14,
+                }}
+              >
+                {list.length === 0 ? '还没有收款项，点右上角「创建收款项」开始' : '没有匹配的收款项'}
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {shown.map((b) => (
+                  <BatchCard key={b.id} b={b} onIntent={() => void prefetch(b.id)} />
+                ))}
+              </div>
+            )
+          }
+        </QueryBlock>
       </div>
 
       <BillingBatchModal open={createOpen} onClose={() => setCreateOpen(false)} />
@@ -128,12 +125,15 @@ export function Billing({ me }: { me: Me | null }) {
   );
 }
 
-function BatchCard({ b }: { b: BillingBatchItem }) {
+/** onIntent：指针移入 / 获得焦点时预取完整详情（fresh 时不重复请求）。 */
+function BatchCard({ b, onIntent }: { b: BillingBatchItem; onIntent: () => void }) {
   const settled = b.invoiceCount > 0 && b.paidCount === b.invoiceCount;
   const pct = b.totalAmountCents > 0 ? Math.round((b.paidAmountCents / b.totalAmountCents) * 100) : 0;
   return (
     <Link
       to={`/billing/${b.id}`}
+      onPointerEnter={onIntent}
+      onFocus={onIntent}
       style={{
         display: 'block',
         background: '#fff',
