@@ -112,10 +112,11 @@ export function HomeworkTemplateDialog({
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
 
-  // 每次打开都以当前模板（或默认模板）重新填充草稿
+  // 每次打开以当前模板（或默认模板）填充一次草稿；打开期间模板的后台刷新不覆盖输入。
   useEffect(() => {
     if (open) setDraft(template ?? DEFAULT_TEMPLATE);
-  }, [open, template]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   async function save() {
     if (busy) return;
