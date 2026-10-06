@@ -19,7 +19,8 @@ web/     React + Vite + TS · 老师端桌面 Web（管理页 IBM Plex；课堂�
   src/pages/    一页一文件；Classroom = 课堂主界面（看板/背书/作业/出勤/调组/班级信息/日志 七视图）
   src/api/      按领域拆分的 fetch 函数 + DTO（client.ts 管 cookie/JSON/错误分类），不依赖 React
   src/queries/  TanStack Query：keys / 各领域 useXxxQuery·useXxxMutation / cache-effects（写后回写与失效规则）/ 会话代次
-  src/lib/      classroomStore（课堂本地态 + 持久化 + commit payload）/ session（事件流计分派生）/ 其余按页面命名；api.ts 是迁移期兼容桥（旧方法委托 api/ 并跑 cache-effects），页面迁完即删
+  src/lib/      classroomStore（课堂本地态 + 持久化 + commit payload）/ classroomBoot（进入判定）/ session（事件流计分派生）/ queryView（读取状态口径）/ 其余按页面命名
+  src/test-utils/ 假 fetch、DTO fixtures、renderApp（整个 App 驱动页面级测试）、写后矩阵的全量缓存
 miniapp/ Taro 4 + React（weapp 正式产物 / h5 开发调试）
   src/pages/    index（按身份分流）/ join / recap / bind / teacher/*
   src/lib/      api（Bearer 注入）/ wxAuth（登录 + mock 身份）
@@ -69,6 +70,7 @@ push master → GitHub Actions 构建镜像 → hookploy 部署，迁移随服�
 ## 文档
 
 - `kb/docs/classroom-session-lifecycle.md` — 课堂数据从开课到落库的流转：进入判定、结束课堂、补录、编辑上课记录、兼容纪律的由来。改 Classroom、classroomStore、commit 接口前读。
+- `kb/docs/web-data-layer.md` — Web 读取缓存时效、页面加载/错误/后台刷新的展示口径、写后刷新规则、草稿与最新读取、身份切换、课堂本地优先在数据层的例外。改 Web 页面的数据读取或写入、加新接口前读。
 - `kb/docs/business-rules.md` — 学生姓名与状态、班级归档、账户邀请、出勤作业、教材、管理员、排班收费的业务口径。改这些功能前读对应小节。
 - `kb/docs/verification-guide.md` — curl 冒烟、agent-browser 流程与坑、小程序 h5 切角色、微信开发者工具。做端到端验证时读。
 - `kb/docs/miniapp-h5-three-role-e2e.md` — 小程序 h5 三角色流程（生成邀请 → 注册 → 关联 → recap）。改邀请、账户、小程序后跑回归时读。
@@ -78,7 +80,7 @@ push master → GitHub Actions 构建镜像 → hookploy 部署，迁移随服�
 ## 须知 / 约定
 
 - **⚠️ 结束课堂 schema 向后兼容，不可破坏**：课堂进行中服务端可能发新版，旧页面的 commit payload 必须照常入库。①服务端永不新增必填字段，新字段一律可选带默认；②不收紧校验、不改名、不改语义；③未知字段静默忽略（`buildCommitInput` 显式挑字段）。localStorage 里的 `ClassroomSession` 同理只加可选字段。守卫用例在 `server/tests/api.test.ts`「向后/向前兼容」，挂了改实现不改测试。
-- **Web 请求层**：新代码组件只用 `queries/<domain>` 的 hooks、类型从 `api/<domain>` 导入，不直接调 API、不手拼 queryKey；写后缓存规则只写在 `queries/cache-effects.ts`（hook 与兼容桥共用）。旧页面逐步迁移见 `kb/plans/2026-10-06-web-query-component-migration.md`。
+- **Web 请求层**：组件只用 `queries/<domain>` 的 hooks、类型从 `api/<domain>` `import type`，不直接调 API、不手拼 queryKey、不把响应复制进 state 再手动 reload；写后缓存规则只写在 `queries/cache-effects.ts`。读取状态用 `components/QueryState`（有数据就展示，不拿 isFetching 当白屏条件）；编辑表单在开始编辑时建草稿，后台刷新不覆盖。缓存时效、写后规则、身份与课堂例外见 `kb/docs/web-data-layer.md`。
 - **课堂本地优先**：整节课跑在浏览器 localStorage（`nce.classroom.<classId>`），仅「结束课堂」一次性 POST，后端单事务落库，`client_session_id` 幂等。补录与编辑上课记录复用同一套；编辑走 `PUT /sessions/:id/commit` 原地覆盖，不回写默认分组、不改作业、保留已有考勤更正。
 - **计分是事件流**：个人分、组分由 `score_events`(±1) 派生，不落地存储。
 - **鉴权双轨**：老师 cookie 与小程序 Bearer token 互不通用。
