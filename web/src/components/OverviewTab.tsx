@@ -1,5 +1,5 @@
 import { type CSSProperties, type ReactNode } from 'react';
-import type { OverviewGroup, SessionDetail } from '../lib/api';
+import type { OverviewGroup, SessionDetail } from '../api/sessions';
 import { avatarStyle, initial } from '../lib/theme';
 
 // 课堂情况 tab（还原设计稿「上课记录.dc.html」的 OVERVIEW）：本节课的出勤 / 全班

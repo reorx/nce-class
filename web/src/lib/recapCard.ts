@@ -1,7 +1,7 @@
 // 课堂战报（Recap 卡片）展示用的纯派生逻辑，配合 components/RecapCard.tsx。
 // 设计稿：claude design「Recap 页面.dc.html」。
 
-import type { RecapGroup } from './api';
+import type { RecapGroup } from '../api/sessions';
 
 /** 个人表现数据；不传给 RecapCard 即为「非个人」模式（隐藏个人卡）。 */
 export interface RecapPersonal {

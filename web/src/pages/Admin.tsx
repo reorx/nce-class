@@ -1,17 +1,30 @@
-import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
+import { useState, type CSSProperties, type ReactNode } from 'react';
+import type { AdminClassItem } from '../api/admin';
+import type { Me } from '../api/auth';
+import { ApiError } from '../api/client';
+import type { TeacherItem } from '../api/teachers';
 import { Modal } from '../components/Modal';
+import { QueryBlock, RefreshStatus } from '../components/QueryState';
 import { useToast } from '../components/Toast';
 import { TopBar } from '../components/TopBar';
 import { addTeacherFormValid, deleteImpactLines, paidWarning, resetFormValid } from '../lib/admin';
-import { api, ApiError, type AdminClassItem, type Me, type TeacherItem } from '../lib/api';
 import { clearSession } from '../lib/classroomStore';
 import { fmtMoney } from '../lib/money';
 import { GREEN, squareAvatarStyle, teacherBadgeStyle } from '../lib/theme';
+import {
+  useAdminClassesQuery,
+  useCreateAdminTeacherMutation,
+  useDeleteAdminClassMutation,
+  useResetAdminTeacherPasswordMutation,
+} from '../queries/admin';
+import { useTeachersQuery } from '../queries/teachers';
 
 const RED = '#d94a4a';
 
 // 管理页：删除班级 / 添加老师 / 修改成员密码。/api/admin/* 由服务端按 is_admin 强制鉴权，
-// 这里的门禁只是展示层（非管理员不发请求，直接显示无权限）。
+// 这里的门禁只是展示层（非管理员不挂 AdminPanel，不发请求，直接显示无权限）。
+// 三个写操作都带密码（useSensitiveMutation 完成即清状态），错误只从 mutateAsync 的 rejection 处理；
+// 删班后的缓存清理（班级、课堂、档案、考勤、排班、收费、邀请）由 useDeleteAdminClassMutation 负责。
 export function Admin({ me }: { me: Me | null }) {
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -34,78 +47,64 @@ function NoAccess() {
 }
 
 function AdminPanel({ me }: { me: Me }) {
-  const toast = useToast();
-  const [classes, setClasses] = useState<AdminClassItem[] | null>(null);
-  const [teachers, setTeachers] = useState<TeacherItem[]>([]);
+  const classesQuery = useAdminClassesQuery();
+  const teachersQuery = useTeachersQuery();
   const [deleting, setDeleting] = useState<AdminClassItem | null>(null);
   const [resetting, setResetting] = useState<TeacherItem | null>(null);
   const [adding, setAdding] = useState(false);
-
-  const reloadClasses = () =>
-    api
-      .adminClasses()
-      .then(setClasses)
-      .catch((e) => toast(e instanceof ApiError ? e.message : '班级加载失败', 'error'));
-
-  const reloadTeachers = () =>
-    api
-      .teachers()
-      .then(setTeachers)
-      .catch(() => toast('老师加载失败', 'error'));
-
-  useEffect(() => {
-    reloadClasses();
-    reloadTeachers();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   return (
     <>
       <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, letterSpacing: '-.3px' }}>管理</h1>
       <div style={{ marginTop: 6, fontSize: 13.5, color: '#7a828f' }}>
         仅管理员可见 · 删除班级、修改密码需再输入一次你的登录密码
+        <RefreshStatus query={classesQuery} style={{ marginLeft: 10 }} />
       </div>
 
       <SectionHead title="删除班级" hint="连同该班学生、上课记录、排班与收款数据一并永久删除，无法恢复" />
-      <div style={card}>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5 }}>
-            <thead>
-              <tr style={{ color: '#8a929e', textAlign: 'left', borderBottom: '1px solid #ebedf1' }}>
-                <th style={th}>班级</th>
-                <th style={th}>负责老师</th>
-                <th style={thNum}>学生</th>
-                <th style={thNum}>上课记录</th>
-                <th style={thNum}>排班周期</th>
-                <th style={thNum}>收款批次</th>
-                <th style={thNum}>已确认收款</th>
-                <th style={th} />
-              </tr>
-            </thead>
-            <tbody>
-              {(classes ?? []).map((c, i) => (
-                <tr key={c.id} style={{ borderTop: i === 0 ? 'none' : '1px solid #eef0f3' }}>
-                  <td style={{ ...td, fontWeight: 600, color: '#1e2430' }}>{c.name}</td>
-                  <td style={td}>{c.teacherName}</td>
-                  <td style={tdNum}>{c.studentCount}</td>
-                  <td style={tdNum}>{c.sessionCount}</td>
-                  <td style={tdNum}>{c.scheduleCount}</td>
-                  <td style={tdNum}>{c.batchCount}</td>
-                  <td style={{ ...tdNum, color: c.paidInvoiceCount > 0 ? '#2c7a48' : '#b3b9c2' }}>
-                    {c.paidInvoiceCount > 0 ? `${c.paidInvoiceCount} 张 · ${fmtMoney(c.paidAmountCents)}` : '—'}
-                  </td>
-                  <td style={{ ...td, textAlign: 'right' }}>
-                    <button style={{ ...smallBtn, color: RED, borderColor: '#f1d3d3' }} onClick={() => setDeleting(c)}>
-                      删除
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {classes?.length === 0 && <div style={emptyStyle}>没有班级</div>}
-      </div>
+      <QueryBlock query={classesQuery} what="班级列表">
+        {(classes) => (
+          <div style={card}>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5 }}>
+                <thead>
+                  <tr style={{ color: '#8a929e', textAlign: 'left', borderBottom: '1px solid #ebedf1' }}>
+                    <th style={th}>班级</th>
+                    <th style={th}>负责老师</th>
+                    <th style={thNum}>学生</th>
+                    <th style={thNum}>上课记录</th>
+                    <th style={thNum}>排班周期</th>
+                    <th style={thNum}>收款批次</th>
+                    <th style={thNum}>已确认收款</th>
+                    <th style={th} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {classes.map((c, i) => (
+                    <tr key={c.id} style={{ borderTop: i === 0 ? 'none' : '1px solid #eef0f3' }}>
+                      <td style={{ ...td, fontWeight: 600, color: '#1e2430' }}>{c.name}</td>
+                      <td style={td}>{c.teacherName}</td>
+                      <td style={tdNum}>{c.studentCount}</td>
+                      <td style={tdNum}>{c.sessionCount}</td>
+                      <td style={tdNum}>{c.scheduleCount}</td>
+                      <td style={tdNum}>{c.batchCount}</td>
+                      <td style={{ ...tdNum, color: c.paidInvoiceCount > 0 ? '#2c7a48' : '#b3b9c2' }}>
+                        {c.paidInvoiceCount > 0 ? `${c.paidInvoiceCount} 张 · ${fmtMoney(c.paidAmountCents)}` : '—'}
+                      </td>
+                      <td style={{ ...td, textAlign: 'right' }}>
+                        <button style={{ ...smallBtn, color: RED, borderColor: '#f1d3d3' }} onClick={() => setDeleting(c)}>
+                          删除
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {classes.length === 0 && <div style={emptyStyle}>没有班级</div>}
+          </div>
+        )}
+      </QueryBlock>
 
       <SectionHead
         title="成员账号"
@@ -119,54 +118,52 @@ function AdminPanel({ me }: { me: Me }) {
           </button>
         }
       />
-      <div style={card}>
-        {teachers.map((t, i) => (
-          <div
-            key={t.id}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 13,
-              padding: '13px 18px',
-              borderTop: i === 0 ? 'none' : '1px solid #eef0f3',
-            }}
-          >
-            <div style={squareAvatarStyle(t.name, 38)}>{t.name[0]}</div>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontWeight: 700, fontSize: 14.5, color: '#1e2430' }}>{t.name}</span>
-                {t.id === me.id && <span style={teacherBadgeStyle('me')}>我</span>}
-                {t.isAdmin && <span style={teacherBadgeStyle('admin')}>管理员</span>}
+      <QueryBlock query={teachersQuery} what="成员列表">
+        {(teachers) => (
+          <div style={card}>
+            {teachers.map((t, i) => (
+              <div
+                key={t.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 13,
+                  padding: '13px 18px',
+                  borderTop: i === 0 ? 'none' : '1px solid #eef0f3',
+                }}
+              >
+                <div style={squareAvatarStyle(t.name, 38)}>{t.name[0]}</div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontWeight: 700, fontSize: 14.5, color: '#1e2430' }}>{t.name}</span>
+                    {t.id === me.id && <span style={teacherBadgeStyle('me')}>我</span>}
+                    {t.isAdmin && <span style={teacherBadgeStyle('admin')}>管理员</span>}
+                  </div>
+                  <div className="mono" style={{ marginTop: 3, fontSize: 12, color: '#9aa1ac' }}>
+                    {t.username}
+                  </div>
+                </div>
+                <button style={{ ...smallBtn, marginLeft: 'auto' }} onClick={() => setResetting(t)}>
+                  修改密码
+                </button>
               </div>
-              <div className="mono" style={{ marginTop: 3, fontSize: 12, color: '#9aa1ac' }}>
-                {t.username}
-              </div>
-            </div>
-            <button style={{ ...smallBtn, marginLeft: 'auto' }} onClick={() => setResetting(t)}>
-              修改密码
-            </button>
+            ))}
           </div>
-        ))}
-      </div>
+        )}
+      </QueryBlock>
 
       {deleting && (
         <DeleteClassModal
           item={deleting}
           onClose={() => setDeleting(null)}
-          onDeleted={() => {
-            setDeleting(null);
-            reloadClasses();
-          }}
+          onDeleted={() => setDeleting(null)}
         />
       )}
       {resetting && <ResetPasswordModal teacher={resetting} onClose={() => setResetting(null)} />}
       {adding && (
         <AddTeacherModal
           onClose={() => setAdding(false)}
-          onCreated={() => {
-            setAdding(false);
-            reloadTeachers();
-          }}
+          onCreated={() => setAdding(false)}
         />
       )}
     </>
@@ -195,15 +192,15 @@ function DeleteClassModal({
   const toast = useToast();
   const [adminPassword, setAdminPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const del = useDeleteAdminClassMutation();
+  const busy = del.isPending;
   const warning = paidWarning(item);
 
   async function submit() {
     if (!adminPassword || busy) return;
-    setBusy(true);
     setError(null);
     try {
-      await api.adminDeleteClass(item.id, adminPassword);
+      await del.mutateAsync({ classId: item.id, adminPassword });
       clearSession(item.id); // 本机若残留该班进行中课堂，已无处可提交
       toast(`已删除「${item.name}」`);
       onDeleted();
@@ -211,7 +208,6 @@ function DeleteClassModal({
       // 403 = 管理员密码错误（或权限刚被撤销）→ 就地提示；其余走 toast
       if (e instanceof ApiError && e.status === 403) setError(e.message);
       else toast(e instanceof ApiError ? e.message : '删除失败，请重试', 'error');
-      setBusy(false);
     }
   }
 
@@ -263,20 +259,19 @@ function AddTeacherModal({ onClose, onCreated }: { onClose: () => void; onCreate
   const [name, setName] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [busy, setBusy] = useState(false);
+  const create = useCreateAdminTeacherMutation();
+  const busy = create.isPending;
   const valid = addTeacherFormValid({ name, username, password });
 
   async function submit() {
     if (!valid || busy) return;
-    setBusy(true);
     try {
-      const t = await api.adminCreateTeacher({ name: name.trim(), username: username.trim(), password });
+      const t = await create.mutateAsync({ name: name.trim(), username: username.trim(), password });
       toast(`已添加「${t.name}」，请告知对方用户名和密码`);
       onCreated();
     } catch (e) {
       // 400 / 409（用户名已被使用）/ 403（权限刚被撤销）都直接用服务端文案
       toast(e instanceof ApiError ? e.message : '添加失败，请重试', 'error');
-      setBusy(false);
     }
   }
 
@@ -334,21 +329,20 @@ function ResetPasswordModal({ teacher, onClose }: { teacher: TeacherItem; onClos
   const [password, setPassword] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const reset = useResetAdminTeacherPasswordMutation();
+  const busy = reset.isPending;
   const valid = resetFormValid(password, adminPassword);
 
   async function submit() {
     if (!valid || busy) return;
-    setBusy(true);
     setError(null);
     try {
-      await api.adminResetPassword(teacher.id, password, adminPassword);
+      await reset.mutateAsync({ teacherId: teacher.id, password, adminPassword });
       toast(`已修改「${teacher.name}」的密码，请告知对方新密码`);
       onClose();
     } catch (e) {
       if (e instanceof ApiError && e.status === 403) setError(e.message);
       else toast(e instanceof ApiError ? e.message : '修改失败，请重试', 'error');
-      setBusy(false);
     }
   }
 

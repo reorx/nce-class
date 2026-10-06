@@ -1,5 +1,5 @@
 import { useState, type CSSProperties } from 'react';
-import type { Recap } from '../lib/api';
+import type { Recap } from '../api/sessions';
 import {
   dateLabel,
   fmtDurationCn,

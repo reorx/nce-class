@@ -11,7 +11,7 @@
 // (buildSessionConfig) — and, once persistence lands, the班级 default grouping.
 // ---------------------------------------------------------------------------
 
-import type { ClassDetail } from './api';
+import type { ClassDetail } from '../api/classes';
 import { GROUP_COLORS } from './session';
 
 /** Fallback per-group emoji cycle when a group has none (matches the mockups). */

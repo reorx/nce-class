@@ -21,7 +21,7 @@ import {
   teacherKeys,
 } from './keys';
 
-// 写后缓存规则：按业务动作组织，领域 Mutation 与迁移期兼容桥（lib/api）共用。
+// 写后缓存规则：按业务动作组织，只由领域 Mutation（queries/<domain>）在 hook 层调用。
 // - 响应与 GET 同形时直接写入精确详情；StudentBasic、CommitResult、InvoiceItem 这类片段不冒充完整详情。
 // - 「失效」= 标记过期，活跃查询后台重取，未挂载的等下次使用；不全局失效。
 // - 有 classId 等上下文就收窄；缓存里找不到归属时对该领域前缀保守失效，不为找归属发请求。

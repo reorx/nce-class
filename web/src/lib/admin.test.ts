@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { addTeacherFormValid, deleteImpactLines, paidWarning, resetFormValid } from './admin';
-import type { AdminClassItem } from './api';
+import type { AdminClassItem } from '../api/admin';
 
 const item = (p: Partial<AdminClassItem> = {}): AdminClassItem => ({
   id: 'c1',

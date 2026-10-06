@@ -13,7 +13,7 @@ import * as tags from './tags';
 import * as teachers from './teachers';
 import type { CommitPayload } from './sessions';
 
-// 搬迁不改 wire contract：每个领域函数的 method / URL / body 与旧 lib/api 逐一对齐。
+// 搬迁不改 wire contract：每个领域函数的 method / URL / body 与原 lib/api（已删除）逐一对齐。
 // body 用 rawBody 断言，确保「缺省 key」与「显式 null」不被混同。
 
 const payload: CommitPayload = {

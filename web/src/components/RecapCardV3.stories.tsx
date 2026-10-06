@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { RecapCardV3 } from './RecapCardV3';
-import type { Recap, RecapGroup, RecapMember } from '../lib/api';
+import type { Recap, RecapGroup, RecapMember } from '../api/sessions';
 
 // 对齐 RecapPanel 的移动端预览：414 宽画板（Recap v3.dc.html）。
 

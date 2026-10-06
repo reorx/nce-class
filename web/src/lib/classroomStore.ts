@@ -11,7 +11,7 @@
 // gScore / stars / warned) and are reused verbatim.
 // ---------------------------------------------------------------------------
 
-import type { CommitPayload, SessionDetail } from './api';
+import type { CommitPayload, SessionDetail } from '../api/sessions';
 import type { Homework, Recitation, SEvent, SGroup, SStudent } from './session';
 import type { SessionConfig } from './setup';
 import { normalizeTagName, tagKey } from './tags';

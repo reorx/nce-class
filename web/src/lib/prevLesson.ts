@@ -1,7 +1,7 @@
-import type { Recap, Session } from './api';
+import type { Recap, Session } from '../api/sessions';
 import { lessonLabel } from './lesson';
 
-/** 课堂「上节课」popover 的展示模型；作业内容按需另取（api.sessionDetail）。 */
+/** 课堂「上节课」popover 的展示模型；作业内容与 recap 来自该节 session 详情（queries/prev-lesson 的 usePrevLessonQuery）。 */
 export interface PrevLessonInfo {
   sessionId: string;
   dateLabel: string; // '7月1日 周二'

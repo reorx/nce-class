@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { gScore, sScore } from './session';
 import type { SessionConfig } from './setup';
-import type { SessionDetail } from './api';
+import type { SessionDetail } from '../api/sessions';
 import {
   applyStartTime,
   buildClassroomSession,

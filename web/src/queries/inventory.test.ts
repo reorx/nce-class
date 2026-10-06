@@ -11,7 +11,7 @@ import * as students from './students';
 import * as tags from './tags';
 import * as teachers from './teachers';
 
-// Plan 1 验收清点：旧 lib/api 的 47 个方法各有一个领域 hook，16 个读取各有可复用的 queryOptions。
+// Plan 1 验收清点：原 lib/api 的 47 个方法（Plan 2 已删除该兼容桥）各有一个领域 hook，16 个读取各有可复用的 queryOptions。
 
 const modules = { admin, attendance, auth, billing, classes, invites, schedules, sessions, students, tags, teachers };
 
