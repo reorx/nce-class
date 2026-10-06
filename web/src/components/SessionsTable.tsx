@@ -1,8 +1,9 @@
 import { useState, type ReactNode, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
-import { api, type Session } from '../lib/api';
+import type { Session } from '../api/sessions';
 import { lessonLabel } from '../lib/lesson';
 import { GREEN } from '../lib/theme';
+import { useDeleteSessionMutation } from '../queries/sessions';
 import { Modal } from './Modal';
 import { useToast } from './Toast';
 
@@ -14,37 +15,33 @@ const hm = (t: string) => t.slice(11, 16); // 'YYYY-MM-DD HH:mm:ss' -> 'HH:mm'
 /**
  * 上课记录列表（班级详情「上课记录」tab 与管理页「课堂」共用）。
  * showClass 时多一列班级名（跳班级详情）；改时间等课堂信息修改在 session
- * 详情页「课堂信息」tab 做，行内只留删除。
+ * 详情页「课堂信息」tab 做，行内只留删除。删除后两个入口的列表、班级概要、考勤、收费展示
+ * 都由 useDeleteSessionMutation 刷新，调用方不用传 reload。
  */
 export function SessionsTable({
   sessions,
   showClass = false,
-  reload,
   footnote,
   emptyText = '还没有上课记录',
 }: {
   sessions: SessionRow[];
   showClass?: boolean;
-  reload: () => Promise<void> | void;
   footnote?: ReactNode;
   emptyText?: string;
 }) {
   const [pendingDelete, setPendingDelete] = useState<SessionRow | null>(null);
-  const [busy, setBusy] = useState(false);
+  const del = useDeleteSessionMutation();
+  const busy = del.isPending;
   const toast = useToast();
 
   async function confirmDelete() {
     if (!pendingDelete || busy) return;
-    setBusy(true);
     try {
-      await api.deleteSession(pendingDelete.id);
-      await reload();
+      await del.mutateAsync({ sessionId: pendingDelete.id, classId: pendingDelete.classId });
       toast('已删除该条上课记录');
       setPendingDelete(null);
     } catch {
       toast('删除失败，请重试', 'error');
-    } finally {
-      setBusy(false);
     }
   }
 

@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import type { Me } from '../api/auth';
+import type { ClassListItem } from '../api/classes';
 import { ClassInfoModal } from '../components/ClassInfoModal';
+import { QueryBlock, RefreshStatus } from '../components/QueryState';
 import { TopBar } from '../components/TopBar';
 import { useToast } from '../components/Toast';
-import { api, type ClassListItem, type Me } from '../lib/api';
 import { ARCHIVED_CLASSES_URL, classListView } from '../lib/classList';
 import { loadSession } from '../lib/classroomStore';
 import { BOOK_LABELS } from '../lib/homework';
 import { lessonLabel } from '../lib/lesson';
 import { relativeSessionLabel } from '../lib/relativeTime';
 import { GREEN, GREEN_DARK, PAL } from '../lib/theme';
+import { useClassesQuery, useCreateClassMutation } from '../queries/classes';
 
 const ORANGE = '#f0862a';
 const ORANGE_DARK = '#dd7317';
@@ -43,8 +46,8 @@ function useLiveClassroom(classId: string): { sec: number; backfill: boolean } |
   return { sec: Math.max(0, Math.floor((nowMs - meta.startMs) / 1000)), backfill: meta.backfill };
 }
 
-/** 首页（`/`）与已归档班级页（`/classes?is_archived=true`）共用。两种模式各自一份
- *  加载/搜索状态：按 key 重挂载，来回切换时清空搜索词并重新拉取。 */
+/** 首页（`/`）与已归档班级页（`/classes?is_archived=true`）共用同一个班级列表查询，
+ *  归档筛选是纯派生；按 key 重挂载只为来回切换时清空搜索词。 */
 export function ClassList({ me }: { me: Me | null }) {
   const [params] = useSearchParams();
   const archived = params.get('is_archived') === 'true';
@@ -52,23 +55,17 @@ export function ClassList({ me }: { me: Me | null }) {
 }
 
 function ClassListPage({ me, archived }: { me: Me | null; archived: boolean }) {
-  const [classes, setClasses] = useState<ClassListItem[]>([]);
+  const classesQuery = useClassesQuery();
+  const createClass = useCreateClassMutation();
   const [search, setSearch] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const toast = useToast();
   const nav = useNavigate();
 
-  const reload = () =>
-    api
-      .classes()
-      .then(setClasses)
-      .catch(() => {});
-
-  useEffect(() => {
-    reload();
-  }, []);
-
-  const view = useMemo(() => classListView(classes, { archived, search }), [classes, archived, search]);
+  const view = useMemo(
+    () => classListView(classesQuery.data ?? [], { archived, search }),
+    [classesQuery.data, archived, search],
+  );
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -105,7 +102,7 @@ function ClassListPage({ me, archived }: { me: Me | null; archived: boolean }) {
               {archived ? '已归档班级' : '班级'}
             </h1>
             <div style={{ marginTop: 6, fontSize: 13.5, color: '#7a828f' }}>
-              {view.classCount} 个班级 · 共 {view.studentTotal} 名学生
+              {classesQuery.data ? `${view.classCount} 个班级 · 共 ${view.studentTotal} 名学生` : '\u00a0'}
               {!archived && view.archivedCount > 0 && (
                 <>
                   {' · '}
@@ -119,6 +116,7 @@ function ClassListPage({ me, archived }: { me: Me | null; archived: boolean }) {
                   </Link>
                 </>
               )}
+              <RefreshStatus query={classesQuery} style={{ marginLeft: 10 }} />
             </div>
           </div>
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -178,27 +176,33 @@ function ClassListPage({ me, archived }: { me: Me | null; archived: boolean }) {
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(312px,1fr))', gap: 15 }}>
-          {view.list.map((c, ci) => (
-            <ClassCard key={c.id} c={c} ci={ci} />
-          ))}
-        </div>
+        <QueryBlock query={classesQuery} what="班级列表">
+          {() => (
+            <>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(312px,1fr))', gap: 15 }}>
+              {view.list.map((c, ci) => (
+                <ClassCard key={c.id} c={c} ci={ci} />
+              ))}
+            </div>
 
-        {view.list.length === 0 && (
-          <div style={{ textAlign: 'center', padding: '64px 20px', color: '#9aa1ac' }}>
-            {archived && view.classCount === 0 ? (
-              <>
-                <div style={{ fontSize: 15, fontWeight: 600, color: '#5b6472', marginBottom: 5 }}>没有已归档的班级</div>
-                <div style={{ fontSize: 13 }}>课上完的班级可在班级详情页「编辑」里归档</div>
-              </>
-            ) : (
-              <>
-                <div style={{ fontSize: 15, fontWeight: 600, color: '#5b6472', marginBottom: 5 }}>没有匹配的班级</div>
-                <div style={{ fontSize: 13 }}>{archived ? '试试其他关键词' : '试试其他关键词，或新建一个班级'}</div>
-              </>
+            {view.list.length === 0 && (
+              <div style={{ textAlign: 'center', padding: '64px 20px', color: '#9aa1ac' }}>
+                {archived && view.classCount === 0 ? (
+                  <>
+                    <div style={{ fontSize: 15, fontWeight: 600, color: '#5b6472', marginBottom: 5 }}>没有已归档的班级</div>
+                    <div style={{ fontSize: 13 }}>课上完的班级可在班级详情页「编辑」里归档</div>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ fontSize: 15, fontWeight: 600, color: '#5b6472', marginBottom: 5 }}>没有匹配的班级</div>
+                    <div style={{ fontSize: 13 }}>{archived ? '试试其他关键词' : '试试其他关键词，或新建一个班级'}</div>
+                  </>
+                )}
+              </div>
             )}
-          </div>
-        )}
+            </>
+          )}
+        </QueryBlock>
       </div>
 
       <ClassInfoModal
@@ -211,8 +215,7 @@ function ClassListPage({ me, archived }: { me: Me | null; archived: boolean }) {
         initial={{ name: '', teacherId: me?.id ?? '', textbook: null }}
         fallbackTeacherName={me?.name}
         onSubmit={async (v) => {
-          const created = await api.createClass(v);
-          await reload();
+          const created = await createClass.mutateAsync(v);
           toast(`已创建「${v.name}」`);
           nav(`/classes/${created.id}`);
         }}

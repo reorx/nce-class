@@ -1,11 +1,14 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import type { Me } from '../api/auth';
+import type { ProfileSession, StudentProfile as Profile } from '../api/students';
+import { QueryBlock } from '../components/QueryState';
 import { useStudentModal } from '../components/StudentEditModal';
 import { TopBar } from '../components/TopBar';
-import { api, type Me, type ProfileSession, type StudentProfile as Profile } from '../lib/api';
 import { barGeometry, netColor, netLabel, type BarGeom } from '../lib/profile';
 import { studentNamePair } from '../lib/studentName';
 import { avatarStyle, GREEN, initial, sourceTag, statusTag } from '../lib/theme';
+import { useStudentProfileQuery } from '../queries/students';
 
 // ---------------------------------------------------------------------------
 // 学生成长档案 (§7.4)：头部指标 + 「课堂表现」矩阵（横轴=课次、纵轴=维度）。
@@ -15,19 +18,9 @@ import { avatarStyle, GREEN, initial, sourceTag, statusTag } from '../lib/theme'
 
 export function StudentProfile({ me }: { me: Me | null }) {
   const { id = '', sid = '' } = useParams();
-  const [p, setP] = useState<Profile | null>(null);
-  const [failed, setFailed] = useState(false);
+  const profileQuery = useStudentProfileQuery(sid);
+  const p = profileQuery.data;
   const editStudent = useStudentModal();
-
-  const reload = useCallback(() => {
-    setFailed(false);
-    api
-      .getStudentProfile(sid)
-      .then(setP)
-      .catch(() => setFailed(true));
-  }, [sid]);
-
-  useEffect(reload, [reload]);
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -49,23 +42,25 @@ export function StudentProfile({ me }: { me: Me | null }) {
           <span style={{ fontSize: 14 }}>←</span>返回 {p?.class.name ?? '班级'}
         </Link>
 
-        {failed && (
-          <div style={{ textAlign: 'center', padding: '80px 20px', color: '#9aa1ac', fontSize: 13.5 }}>
-            学生不存在或已被删除
-          </div>
-        )}
-        {p && (
-          <>
-            <Header
-              p={p}
-              onEdit={() =>
-                editStudent({ studentId: p.student.id, name: p.student.name, cnName: p.student.cnName }, reload)
-              }
-            />
-            <Tiles p={p} />
-            {p.sessions.length === 0 ? <Empty /> : <Matrix sessions={p.sessions} />}
-          </>
-        )}
+        <QueryBlock query={profileQuery} what="学生">
+          {(p) => (
+            <>
+              <Header
+                p={p}
+                onEdit={() =>
+                  editStudent({
+                    studentId: p.student.id,
+                    name: p.student.name,
+                    cnName: p.student.cnName,
+                    classId: p.class.id,
+                  })
+                }
+              />
+              <Tiles p={p} />
+              {p.sessions.length === 0 ? <Empty /> : <Matrix sessions={p.sessions} />}
+            </>
+          )}
+        </QueryBlock>
       </div>
     </div>
   );

@@ -1,27 +1,23 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
+import type { Me } from '../api/auth';
+import { ApiError } from '../api/client';
+import type { TeacherItem } from '../api/teachers';
 import { Modal } from '../components/Modal';
+import { QueryBlock, RefreshStatus } from '../components/QueryState';
 import { TopBar } from '../components/TopBar';
 import { useToast } from '../components/Toast';
-import { api, ApiError, type Me, type TeacherItem } from '../lib/api';
 import { GREEN, squareAvatarStyle, teacherBadgeStyle } from '../lib/theme';
+import { useTeachersQuery, useUpdateTeacherMutation } from '../queries/teachers';
 
 export function Teachers({ me }: { me: Me | null }) {
-  const [teachers, setTeachers] = useState<TeacherItem[]>([]);
+  const teachersQuery = useTeachersQuery();
+  const teachers = teachersQuery.data ?? [];
+  const updateTeacher = useUpdateTeacherMutation();
   const [editing, setEditing] = useState<TeacherItem | null>(null);
   const [editName, setEditName] = useState('');
-  const [editBusy, setEditBusy] = useState(false);
+  const editBusy = updateTeacher.isPending;
   const toast = useToast();
-
-  const reload = () =>
-    api
-      .teachers()
-      .then(setTeachers)
-      .catch(() => {});
-
-  useEffect(() => {
-    reload();
-  }, []);
 
   function openEdit(t: TeacherItem) {
     setEditing(t);
@@ -33,16 +29,12 @@ export function Teachers({ me }: { me: Me | null }) {
 
   async function submitEdit() {
     if (!editing || !editValid || editBusy) return;
-    setEditBusy(true);
     try {
-      await api.updateTeacher(editing.id, { name: editName.trim() });
-      await reload();
+      await updateTeacher.mutateAsync({ teacherId: editing.id, input: { name: editName.trim() } });
       toast(`已保存「${editName.trim()}」`);
       setEditing(null);
     } catch (e) {
       toast(e instanceof ApiError ? e.message : '保存失败，请重试', 'error');
-    } finally {
-      setEditBusy(false);
     }
   }
 
@@ -53,7 +45,7 @@ export function Teachers({ me }: { me: Me | null }) {
         <div style={{ marginBottom: 22 }}>
           <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, letterSpacing: '-.3px' }}>老师</h1>
           <div style={{ marginTop: 6, fontSize: 13.5, color: '#7a828f' }}>
-            {teachers.length} 位老师 · 同校老师共享班级与学生 ·{' '}
+            {teachersQuery.data ? `${teachers.length} 位老师 · ` : ''}同校老师共享班级与学生 ·{' '}
             {me?.isAdmin ? (
               <>
                 添加老师、修改密码请到
@@ -64,60 +56,65 @@ export function Teachers({ me }: { me: Me | null }) {
             ) : (
               '添加老师、修改密码请联系管理员'
             )}
+            <RefreshStatus query={teachersQuery} style={{ marginLeft: 10 }} />
           </div>
         </div>
 
-        <div style={{ background: '#fff', border: '1px solid #e7e9ee', borderRadius: 13, overflow: 'hidden' }}>
-          {teachers.map((t, i) => (
-            <div
-              key={t.id}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 13,
-                padding: '13px 18px',
-                borderTop: i === 0 ? 'none' : '1px solid #eef0f3',
-              }}
-            >
-              <div style={squareAvatarStyle(t.name, 38)}>{t.name[0]}</div>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <QueryBlock query={teachersQuery} what="老师列表">
+          {() => (
+            <div style={{ background: '#fff', border: '1px solid #e7e9ee', borderRadius: 13, overflow: 'hidden' }}>
+              {teachers.map((t, i) => (
+                <div
+                  key={t.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 13,
+                    padding: '13px 18px',
+                    borderTop: i === 0 ? 'none' : '1px solid #eef0f3',
+                  }}
+                >
+                  <div style={squareAvatarStyle(t.name, 38)}>{t.name[0]}</div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span
+                        className="dc-name-link"
+                        onClick={() => openEdit(t)}
+                        title="编辑老师"
+                        style={{ fontWeight: 700, fontSize: 14.5, color: '#1e2430', cursor: 'pointer' }}
+                      >
+                        {t.name}
+                      </span>
+                      {t.id === me?.id && <span style={teacherBadgeStyle('me')}>我</span>}
+                      {t.isAdmin && <span style={teacherBadgeStyle('admin')}>管理员</span>}
+                    </div>
+                    <div className="mono" style={{ marginTop: 3, fontSize: 12, color: '#9aa1ac' }}>
+                      {t.username}
+                    </div>
+                  </div>
                   <span
-                    className="dc-name-link"
-                    onClick={() => openEdit(t)}
-                    title="编辑老师"
-                    style={{ fontWeight: 700, fontSize: 14.5, color: '#1e2430', cursor: 'pointer' }}
+                    style={{
+                      marginLeft: 'auto',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: t.role === 'owner' ? '#586099' : '#7a828f',
+                      background: t.role === 'owner' ? '#eef0f8' : '#f0f2f5',
+                      padding: '3px 10px',
+                      borderRadius: 7,
+                    }}
                   >
-                    {t.name}
+                    {t.role === 'owner' ? '负责人' : '老师'}
                   </span>
-                  {t.id === me?.id && <span style={teacherBadgeStyle('me')}>我</span>}
-                  {t.isAdmin && <span style={teacherBadgeStyle('admin')}>管理员</span>}
                 </div>
-                <div className="mono" style={{ marginTop: 3, fontSize: 12, color: '#9aa1ac' }}>
-                  {t.username}
+              ))}
+              {teachers.length === 0 && (
+                <div style={{ padding: '40px 24px', textAlign: 'center', color: '#9aa1ac', fontSize: 13.5 }}>
+                  还没有老师
                 </div>
-              </div>
-              <span
-                style={{
-                  marginLeft: 'auto',
-                  fontSize: 12,
-                  fontWeight: 600,
-                  color: t.role === 'owner' ? '#586099' : '#7a828f',
-                  background: t.role === 'owner' ? '#eef0f8' : '#f0f2f5',
-                  padding: '3px 10px',
-                  borderRadius: 7,
-                }}
-              >
-                {t.role === 'owner' ? '负责人' : '老师'}
-              </span>
-            </div>
-          ))}
-          {teachers.length === 0 && (
-            <div style={{ padding: '40px 24px', textAlign: 'center', color: '#9aa1ac', fontSize: 13.5 }}>
-              还没有老师
+              )}
             </div>
           )}
-        </div>
+        </QueryBlock>
       </div>
 
       <Modal open={editing != null} onClose={() => setEditing(null)} title="编辑老师">

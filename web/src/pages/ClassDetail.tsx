@@ -1,15 +1,18 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useMemo, useState, type CSSProperties } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import type { Me } from '../api/auth';
+import type { ClassDetail as Detail } from '../api/classes';
+import type { Student } from '../api/students';
 import { ClassInfoModal } from '../components/ClassInfoModal';
 import { HomeworkTemplateEditor } from '../components/HomeworkTemplateEditor';
 import { Markdown } from '../components/Markdown';
 import { Modal } from '../components/Modal';
+import { QueryBlock, RefreshStatus } from '../components/QueryState';
 import { ScheduleTab } from '../components/ScheduleTab';
 import { useStudentModal } from '../components/StudentEditModal';
 import { SessionsTable } from '../components/SessionsTable';
 import { TopBar } from '../components/TopBar';
 import { useToast } from '../components/Toast';
-import { api, type ClassDetail as Detail, type JoinRequestItem, type Me, type Student } from '../lib/api';
 import { ARCHIVED_CLASSES_URL } from '../lib/classList';
 import {
   addGroup,
@@ -22,6 +25,19 @@ import {
 } from '../lib/grouping';
 import { studentNamePair, validateStudentNameForm } from '../lib/studentName';
 import { avatarStyle, editIconBtnStyle, GREEN, initial, sourceTag, statusTag } from '../lib/theme';
+import {
+  useClassQuery,
+  useSaveClassGroupingMutation,
+  useUpdateClassMutation,
+  useUpdateClassNotesMutation,
+  useUpdateHomeworkTemplateMutation,
+} from '../queries/classes';
+import { useJoinRequestsQuery } from '../queries/invites';
+import {
+  useCreateStudentMutation,
+  useDeleteStudentMutation,
+  useUpdateStudentStatusMutation,
+} from '../queries/students';
 
 type Tab = 'students' | 'groups' | 'notes' | 'homework' | 'invite' | 'schedule' | 'sessions';
 const TABS: Tab[] = ['students', 'groups', 'notes', 'homework', 'invite', 'schedule', 'sessions'];
@@ -29,20 +45,11 @@ const TABS: Tab[] = ['students', 'groups', 'notes', 'homework', 'invite', 'sched
 export function ClassDetail({ me }: { me: Me | null }) {
   const { id = '' } = useParams();
   const [params, setParams] = useSearchParams();
-  const [d, setD] = useState<Detail | null>(null);
+  const classQuery = useClassQuery(id);
+  const d = classQuery.data;
+  const updateTemplate = useUpdateHomeworkTemplateMutation();
   const tab = (params.get('tab') as Tab) || 'students';
   const setTab = (t: Tab) => setParams(t === 'students' ? {} : { tab: t }, { replace: true });
-
-  const reload = () =>
-    api
-      .classDetail(id)
-      .then(setD)
-      .catch(() => {});
-
-  useEffect(() => {
-    reload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -84,10 +91,11 @@ export function ClassDetail({ me }: { me: Me | null }) {
                   已归档
                 </span>
               )}
-              {d && <EditClassInfo d={d} me={me} reload={reload} />}
+              {d && <EditClassInfo d={d} me={me} />}
             </div>
             <div style={{ marginTop: 8, fontSize: 13.5, color: '#7a828f', whiteSpace: 'nowrap' }}>
-              {d?.studentCount ?? 0} 名学生 · {d?.groupCount ?? 0} 个分组 · 负责老师 {d?.teacherName ?? ''}
+              {d ? `${d.studentCount} 名学生 · ${d.groupCount} 个分组 · 负责老师 ${d.teacherName}` : '\u00a0'}
+              <RefreshStatus query={classQuery} style={{ marginLeft: 10 }} />
             </div>
           </div>
           <Link
@@ -122,53 +130,55 @@ export function ClassDetail({ me }: { me: Me | null }) {
           ))}
         </div>
 
-        {d && tab === 'students' && <StudentsTab d={d} reload={reload} />}
-        {d && tab === 'groups' && <GroupsTab d={d} reload={reload} />}
-        {d && tab === 'notes' && <NotesTab d={d} reload={reload} />}
-        {d && tab === 'homework' && (
-          <HomeworkTemplateEditor
-            template={d.homeworkTemplate}
-            onSave={async (v) => {
-              await api.updateHomeworkTemplate(d.id, v);
-              await reload();
-            }}
-          />
-        )}
-        {d && tab === 'invite' && <InviteTab d={d} />}
-        {d && tab === 'schedule' && <ScheduleTab classId={d.id} isArchived={d.isArchived} />}
-        {d && tab === 'sessions' && (
-          <div>
-            <div style={{ display: 'flex', marginBottom: 14 }}>
-              <Link
-                to={`/classes/${id}/setup?backfill=1`}
-                title="补充一节过去的课（不实时计时）"
-                style={{
-                  marginLeft: 'auto',
-                  height: 36,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '0 15px',
-                  background: GREEN,
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: 9,
-                  textDecoration: 'none',
-                  fontWeight: 600,
-                  fontSize: 13.5,
-                  boxShadow: '0 2px 8px rgba(47,180,87,.24)',
-                }}
-              >
-                <span style={{ fontSize: 15, lineHeight: 1 }}>📝</span>手动记录课堂
-              </Link>
-            </div>
-            <SessionsTable
-              sessions={d.sessions.map((s) => ({ ...s, classId: d.id }))}
-              reload={reload}
-              footnote="点击课名进入课堂详情（作业布置 / Recap）"
-            />
-          </div>
-        )}
+        <QueryBlock query={classQuery} what="班级">
+          {(d) => (
+            <>
+              {tab === 'students' && <StudentsTab d={d} />}
+              {tab === 'groups' && <GroupsTab d={d} />}
+              {tab === 'notes' && <NotesTab d={d} />}
+              {tab === 'homework' && (
+                <HomeworkTemplateEditor
+                  template={d.homeworkTemplate}
+                  onSave={(template) => updateTemplate.mutateAsync({ classId: d.id, template })}
+                />
+              )}
+              {tab === 'invite' && <InviteTab d={d} />}
+              {tab === 'schedule' && <ScheduleTab classId={d.id} isArchived={d.isArchived} />}
+              {tab === 'sessions' && (
+                <div>
+                  <div style={{ display: 'flex', marginBottom: 14 }}>
+                    <Link
+                      to={`/classes/${id}/setup?backfill=1`}
+                      title="补充一节过去的课（不实时计时）"
+                      style={{
+                        marginLeft: 'auto',
+                        height: 36,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        padding: '0 15px',
+                        background: GREEN,
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: 9,
+                        textDecoration: 'none',
+                        fontWeight: 600,
+                        fontSize: 13.5,
+                        boxShadow: '0 2px 8px rgba(47,180,87,.24)',
+                      }}
+                    >
+                      <span style={{ fontSize: 15, lineHeight: 1 }}>📝</span>手动记录课堂
+                    </Link>
+                  </div>
+                  <SessionsTable
+                    sessions={d.sessions.map((s) => ({ ...s, classId: d.id }))}
+                    footnote="点击课名进入课堂详情（作业布置 / Recap）"
+                  />
+                </div>
+              )}
+            </>
+          )}
+        </QueryBlock>
       </div>
     </div>
   );
@@ -240,8 +250,9 @@ const ghostBtn: CSSProperties = {
 };
 
 // ===== CLASS INFO EDIT (名称/教材册数/负责老师/归档) ========================
-function EditClassInfo({ d, me, reload }: { d: Detail; me: Me | null; reload: () => Promise<void> | void }) {
+function EditClassInfo({ d, me }: { d: Detail; me: Me | null }) {
   const toast = useToast();
+  const updateClass = useUpdateClassMutation();
   const [open, setOpen] = useState(false);
 
   return (
@@ -279,8 +290,7 @@ function EditClassInfo({ d, me, reload }: { d: Detail; me: Me | null; reload: ()
         }}
         fallbackTeacherName={d.teacherName}
         onSubmit={async (v) => {
-          await api.updateClassInfo(d.id, v);
-          await reload();
+          await updateClass.mutateAsync({ classId: d.id, input: v });
           if (v.isArchived === d.isArchived) toast('班级信息已更新');
           else toast(v.isArchived ? '班级已归档，首页列表不再显示' : '已取消归档');
         }}
@@ -290,24 +300,22 @@ function EditClassInfo({ d, me, reload }: { d: Detail; me: Me | null; reload: ()
 }
 
 // ===== NOTES TAB (班级资源, free-form markdown) =============================
-function NotesTab({ d, reload }: { d: Detail; reload: () => Promise<void> | void }) {
+// 草稿只在点「编辑」时从当前资源建立；编辑期间的后台刷新不覆盖输入。
+function NotesTab({ d }: { d: Detail }) {
   const toast = useToast();
+  const updateNotes = useUpdateClassNotesMutation();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
-  const [busy, setBusy] = useState(false);
+  const busy = updateNotes.isPending;
 
   async function save() {
     if (busy) return;
-    setBusy(true);
     try {
-      await api.updateClassNotes(d.id, draft);
-      await reload();
+      await updateNotes.mutateAsync({ classId: d.id, notes: draft });
       toast('班级资源已保存');
       setEditing(false);
     } catch {
       toast('保存失败，请重试', 'error');
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -372,8 +380,11 @@ function NotesTab({ d, reload }: { d: Detail; reload: () => Promise<void> | void
 }
 
 // ===== STUDENTS TAB ========================================================
-function StudentsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | void }) {
+function StudentsTab({ d }: { d: Detail }) {
   const toast = useToast();
+  const createStudent = useCreateStudentMutation();
+  const deleteStudent = useDeleteStudentMutation();
+  const setStatus = useUpdateStudentStatusMutation();
   const navigate = useNavigate();
   const editStudent = useStudentModal();
   const [search, setSearch] = useState('');
@@ -382,7 +393,7 @@ function StudentsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | v
   const [addOpen, setAddOpen] = useState(false);
   const [newName, setNewName] = useState('');
   const [newCnName, setNewCnName] = useState('');
-  const [busy, setBusy] = useState(false);
+  const busy = createStudent.isPending || deleteStudent.isPending || setStatus.isPending;
   const [pendingDelete, setPendingDelete] = useState<Student | null>(null);
   const [pendingArchive, setPendingArchive] = useState<Student | null>(null);
   const [showArchived, setShowArchived] = useState(false);
@@ -412,51 +423,39 @@ function StudentsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | v
     if (busy) return;
     const v = validateStudentNameForm({ name: newName, cnName: newCnName });
     if ('error' in v) return toast(v.error, 'error');
-    setBusy(true);
     try {
-      await api.addStudent(d.id, v);
-      await reload();
+      await createStudent.mutateAsync({ classId: d.id, input: v });
       toast(`已添加「${v.name}」`);
       setNewName('');
       setNewCnName('');
       setAddOpen(false);
     } catch {
       toast('添加失败，请重试', 'error');
-    } finally {
-      setBusy(false);
     }
   }
 
   async function confirmDelete() {
     if (!pendingDelete || busy) return;
-    setBusy(true);
     const name = pendingDelete.name;
     try {
-      await api.deleteStudent(pendingDelete.id);
-      await reload();
+      await deleteStudent.mutateAsync({ studentId: pendingDelete.id, classId: d.id });
       toast(`已删除「${name}」`);
       setPendingDelete(null);
     } catch {
       toast('删除失败，请重试', 'error');
-    } finally {
-      setBusy(false);
     }
   }
 
   async function changeStatus(s: Student, status: Student['status']) {
     if (busy) return;
-    setBusy(true);
     try {
-      await api.setStudentStatus(s.id, status);
-      await reload();
+      await setStatus.mutateAsync({ studentId: s.id, classId: d.id, status });
       if (status === 'suspended') toast(`「${s.name}」已停课，并移出默认分组`);
       else if (status === 'archived') toast(`已归档「${s.name}」`);
       else toast(`「${s.name}」已恢复在读，请到分组方案里拖回小组`);
       setPendingArchive(null);
     } catch {
       toast('操作失败，请重试', 'error');
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -612,7 +611,7 @@ function StudentsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | v
             menuOpen={menuId === s.id}
             onEdit={() => {
               setMenuId(null);
-              editStudent({ studentId: s.id, name: s.name, cnName: s.cnName }, reload);
+              editStudent({ studentId: s.id, name: s.name, cnName: s.cnName, classId: d.id });
             }}
             onToggleMenu={() => setMenuId((cur) => (cur === s.id ? null : s.id))}
             onCloseMenu={() => setMenuId(null)}
@@ -945,24 +944,28 @@ const menuItemStyle = (color: string): CSSProperties => ({
 });
 
 // ===== GROUPS TAB ==========================================================
-function GroupsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | void }) {
+// 分组草稿：draft 为 null 时直接展示服务端分组；改名输入中、保存进行中时 draft 优先，
+// 后台刷新只更新底下的服务端数据，不覆盖草稿。保存成功（详情已由 Mutation 写入缓存）且其间
+// 没有新的修改才回到服务端分组（拿到新组的真实 id）；失败则丢弃草稿、恢复服务端分组。
+function GroupsTab({ d }: { d: Detail }) {
   const toast = useToast();
+  const saveGrouping = useSaveClassGroupingMutation();
   const byId = useMemo(() => new Map(d.students.map((s) => [s.id, s])), [d.students]);
-  const [model, setModel] = useState<GroupingModel>(() => toModel(d));
+  const serverModel = useMemo(() => toModel(d), [d]);
+  const [draft, setDraft] = useState<GroupingModel | null>(null);
+  const model = draft ?? serverModel;
+  const setModel = (update: (m: GroupingModel) => GroupingModel) => setDraft((cur) => update(cur ?? serverModel));
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null); // group id or 'ungrouped'
 
-  // Re-sync whenever the class detail changes (after a save or reload).
-  useEffect(() => setModel(toModel(d)), [d]);
-
   async function persist(next: GroupingModel) {
-    setModel(next); // optimistic
+    setDraft(next); // optimistic
     try {
-      await api.saveGrouping(d.id, toPayload(next));
-      await reload(); // adopt server truth (real ids for new groups)
+      await saveGrouping.mutateAsync({ classId: d.id, groups: toPayload(next) });
+      setDraft((cur) => (cur === next ? null : cur));
     } catch {
       toast('分组保存失败，已恢复', 'error');
-      await reload();
+      setDraft(null);
     }
   }
 
@@ -1273,15 +1276,8 @@ function GroupsTab({ d, reload }: { d: Detail; reload: () => Promise<void> | voi
 // 邀请的生成与处理都在小程序端（老师登录小程序 → 生成邀请 → 分享 → 队列关联）；
 // web 端只留说明 + 只读队列。
 function InviteTab({ d }: { d: Detail }) {
-  const [requests, setRequests] = useState<JoinRequestItem[] | null>(null);
-  const toast = useToast();
-
-  useEffect(() => {
-    api
-      .getJoinRequests(d.id)
-      .then(setRequests)
-      .catch(() => toast('邀请队列加载失败', 'error'));
-  }, [d.id]);
+  const requestsQuery = useJoinRequestsQuery(d.id);
+  const requests = requestsQuery.data;
 
   return (
     <div style={{ maxWidth: 620 }}>
@@ -1299,10 +1295,12 @@ function InviteTab({ d }: { d: Detail }) {
         <div style={{ fontWeight: 700, fontSize: 16, color: '#1e2430' }}>
           邀请队列{requests ? `（${requests.length}）` : ''}
         </div>
-        {requests && requests.length === 0 && (
-          <div style={{ fontSize: 13, color: '#98a1af', marginTop: 12 }}>暂无待确认的申请</div>
-        )}
-        {(requests ?? []).map((r) => (
+        <QueryBlock query={requestsQuery} what="邀请队列" style={{ padding: '24px 0 8px' }}>
+          {(requests) =>
+            requests.length === 0 ? (
+              <div style={{ fontSize: 13, color: '#98a1af', marginTop: 12 }}>暂无待确认的申请</div>
+            ) : (
+              requests.map((r) => (
           <div
             key={r.id}
             style={{
@@ -1344,7 +1342,10 @@ function InviteTab({ d }: { d: Detail }) {
               待关联
             </span>
           </div>
-        ))}
+              ))
+            )
+          }
+        </QueryBlock>
       </div>
     </div>
   );
