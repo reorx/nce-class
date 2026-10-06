@@ -37,7 +37,7 @@ const todayStr = () => {
 
 const md = (d: string) => d.slice(5); // YYYY-MM-DD → MM-DD
 
-export function ScheduleTab({ classId }: { classId: string }) {
+export function ScheduleTab({ classId, isArchived }: { classId: string; isArchived: boolean }) {
   const toast = useToast();
   const [schedules, setSchedules] = useState<ScheduleItem[] | null>(null);
   // list 视图，或编辑器（editingId = null 表示新建）
@@ -58,6 +58,7 @@ export function ScheduleTab({ classId }: { classId: string }) {
 
   async function openEditor(item: ScheduleItem | null) {
     if (!item) {
+      if (isArchived) return;
       setEditor({ state: initEditor({ today: todayStr() }), editingId: null });
       return;
     }
@@ -77,7 +78,7 @@ export function ScheduleTab({ classId }: { classId: string }) {
   }
 
   async function save(state: EditorState, editingId: string | null) {
-    if (busy || !canSave(state)) return;
+    if (busy || !canSave(state) || (isArchived && !editingId)) return;
     setBusy(true);
     try {
       if (editingId) await api.updateSchedule(editingId, toPayload(state));
@@ -107,7 +108,7 @@ export function ScheduleTab({ classId }: { classId: string }) {
     }
   }
 
-  if (editor) {
+  if (editor && (!isArchived || editor.editingId)) {
     return (
       <ScheduleEditor
         state={editor.state}
@@ -126,11 +127,12 @@ export function ScheduleTab({ classId }: { classId: string }) {
         <div>
           <div style={{ fontWeight: 700, fontSize: 16, color: '#1e2430' }}>课程周期（排班表）</div>
           <div style={{ fontSize: 12.5, color: '#7a828f', marginTop: 3 }}>
-            日历点选排课，一个周期对应一次收费；收款在顶部「收银台」按周期发起。
+            {isArchived ? '班级已归档，无法新建课程周期；如需排课，请先取消归档。' : '日历点选排课，一个周期对应一次收费；收款在顶部「收银台」按周期发起。'}
           </div>
         </div>
         <button
           onClick={() => openEditor(null)}
+          disabled={isArchived}
           style={{
             marginLeft: 'auto',
             height: 36,
@@ -144,7 +146,8 @@ export function ScheduleTab({ classId }: { classId: string }) {
             borderRadius: 9,
             fontWeight: 600,
             fontSize: 13.5,
-            cursor: 'pointer',
+            cursor: isArchived ? 'not-allowed' : 'pointer',
+            opacity: isArchived ? 0.5 : 1,
             boxShadow: '0 2px 8px rgba(47,180,87,.24)',
           }}
         >
@@ -164,7 +167,7 @@ export function ScheduleTab({ classId }: { classId: string }) {
             borderRadius: 14,
           }}
         >
-          还没有课程周期，点右上角「新建课程周期」用日历排课
+          {isArchived ? '该班级暂无课程周期' : '还没有课程周期，点右上角「新建课程周期」用日历排课'}
         </div>
       )}
 

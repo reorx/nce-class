@@ -471,8 +471,7 @@ describe('class textbook (教材)', () => {
   });
 });
 
-// 归档 = 纯展示标记：只决定 web 首页班级列表显不显示（前端按 isArchived 分首页/归档页），
-// 列表接口照常返回全部班级，详情/开课/收款等一律不受影响。
+// 归档班级仍在列表接口和详情中可读；新建排班/收款的限制见 billing.test.ts。
 describe('class archive (归档)', () => {
   const archivedOf = (id: string) => sqlite.prepare(`SELECT is_archived FROM classes WHERE id=?`).get(id) as any;
 

@@ -135,7 +135,7 @@ export function ClassDetail({ me }: { me: Me | null }) {
           />
         )}
         {d && tab === 'invite' && <InviteTab d={d} />}
-        {d && tab === 'schedule' && <ScheduleTab classId={d.id} />}
+        {d && tab === 'schedule' && <ScheduleTab classId={d.id} isArchived={d.isArchived} />}
         {d && tab === 'sessions' && (
           <div>
             <div style={{ display: 'flex', marginBottom: 14 }}>

@@ -82,7 +82,7 @@ push master → GitHub Actions 构建镜像 → hookploy 部署，迁移随服�
 - **新增挂靠班级的表要同步 `mutations.deleteClass`**。`api.test.ts` 的 admin 用例会扫描全部表做残留断言。
 - **学生姓名**：`students.name` 存的是英文名（主显示名），`cn_name` 是中文名（可空）。`PUT /api/students/:id` 缺 `cnName` key 时不动该列，传空串才清空，勿改成按值判断。
 - **学生状态** active / suspended / archived：非 active 不进课前配置、课堂与 session 快照。与班级归档无关。
-- **班级归档是纯展示标记**，只影响首页列表分流，不要给其他功能加联动。
+- **班级归档**：首页列表分流，禁止新建课程周期和收款项；历史排班与收款记录可继续维护，其他功能不联动。详见业务口径。
 - **出勤**：commit payload 只有 present / absent，`leave` 只由考勤更正产生。读侧一律用 `!== 'present'` 判定未到堂。
 - **教材 key 是字符串**（`'1'`-`'4'`、`starterA`、`starterB`）。前端下拉值一律过 `parseBook`，勿 `Number()`。课数表在 `server/src/app.ts` 与 `web/src/lib/homework.ts` 两处镜像，要同步改。
 - **计费**：应收 = 单价 × 课程次数 + 附加费，全班一致、不按到堂扣减，例外由老师改最终金额（2026-10 口径变更，勿改回）。`billing.ts` 的 `today` 是显式参数，生产传真实当天，**不要用 `REFERENCE_TODAY`**。金额在库里和 API 里一律整数分，字段名带 `Cents`。

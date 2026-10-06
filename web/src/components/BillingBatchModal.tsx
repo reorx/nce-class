@@ -1,7 +1,7 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, ApiError, type BillingBatchDetail, type ClassListItem, type ScheduleItem } from '../lib/api';
-import { parseLessonCount, previewPerStudentCents } from '../lib/billingForm';
+import { billingClassSelection, parseLessonCount, previewPerStudentCents } from '../lib/billingForm';
 import { centsToYuan, fmtMoney, yuanToCents } from '../lib/money';
 import { Modal } from './Modal';
 import { useToast } from './Toast';
@@ -29,6 +29,7 @@ export function BillingBatchModal({
   const navigate = useNavigate();
   const reset = batch != null;
   const [classes, setClasses] = useState<ClassListItem[]>([]);
+  const [classesLoading, setClassesLoading] = useState(true);
   const [classId, setClassId] = useState('');
   const [schedules, setSchedules] = useState<ScheduleItem[] | null>(null);
   const [scheduleId, setScheduleId] = useState('');
@@ -40,27 +41,36 @@ export function BillingBatchModal({
 
   useEffect(() => {
     if (!open || reset) return;
+    let cancelled = false;
+    setClassesLoading(true);
+    setClasses([]);
     api
       .classes()
       .then((cs) => {
-        setClasses(cs);
-        setClassId((cur) => cur || cs[0]?.id || '');
+        if (cancelled) return;
+        setClasses(billingClassSelection(cs, '').classes);
+        setClassId((cur) => billingClassSelection(cs, cur).classId);
+        setClassesLoading(false);
       })
       .catch(() => toast('班级加载失败', 'error'));
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, reset]);
 
   useEffect(() => {
-    if (!open || reset || !classId) return;
+    if (!open || reset) return;
+    let cancelled = false;
     setSchedules(null);
     setScheduleId('');
     setLessonCount('');
+    if (!classId || classesLoading) return;
     api
       .listSchedules(classId)
-      .then(setSchedules)
+      .then((items) => { if (!cancelled) setSchedules(items); })
       .catch(() => toast('课程周期加载失败', 'error'));
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, reset, classId]);
+  }, [open, reset, classId, classesLoading]);
 
   // 重置模式：打开时用批次当前条款回填
   useEffect(() => {
@@ -76,7 +86,7 @@ export function BillingBatchModal({
   const cls = classes.find((c) => c.id === classId) ?? null;
   const sched = (schedules ?? []).find((s) => s.id === scheduleId) ?? null;
   const scheduleLessonCount = reset ? batch.scheduleLessonCount : (sched?.lessonCount ?? null);
-  const scheduleChosen = reset || sched != null;
+  const scheduleChosen = reset || (!classesLoading && cls != null && sched != null);
   const count = parseLessonCount(lessonCount);
   const priceCents = yuanToCents(price);
   const addonCents = addon.trim() === '' ? 0 : yuanToCents(addon);
@@ -136,7 +146,8 @@ export function BillingBatchModal({
       ) : (
         <>
           <div style={label}>1. 选择班级</div>
-          <select value={classId} onChange={(e) => setClassId(e.target.value)} style={{ ...field, marginBottom: 16 }}>
+          <select aria-label="选择班级" disabled={classesLoading || classes.length === 0} value={classId} onChange={(e) => setClassId(e.target.value)} style={{ ...field, marginBottom: 16 }}>
+            {classes.length === 0 && <option value="">{classesLoading ? '加载班级中…' : '暂无未归档班级'}</option>}
             {classes.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}（{c.studentCount} 人）
@@ -178,7 +189,7 @@ export function BillingBatchModal({
                 </button>
               );
             })}
-            {schedules && schedules.length === 0 && (
+            {cls && schedules && schedules.length === 0 && (
               <div style={{ fontSize: 12.5, color: '#8a929e', padding: '6px 0' }}>
                 该班还没有排班？
                 <Link to={`/classes/${classId}?tab=schedule`} style={{ color: '#4f6ef7' }}>

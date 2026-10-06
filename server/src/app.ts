@@ -1816,8 +1816,9 @@ export function createApp() {
   });
 
   app.post('/api/classes/:id/schedules', (req, res) => {
-    if (!classInOrg(req.params.id, res.locals.teacher.org_id))
-      return res.status(404).json({ error: 'class not found' });
+    const cls = classInOrg(req.params.id, res.locals.teacher.org_id);
+    if (!cls) return res.status(404).json({ error: 'class not found' });
+    if (cls.is_archived) return res.status(409).json({ error: '班级已归档，无法新建课程周期，请先取消归档' });
     const name = str(req.body?.name);
     if (!name) return res.status(400).json({ error: '周期名称必填' });
     const parsed = parseLessons(req.body?.lessons);
@@ -1869,6 +1870,8 @@ export function createApp() {
     const scheduleId = str(req.body?.scheduleId);
     const sched = scheduleId ? scheduleInOrg(scheduleId, teacher.org_id) : null;
     if (!sched) return res.status(404).json({ error: 'schedule not found' });
+    if (classInOrg(sched.class_id, teacher.org_id)?.is_archived)
+      return res.status(409).json({ error: '班级已归档，无法创建收款项，请先取消归档' });
     if (q.batchOfSchedule.get(sched.id)) return res.status(409).json({ error: '该课程周期已生成收款批次' });
     const unitPriceCents = centsOr(req.body?.unitPriceCents);
     if (unitPriceCents == null) return res.status(400).json({ error: '单价必须是非负整数（分）' });

@@ -105,6 +105,27 @@ async function createBatch(agent: request.Agent, scheduleId: string, body: Recor
 }
 
 describe('schedules API', () => {
+  it('归档后拒绝新建周期和收款项，历史可读，取消归档后可继续创建', async () => {
+    const { agent } = await login();
+    const existing = await createSchedule(agent);
+    const billed = await createSchedule(agent, LESSONS, '历史收款周期');
+    const batch = await createBatch(agent, billed.id);
+    sqlite.prepare('UPDATE classes SET is_archived=1 WHERE id=?').run('c1');
+    const schedule = await agent.post('/api/classes/c1/schedules').send({ name: '新周期', lessons: LESSONS });
+    expect(schedule.status).toBe(409);
+    expect(schedule.body.error).toContain('归档');
+    expect((await createBatch(agent, existing.id)).status).toBe(409);
+    expect((await agent.get('/api/classes/c1/schedules')).body).toHaveLength(2);
+    expect((await agent.get(`/api/billing/batches/${batch.body.id}`)).status).toBe(200);
+    expect((await agent.post(`/api/billing/batches/${batch.body.id}/recalculate`).send({})).status).toBe(200);
+    const { agent: outsider } = await login('waiguo');
+    expect((await outsider.post('/api/classes/c1/schedules').send({ name: '新周期', lessons: LESSONS })).status).toBe(404);
+    expect((await createBatch(outsider, existing.id)).status).toBe(404);
+    sqlite.prepare('UPDATE classes SET is_archived=0 WHERE id=?').run('c1');
+    await createSchedule(agent);
+    expect((await createBatch(agent, existing.id)).status).toBe(201);
+  });
+
   it('creates a schedule and lists it with derived range and lesson count', async () => {
     const { agent } = await login();
     const created = await createSchedule(agent);
