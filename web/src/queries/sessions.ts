@@ -40,6 +40,14 @@ export const sessionQueryOptions = (sessionId: string) =>
 export const useSessionQuery = (sessionId: string | undefined, options?: QueryHookOptions) =>
   useQuery({ ...sessionQueryOptions(sessionId ?? ''), enabled: enabledWith(sessionId, options) });
 
+/** 编辑上课记录建立本地底稿时用：挂载时总会重读最新记录，调用方等 isFetchedAfterMount 再使用。 */
+export const useLatestSessionQuery = (sessionId: string | undefined, options?: QueryHookOptions) =>
+  useQuery({
+    ...sessionQueryOptions(sessionId ?? ''),
+    enabled: enabledWith(sessionId, options),
+    refetchOnMount: 'always',
+  });
+
 export function useDeleteSessionMutation() {
   return useAppMutation({
     mutationFn: ({ sessionId }: { sessionId: string; classId?: string }) => deleteSession(sessionId),

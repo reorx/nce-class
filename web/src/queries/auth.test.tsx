@@ -237,3 +237,28 @@ it('once signed out, further 401s do not clear the cache again', async () => {
   await waitFor(() => expect(result.current.isError).toBe(true));
   expect(spy).not.toHaveBeenCalled();
 });
+
+// Plan 2 新增：断网刷新后 me 读取失败（无数据），课堂仍可离线进行；恢复联网后任一写成功即证明会话有效，
+// 在写操作 resolve 前重读 me，提交后跳转的页面不会卡在「无法读取登录状态」。
+describe('recovering an unreadable identity', () => {
+  it('a successful write while me is unreadable re-reads me before the write resolves', async () => {
+    server.on('GET', '/api/me', () => Promise.reject(new TypeError('Failed to fetch')));
+    const { result } = renderWithClient(client, () => ({ me: useMeQuery(), add: useCreateStudentMutation() }));
+    await waitFor(() => expect(result.current.me.isError).toBe(true));
+    expect(result.current.me.data).toBeUndefined();
+
+    server.on('GET', '/api/me', teacherA);
+    server.on('POST', '/api/classes/c1/students', { id: 's9', name: 'Tom', cnName: null, source: 'teacher', status: 'active', hasPhoto: false, score: 0 });
+    await act(() => result.current.add.mutateAsync({ classId: 'c1', input: { name: 'Tom' } }));
+    expect(client.getQueryData(authKeys.me())).toEqual(teacherA);
+  });
+
+  it('writes do not re-read me when identity is known', async () => {
+    await signedInAsA();
+    server.on('POST', '/api/classes/c1/students', { id: 's9', name: 'Tom', cnName: null, source: 'teacher', status: 'active', hasPhoto: false, score: 0 });
+    const { result } = renderWithClient(client, () => useCreateStudentMutation());
+    await act(() => result.current.mutateAsync({ classId: 'c1', input: { name: 'Tom' } }));
+    expect(server.count('GET', '/api/me')).toBe(0);
+  });
+});
+

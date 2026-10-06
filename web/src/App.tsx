@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Navigate, Route, Routes, useLocation, type Location } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation, useParams, type Location } from 'react-router-dom';
 import { BackgroundErrorToasts } from './components/BackgroundErrorToasts';
 import { SignOutProvider } from './components/SignOut';
 import { StudentModalProvider } from './components/StudentEditModal';
@@ -17,11 +17,14 @@ import { Sessions } from './pages/Sessions';
 import { Setup } from './pages/Setup';
 import { StudentProfile } from './pages/StudentProfile';
 import { Teachers } from './pages/Teachers';
-import { authStatus, useMeQuery } from './queries/auth';
+import { loadSession } from './lib/classroomStore';
+import { authStatus, useMeQuery, type AuthStatus } from './queries/auth';
 
 // 身份只有一个来源：me 查询（queries/auth）。页面拿到的 me prop 就是这份数据的传递。
 // 守卫：已登录才渲染受保护页面；未登录跳 /login 并记下来处（会话过期后重新登录回到原页面，
 // 本地课堂草稿不受影响）；读取失败（断网 / 5xx / 403）不当成退出，给重试。
+// 课堂页例外：本机已有该班进行中的课堂时，身份还在读取或读取失败也直接进课堂（断网刷新照常上课），
+// 只有确认未登录（me = null）才去登录页。
 
 /** 守卫跳登录时带上的来处；登录成功后回到这里。 */
 const fromOf = (state: unknown): string | null => {
@@ -38,7 +41,11 @@ export function App() {
   const location = useLocation();
 
   const pending =
-    status === 'error' ? <AuthError message={meQuery.error?.message} onRetry={() => meQuery.refetch()} /> : <Splash />;
+    status === 'error' && !meQuery.isFetching ? (
+      <AuthError message={meQuery.error?.message} onRetry={() => meQuery.refetch()} />
+    ) : (
+      <Splash />
+    );
   const guard = (el: ReactNode) =>
     status === 'in' ? (
       el
@@ -73,7 +80,14 @@ export function App() {
             <Route path="/classes/:id/sessions/:sid" element={guard(<SessionDetail me={me} />)} />
             <Route path="/classes/:id/attendance" element={guard(<ClassAttendance />)} />
             <Route path="/classes/:id/setup" element={guard(<Setup />)} />
-            <Route path="/classes/:id/classroom" element={guard(<Classroom />)} />
+            <Route
+              path="/classes/:id/classroom"
+              element={
+                <LocalClassroomGuard status={status} otherwise={guard(<Classroom />)}>
+                  <Classroom />
+                </LocalClassroomGuard>
+              }
+            />
             <Route path="/sessions" element={guard(<Sessions me={me} />)} />
             <Route path="/billing" element={guard(<Billing me={me} />)} />
             <Route path="/billing/:batchId" element={guard(<BillingBatch me={me} />)} />
@@ -84,6 +98,21 @@ export function App() {
       </SignOutProvider>
     </ToastProvider>
   );
+}
+
+/** 有本地进行中课堂且不是「确认未登录」时直接渲染课堂，其余交给普通守卫。 */
+function LocalClassroomGuard({
+  status,
+  otherwise,
+  children,
+}: {
+  status: AuthStatus;
+  otherwise: ReactNode;
+  children: ReactNode;
+}) {
+  const { id = '' } = useParams();
+  const local = (status === 'loading' || status === 'error') && loadSession(id) != null;
+  return <>{local ? children : otherwise}</>;
 }
 
 const centered = {

@@ -41,6 +41,13 @@ export const classQueryOptions = (classId: string) =>
 export const useClassQuery = (classId: string | undefined, options?: QueryHookOptions) =>
   useQuery({ ...classQueryOptions(classId ?? ''), enabled: enabledWith(classId, options) });
 
+/**
+ * 用班级详情初始化草稿（课前配置的名单与分组、URL 直接开课、编辑上课记录的默认分组）时用：
+ * 挂载时即便缓存新鲜也重读一次，调用方等 isFetchedAfterMount 再使用，不把旧名单固化进新课堂。
+ */
+export const useLatestClassQuery = (classId: string | undefined, options?: QueryHookOptions) =>
+  useQuery({ ...classQueryOptions(classId ?? ''), enabled: enabledWith(classId, options), refetchOnMount: 'always' });
+
 // 以下写接口都返回完整 ClassDetail，直接写入详情缓存。
 
 export function useCreateClassMutation() {

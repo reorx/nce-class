@@ -10,7 +10,9 @@ import {
   clearCommitBackup,
   clearSession,
   endSql,
+  freezeCommit,
   listCommitBackups,
+  loadCommitBackup,
   loadSession,
   minutesBetweenSql,
   nowSql,
@@ -498,6 +500,51 @@ describe('persistence (LocalStorage round-trip)', () => {
     const loaded = loadSession('c1', store)!;
     expect(loaded.students.length).toBeGreaterThan(0);
     expect(loaded.students.every((x) => x.h === '没交')).toBe(true);
+  });
+});
+
+// B16：结束课堂失败后重试——同一份本地课堂原样复用上次冻结（并已备份）的 payload：
+// endedAt、clientSessionId 都不变；失败后老师继续上课（课堂变了）才重新组装。
+describe('freezeCommit (结束课堂的冻结与重试)', () => {
+  it('first attempt freezes endedAt = now for a live class', () => {
+    const s = boot();
+    const f = freezeCommit(null, s, '2026-07-02 20:58:00');
+    expect(f.payload).toEqual(buildCommitPayload(s, '2026-07-02 20:58:00'));
+    expect(f.session).toBe(s);
+  });
+
+  it('a retry of the unchanged session reuses the backed-up payload verbatim (even after a page reload)', () => {
+    const store = memStore();
+    const s = boot();
+    const first = freezeCommit(null, s, '2026-07-02 20:58:00');
+    saveCommitBackup(first, store);
+    const reloaded = JSON.parse(JSON.stringify(s)) as ClassroomSession; // 刷新后从存储读回的新对象
+    const retry = freezeCommit(loadCommitBackup(s.clientSessionId, store), reloaded, '2026-07-02 21:10:00');
+    expect(retry.payload).toEqual(first.payload);
+    expect(retry.payload.endedAt).toBe('2026-07-02 20:58:00');
+    expect(retry.payload.clientSessionId).toBe('cs-test');
+  });
+
+  it('if the teacher kept teaching after the failure, the next attempt re-freezes (same idempotency key)', () => {
+    const store = memStore();
+    const s = boot();
+    saveCommitBackup(freezeCommit(null, s, '2026-07-02 20:58:00'), store);
+    const later = reducer(s, { type: 'scoreStudent', sid: 's1', d: 1, at: '2026-07-02 21:00:00' });
+    const retry = freezeCommit(loadCommitBackup(s.clientSessionId, store), later, '2026-07-02 21:05:00');
+    expect(retry.payload.endedAt).toBe('2026-07-02 21:05:00');
+    expect(retry.payload.events).toHaveLength(1);
+    expect(retry.payload.clientSessionId).toBe('cs-test');
+  });
+
+  it('a backup of another session is never reused', () => {
+    const store = memStore();
+    const other = buildClassroomSession(config(), { ...META, clientSessionId: 'cs-other' });
+    saveCommitBackup(freezeCommit(null, other, '2026-07-02 20:00:00'), store);
+    expect(loadCommitBackup('cs-test', store)).toBeNull();
+    const s = boot();
+    expect(freezeCommit(loadCommitBackup('cs-other', store), s, '2026-07-02 20:58:00').payload.clientSessionId).toBe(
+      'cs-test',
+    );
   });
 });
 

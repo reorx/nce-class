@@ -1,66 +1,12 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { api } from '../lib/api';
-import {
-  prevLessonGroups,
-  prevLessonInfo,
-  prevLessonStars,
-  type PrevLessonGroup,
-  type PrevLessonInfo,
-  type PrevLessonStar,
-} from '../lib/prevLesson';
+import type { ReactNode } from 'react';
+import { usePrevLessonQuery } from '../queries/prev-lesson';
 
 // 「上节课」内容体：日期/课次/分数/之星/作业 + 查看上课记录。课堂右上角
 // popover 与课前配置页的「上节课回顾」卡共用。数据在服务端（不在离线课堂
-// 快照里），挂载时自取：classDetail 定位上节课，sessionDetail 一并带回
-// 作业文本与 recap（每组分数/今日之星）。
-export type PrevLessonState =
-  | { status: 'loading' | 'error' }
-  | {
-      status: 'ready';
-      info: PrevLessonInfo | null;
-      homework: string | null;
-      groups: PrevLessonGroup[];
-      stars: PrevLessonStar[];
-    };
-
-/** 取「上节课」数据（严格紧邻的上一节已结束课）。popover 与课堂作业侧栏共用；
- *  各调用点独立请求一次，渲染各自写（错误/空态文案不同）。 */
-export function usePrevLessonData(classId: string): PrevLessonState {
-  const [state, setState] = useState<PrevLessonState>({ status: 'loading' });
-
-  useEffect(() => {
-    let alive = true;
-    api
-      .classDetail(classId)
-      .then(async (d) => {
-        const info = prevLessonInfo(d.sessions);
-        if (!info) {
-          if (alive) setState({ status: 'ready', info: null, homework: null, groups: [], stars: [] });
-          return;
-        }
-        const detail = await api.sessionDetail(info.sessionId);
-        if (!alive) return;
-        setState({
-          status: 'ready',
-          info,
-          homework: info.hasHomework ? detail.homeworkContent : null,
-          groups: prevLessonGroups(detail.recap),
-          stars: prevLessonStars(detail.recap),
-        });
-      })
-      .catch(() => {
-        if (alive) setState({ status: 'error' });
-      });
-    return () => {
-      alive = false;
-    };
-  }, [classId]);
-
-  return state;
-}
-
+// 快照里），由 usePrevLessonQuery 复用班级详情（定位上节课）与该节 session 详情
+// （作业文本与 recap：每组分数 / 今日之星）两个共享查询；没有上一节是正常空态。
 export function PrevLessonContent({ classId }: { classId: string }) {
-  const state = usePrevLessonData(classId);
+  const prev = usePrevLessonQuery(classId);
 
   const row = (label: string, value: ReactNode) => (
     <div key={label} style={{ display: 'flex', alignItems: 'baseline', gap: 12, padding: '5px 0' }}>
@@ -69,16 +15,23 @@ export function PrevLessonContent({ classId }: { classId: string }) {
     </div>
   );
 
-  if (state.status !== 'ready') {
+  const muted = { padding: '6px 0', fontSize: 14, fontWeight: 700, color: '#a7b0bb' } as const;
+  if (prev.status === 'pending') return <div style={muted}>加载中…</div>;
+  if (prev.status === 'error') {
     return (
-      <div style={{ padding: '6px 0', fontSize: 14, fontWeight: 700, color: '#a7b0bb' }}>
-        {state.status === 'error' ? '加载失败，请关闭后重试' : '加载中…'}
+      <div style={muted}>
+        加载失败 ·{' '}
+        <button
+          onClick={prev.refetch}
+          style={{ border: 'none', background: 'transparent', padding: 0, font: 'inherit', color: '#3f8f4f', cursor: 'pointer' }}
+        >
+          重试
+        </button>
       </div>
     );
   }
-  if (!state.info) {
-    return <div style={{ padding: '6px 0', fontSize: 14, fontWeight: 700, color: '#a7b0bb' }}>本班还没有上课记录</div>;
-  }
+  const state = prev.data;
+  if (!state) return <div style={muted}>本班还没有上课记录</div>;
   return (
     <>
       {row('日期', state.info.dateLabel)}

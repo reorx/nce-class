@@ -1,5 +1,6 @@
 import { MutationCache, QueryCache, QueryClient, type Mutation, type Query } from '@tanstack/react-query';
 import { ApiError, NetworkError } from '../api/client';
+import { authKeys } from './keys';
 import { dropSessionData, expireSession, isSignedOutResult, sessionGeneration } from './session';
 
 // 应用唯一的 QueryClient（main.tsx 根部 Provider，不随路由重建）；测试每例 createQueryClient() 一个新的。
@@ -61,6 +62,16 @@ function onMutationError(client: QueryClient, error: Error, mutation: Mutation<u
   void expireSession(client);
 }
 
+/**
+ * 写成功即证明会话有效：若此时身份读取失败且没有数据（断网刷新后课堂离线进行、刚恢复联网），
+ * 在这次写操作 resolve 前重读 me，提交后跳转的页面不会卡在「无法读取登录状态」。重读失败不影响写操作。
+ */
+function onMutationSuccess(client: QueryClient) {
+  const me = client.getQueryState(authKeys.me());
+  if (!me || me.status !== 'error' || me.data !== undefined) return undefined;
+  return client.refetchQueries({ queryKey: authKeys.me(), exact: true });
+}
+
 export function createQueryClient(): QueryClient {
   const client: QueryClient = new QueryClient({
     queryCache: new QueryCache({
@@ -75,6 +86,7 @@ export function createQueryClient(): QueryClient {
         mutationGenerations.set(mutation, sessionGeneration(client));
       },
       onError: (error, _variables, _context, mutation) => onMutationError(client, error, mutation),
+      onSuccess: () => onMutationSuccess(client),
     }),
     defaultOptions: {
       queries: {
