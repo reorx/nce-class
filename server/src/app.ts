@@ -133,9 +133,11 @@ const q = {
      ORDER BY date DESC, lesson_number DESC LIMIT 1`,
   ),
   sessionGroups: sqlite.prepare(`SELECT * FROM session_groups WHERE session_id=? ORDER BY order_index`),
-  // Per-session-group score (nested, §5): group events on the group + student
-  // events tagged with that group at the time they fired. warns counts only
-  // group-target deductions — member deductions surface on the member rows.
+  // Per-session-group score (§5, 2026-10 口径): the group's own events + every
+  // student event whose target is a PRESENT member of the group in the final
+  // membership. score_events.session_group_id (fire-time group) is history only
+  // — 调组 carries a student's points along. warns counts only group-target
+  // deductions — member deductions surface on the member rows.
   sessionGroupScores: sqlite.prepare(
     `SELECT sg.id gid, COALESCE(SUM(e.delta),0) score,
        COALESCE(SUM(CASE WHEN e.target_type='group' AND e.delta<0 THEN 1 ELSE 0 END),0) warns
@@ -143,7 +145,10 @@ const q = {
      LEFT JOIN score_events e
        ON e.session_id = sg.session_id
       AND ((e.target_type='group' AND e.target_id = sg.id)
-        OR (e.target_type='student' AND e.session_group_id = sg.id))
+        OR (e.target_type='student' AND EXISTS (
+              SELECT 1 FROM session_memberships sm
+              WHERE sm.session_id = sg.session_id AND sm.student_id = e.target_id
+                AND sm.session_group_id = sg.id AND sm.attendance = 'present')))
      WHERE sg.session_id=? GROUP BY sg.id`,
   ),
   // Per-student net + min delta within a session, for the recap 亮眼 / 被提醒 lists.

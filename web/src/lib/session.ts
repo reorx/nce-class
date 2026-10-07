@@ -3,8 +3,9 @@
 //
 // Scoring is an event stream (§5 of the M1 PRD): a student's per-session score
 // and a group's per-session score are *derived* from ±1 ScoreEvents, never
-// stored. This module owns that derivation so the UI stays a thin renderer and
-// the rules can be unit-tested in isolation.
+// stored. 组分 = 当前到堂组员的个人分之和 + 小组独立分 (2026-10 口径).
+// This module owns that derivation so the UI stays a thin renderer and the
+// rules can be unit-tested in isolation.
 //
 // The demo scenario below reproduces the "第3课 · Lesson 3" state used across
 // the classroom mockups (nce-class-v1-design/课堂主界面.dc.html). Until the
@@ -38,7 +39,10 @@ export interface SEvent {
   id: number; // local monotonic sequence (keys / undo only)
   tt: 'student' | 'group';
   tid: string; // student id or group id, matching tt
-  g: string; // the group the target belonged to when the event fired
+  // The group the target belonged to when the event fired. History only (still
+  // sent as the commit payload's clientGroupId) — group scores follow the
+  // student's current group instead, see gScore.
+  g: string;
   d: 1 | -1;
   createdAt: string; // 'YYYY-MM-DD HH:mm:ss' — carried into the commit payload
   // 背书自动加分的来源标记：「已背完」绑定唯一 1 分，离开该状态时按此标记收回。
@@ -85,20 +89,27 @@ export function sScore(events: SEvent[], id: string): number {
   return events.filter((e) => e.tt === 'student' && e.tid === id).reduce((a, e) => a + e.d, 0);
 }
 
+/** The slice of a student that group scoring reads; attendance absent ⇒ present. */
+export type GroupMember = Pick<SStudent, 'id' | 'g'> & { attendance?: 'present' | 'absent' };
+
+/** Ids of the students who currently count toward a group: in it and 到堂. */
+function scoringMemberIds(students: GroupMember[], gid: string): Set<string> {
+  return new Set(students.filter((s) => s.g === gid && s.attendance !== 'absent').map((s) => s.id));
+}
+
 /**
- * A group's per-session score (nested): group-level events + every student
- * event tagged with this group at the time it fired. Re-grouping later does not
- * rewrite history because each event carries its own group id.
+ * A group's per-session score = Σ personal scores of its current present
+ * members + its own group-level events. Membership is read live, so 调组 carries
+ * a student's whole personal score to the new group; the group stamped on each
+ * student event (SEvent.g) is history only and never consulted here.
  */
-export function gScore(events: SEvent[], gid: string): number {
-  return events
-    .filter((e) => (e.tt === 'group' && e.tid === gid) || (e.tt === 'student' && e.g === gid))
-    .reduce((a, e) => a + e.d, 0);
+export function gScore(students: GroupMember[], events: SEvent[], gid: string): number {
+  return gScoreBreakdown(students, events, gid).total;
 }
 
 /**
  * 小组分明细（浮窗展示用）：把 gScore 的同一批事件拆成三笔——
- * 组内学生个人加分累计 / 小组独立加分累计 / 扣分累计（学生+小组的负分，取正数）。
+ * 当前组员个人加分累计 / 小组独立加分累计 / 扣分累计（组员+小组的负分，取正数）。
  * 恒有 total = studentPlus + groupPlus − minus，且 total === gScore。
  */
 export interface GroupScoreBreakdown {
@@ -108,11 +119,12 @@ export interface GroupScoreBreakdown {
   minus: number;
 }
 
-export function gScoreBreakdown(events: SEvent[], gid: string): GroupScoreBreakdown {
+export function gScoreBreakdown(students: GroupMember[], events: SEvent[], gid: string): GroupScoreBreakdown {
+  const members = scoringMemberIds(students, gid);
   const b = { total: 0, studentPlus: 0, groupPlus: 0, minus: 0 };
   for (const e of events) {
     const own = e.tt === 'group' && e.tid === gid;
-    if (!own && !(e.tt === 'student' && e.g === gid)) continue;
+    if (!own && !(e.tt === 'student' && members.has(e.tid))) continue;
     b.total += e.d;
     if (e.d < 0) b.minus -= e.d;
     else if (own) b.groupPlus += e.d;

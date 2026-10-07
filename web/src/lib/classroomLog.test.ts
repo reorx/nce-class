@@ -39,18 +39,19 @@ describe('buildLogLines', () => {
     expect(lines.map((l) => l.at)).toEqual([at(8), at(7), at(6), at(5)]);
   });
 
-  it('renders a student score line with its group sync detail, undoable via eventId', () => {
+  it('renders a student score line undoable via eventId, without a group note (组分随人走，不绑定加分时的组)', () => {
     let s = boot();
     s = reducer(s, { type: 'scoreStudent', sid: 's1', d: 1, at: at(5) });
     const [l] = buildLogLines(s);
-    expect(l).toMatchObject({ who: '小明', action: '+1', detail: '第1组 同步 +1', eventId: 1, tone: 'plus' });
+    expect(l).toMatchObject({ who: '小明', action: '+1', eventId: 1, tone: 'plus' });
+    expect(l.detail).toBeUndefined();
   });
 
   it('renders a minus student score line with minus tone', () => {
     let s = boot();
     s = reducer(s, { type: 'scoreStudent', sid: 's1', d: -1, at: at(5) });
     const [l] = buildLogLines(s);
-    expect(l).toMatchObject({ who: '小明', action: '−1', detail: '第1组 同步 −1', tone: 'minus' });
+    expect(l).toMatchObject({ who: '小明', action: '−1', tone: 'minus' });
   });
 
   it('renders a group score line (no personal detail), undoable via eventId', () => {
@@ -86,17 +87,15 @@ describe('buildLogLines', () => {
     const [point, status] = buildLogLines(s);
     expect(status).toMatchObject({ who: '小明', action: '背书 → 已背完', tone: 'neutral' });
     expect(point).toMatchObject({ who: '小明', action: '+1', eventId: 2, tone: 'plus' });
-    expect(point.detail).toBe('背书自动加分 · 第1组 同步 +1');
+    expect(point.detail).toBe('背书自动加分');
   });
 
-  it('falls back gracefully when the event group was deleted, and omits detail for ungrouped students', () => {
+  it('labels a group line that outlived its group (deleted mid-class)', () => {
     let s = boot();
-    s = reducer(s, { type: 'scoreStudent', sid: 's1', d: 1, at: at(5) }); // fired in g1
-    s = reducer(s, { type: 'removeGroup', gid: 'g1' }); // g1 gone, s1 ungrouped
-    s = reducer(s, { type: 'scoreStudent', sid: 's1', d: 1, at: at(6) }); // fired ungrouped
-    const [ungrouped, deleted] = buildLogLines(s);
-    expect(deleted.detail).toBe('已删除小组 同步 +1');
-    expect(ungrouped.detail).toBeUndefined();
+    s = reducer(s, { type: 'scoreGroup', gid: 'g1', d: 1, at: at(5) });
+    s = reducer(s, { type: 'removeGroup', gid: 'g1' });
+    const [l] = buildLogLines(s);
+    expect(l.who).toBe('已删除小组');
   });
 
   it('tolerates an old session shape without log', () => {

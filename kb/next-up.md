@@ -20,3 +20,10 @@
 - **退出与重新登录**：在任一页面退出 → 换账号登录应落在首页，不回到上个账号的页面。
 - **课堂本地优先**：开一节测试课加几分，断网刷新页面仍能进课堂、分数不丢；联网后结束课堂只落库一节（只读查 `class_sessions` 该班最新一行）。用完删除测试课堂记录。
   → 结果记到 `kb/sessions/2026-10-07-web-query-component-migration.md`「遗留问题」；有异常登记 `kb/known-issues.md`
+
+## push master 部署之后（2026-10-07 组分改为「组员个人分之和 + 小组独立分」）
+
+- **线上历史课受影响范围**：组分是读时派生，部署后历史课也按新口径重算。只读查库列出「加分时所在组 ≠ 最终到堂所在组」的节次，这些课的 recap / 课堂情况 / 成长档案 / 小程序组分会变：
+  `SELECT e.session_id, COUNT(*) FROM score_events e LEFT JOIN session_memberships sm ON sm.session_id=e.session_id AND sm.student_id=e.target_id WHERE e.target_type='student' AND e.session_group_id IS NOT (CASE WHEN sm.attendance='present' THEN sm.session_group_id END) GROUP BY e.session_id`
+  挑一节打开课堂情况，核对每组分数 = 到堂组员个人分之和 + 小组独立分。
+  → 受影响节次告诉老师（已发出去的旧战报图里组分会和线上对不上）；核对完删掉本节

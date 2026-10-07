@@ -553,7 +553,7 @@ function ClassroomPage({ id, search }: { id: string; search: string }) {
                         }}
                       >
                         <span style={{ fontSize: 16 }}>⭐</span>
-                        {gScore(events, g.id)}
+                        {gScore(students, events, g.id)}
                       </div>
                     </div>
                     <div
@@ -872,7 +872,7 @@ function ClassroomPage({ id, search }: { id: string; search: string }) {
             <GroupPopup
               group={g}
               headFg={c.headFg}
-              breakdown={gScoreBreakdown(events, g.id)}
+              breakdown={gScoreBreakdown(students, events, g.id)}
               onScore={(d) => {
                 addGroupScore(g.id, d);
                 close();
@@ -2553,7 +2553,7 @@ const inputBase: CSSProperties = {
 
 // ===== group popup =========================================================
 // 与学生浮窗同一套交互：点 +1/−1 直接计分并关闭（连击去看板再点组头）。
-// 下方明细把组总分拆成 组员个人加分累计 / 小组独立加分 / 扣分累计 三笔
+// 下方明细把组总分拆成 当前组员个人加分累计 / 小组独立加分 / 扣分累计 三笔
 // （口径见 lib/session 的 gScoreBreakdown，total = 前两笔之和 − 扣分）。
 function GroupPopup({
   group,
@@ -2641,7 +2641,7 @@ function GroupPopup({
             {detailRow(
               '#6fb1fc',
               '组员个人加分',
-              '组内学生的个人 +1 同步累计',
+              '当前组员的个人 +1 累计，调组随人走',
               `+${studentPlus}`,
               studentPlus > 0 ? '#1e9e4a' : '#98a2b0',
             )}
@@ -2655,7 +2655,7 @@ function GroupPopup({
             {detailRow(
               '#fb7a5c',
               '扣分累计',
-              '组员个人与小组的 −1 合计',
+              '当前组员与小组的 −1 合计',
               minus > 0 ? `−${minus}` : '0',
               minus > 0 ? '#e0454a' : '#98a2b0',
             )}

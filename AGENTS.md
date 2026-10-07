@@ -82,7 +82,7 @@ push master → GitHub Actions 构建镜像 → hookploy 部署，迁移随服�
 - **⚠️ 结束课堂 schema 向后兼容，不可破坏**：课堂进行中服务端可能发新版，旧页面的 commit payload 必须照常入库。①服务端永不新增必填字段，新字段一律可选带默认；②不收紧校验、不改名、不改语义；③未知字段静默忽略（`buildCommitInput` 显式挑字段）。localStorage 里的 `ClassroomSession` 同理只加可选字段。守卫用例在 `server/tests/api.test.ts`「向后/向前兼容」，挂了改实现不改测试。
 - **Web 请求层**：组件只用 `queries/<domain>` 的 hooks、类型从 `api/<domain>` `import type`，不直接调 API、不手拼 queryKey、不把响应复制进 state 再手动 reload；写后缓存规则只写在 `queries/cache-effects.ts`。读取状态用 `components/QueryState`（有数据就展示，不拿 isFetching 当白屏条件）；编辑表单在开始编辑时建草稿，后台刷新不覆盖。缓存时效、写后规则、身份与课堂例外见 `kb/docs/web-data-layer.md`。
 - **课堂本地优先**：整节课跑在浏览器 localStorage（`nce.classroom.<classId>`），仅「结束课堂」一次性 POST，后端单事务落库，`client_session_id` 幂等。补录与编辑上课记录复用同一套；编辑走 `PUT /sessions/:id/commit` 原地覆盖，不回写默认分组、不改作业、保留已有考勤更正。
-- **计分是事件流**：个人分、组分由 `score_events`(±1) 派生，不落地存储。
+- **计分是事件流**：个人分、组分由 `score_events`(±1) 派生，不落地存储。组分 = 当前到堂组员个人分之和 + 小组独立分，调组随人走；`score_events.session_group_id` 只是加分时所在组的历史，不参与组分（2026-10 口径变更，勿改回）。
 - **鉴权双轨**：老师 cookie 与小程序 Bearer token 互不通用。
 - **新增挂靠班级的表要同步 `mutations.deleteClass`**。`api.test.ts` 的 admin 用例会扫描全部表做残留断言。
 - **学生姓名**：`students.name` 存的是英文名（主显示名），`cn_name` 是中文名（可空）。`PUT /api/students/:id` 缺 `cnName` key 时不动该列，传空串才清空，勿改成按值判断。

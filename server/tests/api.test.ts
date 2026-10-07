@@ -186,7 +186,9 @@ describe('students', () => {
     const created = await agent.post('/api/classes/c1/students').send({ name: 'Nancy', cnName: '南希' });
     expect(created.status).toBe(201);
     expect(created.body).toMatchObject({ name: 'Nancy', cnName: '南希' });
-    expect((sqlite.prepare(`SELECT cn_name FROM students WHERE id=?`).get(created.body.id) as any).cn_name).toBe('南希');
+    expect((sqlite.prepare(`SELECT cn_name FROM students WHERE id=?`).get(created.body.id) as any).cn_name).toBe(
+      '南希',
+    );
 
     const detail = (await agent.get('/api/classes/c1')).body;
     expect(detail.students.find((s: any) => s.id === created.body.id).cnName).toBe('南希');
@@ -953,6 +955,30 @@ describe('session recap', () => {
     const recap = (await agent.get('/api/sessions/sess1/recap')).body;
     const xiaohong = recap.groups[0].members.find((m: any) => m.name === '小红');
     expect(xiaohong.attendance).toBe('leave');
+  });
+
+  it('drops a 请假 member from the group score (only present members count)', async () => {
+    const { agent } = await login();
+    // sg1 = 小明 2 + 小红 1 + 组 1; 小红 corrected to 请假 keeps her seat but not her point
+    await agent.put('/api/sessions/sess1/attendance/s2').send({ status: 'leave' });
+    const recap = (await agent.get('/api/sessions/sess1/recap')).body;
+    expect(recap.groups.find((g: any) => g.name === '第1组').score).toBe(3);
+  });
+
+  it('follows the final membership when a member scored under another group', async () => {
+    const { agent } = await login();
+    // 小刚 (final sg2) had a +1 stamped with sg1 before being moved — it belongs to sg2 now
+    sqlite
+      .prepare(
+        `INSERT INTO score_events (id, session_id, target_type, target_id, session_group_id, delta, created_by)
+         VALUES ('e-mv','sess1','student','s3','sg1',1,'t-wangli')`,
+      )
+      .run();
+    const recap = (await agent.get('/api/sessions/sess1/recap')).body;
+    expect(recap.groups.map((g: any) => [g.name, g.score])).toEqual([
+      ['第1组', 4],
+      ['第2组', 1],
+    ]);
   });
 });
 
@@ -1730,9 +1756,11 @@ describe('end-class commit', () => {
     expect(detail.students.find((s: any) => s.id === 's4').groupId).toBe(null);
   });
 
-  it('attributes each score event to the group at event time, not the final membership', async () => {
+  it("scores a group by its final members' personal scores, not the group stamped on each event", async () => {
     const { agent } = await login();
     // 小明 earns once in g1, then is re-grouped to g2 and earns once more there.
+    // The payload still carries each event's fire-time clientGroupId (old pages
+    // keep sending it) — the group score must ignore it and follow the student.
     const res = await agent.post('/api/classes/c1/sessions').send(
       body({
         clientSessionId: 'cs-move',
@@ -1745,13 +1773,33 @@ describe('end-class commit', () => {
         events: [
           { targetType: 'student', targetId: 's1', clientGroupId: 'g1', delta: 1, createdAt: '2026-07-02 19:05:00' },
           { targetType: 'student', targetId: 's1', clientGroupId: 'g2', delta: 1, createdAt: '2026-07-02 19:20:00' },
+          { targetType: 'group', targetId: 'g1', clientGroupId: 'g1', delta: 1, createdAt: '2026-07-02 19:30:00' },
         ],
         checks: [],
       }),
     );
     const byName = new Map(res.body.recap.groups.map((g: any) => [g.name, g.score]));
-    expect(byName.get('第1组')).toBe(1); // historical g1 point kept
-    expect(byName.get('第2组')).toBe(1); // post-move point
+    expect(byName.get('第1组')).toBe(1); // only g1's own +1 — 小明's points left with him
+    expect(byName.get('第2组')).toBe(2); // 小明 +2 follows him into g2
+    const detail = (await agent.get(`/api/sessions/${res.body.sessionId}`)).body;
+    expect(detail.overview.classScore).toBe(3);
+  });
+
+  it('leaves the points of a student committed absent out of every group score', async () => {
+    const { agent } = await login();
+    // 小刚 scored, then was marked 未到 before 结束课堂 → commit nulls his group.
+    const res = await agent.post('/api/classes/c1/sessions').send(
+      body({
+        clientSessionId: 'cs-absent-scored',
+        events: [
+          { targetType: 'student', targetId: 's3', clientGroupId: 'g2', delta: 1, createdAt: '2026-07-02 19:05:00' },
+        ],
+      }),
+    );
+    expect(res.body.recap.groups.map((g: any) => [g.name, g.score])).toEqual([
+      ['第1组', 0],
+      ['第2组', 0],
+    ]);
   });
 
   it('is idempotent for a repeated clientSessionId', async () => {

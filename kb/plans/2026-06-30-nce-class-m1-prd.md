@@ -100,9 +100,11 @@ CheckRecord(id, sessionId, studentId, type[recitation|homework],
 
 **派生计算规则：**
 - 学生本节**个人分** = 该 session 中 targetType=student 且 targetId=该生 的 Σdelta。
-- 小组本节**组分**（嵌套式） = 该组的 group 事件 Σdelta + 所有 `sessionGroupId=该组` 的 student 事件 Σdelta。
+- 小组本节**组分** = 该组**当前到堂组员**的个人分之和 + 该组的 group 事件 Σdelta（2026-10 口径变更）。
   - 即：给学生 +1 同时计入其所在组；组级 +1 只计入组分。
-  - 学生事件记录"当时所在组"，因此课中调组不会回溯改写历史组分。
+  - 组员按最终分组（落库后为 `SessionMembership.sessionGroupId`）判定，**组分随人走**：课中调组时，学生已得的个人分整体带到新组。student 事件上的 `sessionGroupId` 只记录"加分时所在组"，不参与组分计算。
+  - 未到堂（absent / 请假）与未分组的学生不计入任何组分。
+  - 旧口径（按事件当时所在组归属、调组不回溯）已废弃：先加分后调组会让组分与组员对不上。
 - 学生**累计个人总分**（跨课，用于学生排行 / 成长） = 跨所有 session 的个人分之和。**不含组分**（组分每课重置、组员会变）。
 - 小组分**每节课重置**（每堂课是独立比赛）。
 
@@ -174,7 +176,7 @@ CheckRecord(id, sessionId, studentId, type[recitation|homework],
 - 未到勤即写 `SessionMembership.attendance=absent`，本节不参与计分（见 §6）；与课前配置的缺席暂存区共享同一出勤状态，课中可随时改。
 
 **调组**
-- 拖拽学生卡在组间移动；课中可随时调整。调组只影响后续事件归属，不回溯历史组分。
+- 拖拽学生卡在组间移动；课中可随时调整。学生本节已得的个人分随人转入新组（组分 = 组员个人分之和 + 小组独立分，见 §5）。
 
 **结束课堂**
 - 结束 session（status=ended），记录 `endedAt`；**实际上课时长 = endedAt − startedAt**。提前放学（早于计划时长即点"结束课堂"）也如实记录真实时长，与计划时长 `plannedDurationMin` 各自留存、互不覆盖。

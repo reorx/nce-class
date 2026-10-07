@@ -111,7 +111,7 @@ describe('classroom reducer', () => {
   it('scores a group at the group level without touching personal scores', () => {
     let s = boot();
     s = reducer(s, { type: 'scoreGroup', gid: 'g1', d: 1, at });
-    expect(gScore(s.events, 'g1')).toBe(1);
+    expect(gScore(s.students, s.events, 'g1')).toBe(1);
     expect(sScore(s.events, 's1')).toBe(0);
   });
 
@@ -236,14 +236,39 @@ describe('classroom reducer', () => {
     expect(p.lessonTitle).toBeNull();
   });
 
-  it('re-grouping only affects future scoring, not historical group scores', () => {
+  it("re-grouping carries the student's points to the new group (组分 = 组员个人分之和 + 小组独立分)", () => {
     let s = boot();
-    s = reducer(s, { type: 'scoreStudent', sid: 's1', d: 1, at }); // earns for g1
+    s = reducer(s, { type: 'scoreStudent', sid: 's1', d: 1, at }); // scored while in g1
     s = reducer(s, { type: 'moveStudent', sid: 's1', gid: 'g2' });
-    s = reducer(s, { type: 'scoreStudent', sid: 's1', d: 1, at }); // now earns for g2
-    expect(gScore(s.events, 'g1')).toBe(1); // history preserved
-    expect(gScore(s.events, 'g2')).toBe(1);
+    s = reducer(s, { type: 'scoreStudent', sid: 's1', d: 1, at }); // scored while in g2
+    expect(gScore(s.students, s.events, 'g1')).toBe(0); // nothing left behind in g1
+    expect(gScore(s.students, s.events, 'g2')).toBe(2);
     expect(sScore(s.events, 's1')).toBe(2);
+  });
+
+  it('scoring A and B members then swapping them back and forth keeps group scores in step with membership', () => {
+    let s = boot();
+    s = reducer(s, { type: 'scoreStudent', sid: 's1', d: 1, at }); // 小明 (g1)
+    s = reducer(s, { type: 'scoreStudent', sid: 's1', d: 1, at });
+    s = reducer(s, { type: 'scoreStudent', sid: 's5', d: 1, at }); // 丽丽 (g2)
+    s = reducer(s, { type: 'scoreGroup', gid: 'g1', d: 1, at }); // g1 own +1
+    const scores = () => [gScore(s.students, s.events, 'g1'), gScore(s.students, s.events, 'g2')];
+    expect(scores()).toEqual([3, 1]);
+    s = reducer(s, { type: 'moveStudent', sid: 's1', gid: 'g2' });
+    s = reducer(s, { type: 'moveStudent', sid: 's5', gid: 'g1' });
+    expect(scores()).toEqual([2, 2]); // 小明's 2 went to g2, 丽丽's 1 came to g1; g1 keeps its own +1
+    s = reducer(s, { type: 'moveStudent', sid: 's1', gid: 'g1' });
+    s = reducer(s, { type: 'moveStudent', sid: 's5', gid: 'g2' });
+    expect(scores()).toEqual([3, 1]); // round trip restores the start
+  });
+
+  it("marking a scored student absent takes their points out of the group until they're back", () => {
+    let s = boot();
+    s = reducer(s, { type: 'scoreStudent', sid: 's1', d: 1, at });
+    s = reducer(s, { type: 'toggleAttendance', sid: 's1', at }); // → absent
+    expect(gScore(s.students, s.events, 'g1')).toBe(0);
+    s = reducer(s, { type: 'toggleAttendance', sid: 's1', at }); // → present
+    expect(gScore(s.students, s.events, 'g1')).toBe(1);
   });
 });
 
@@ -363,7 +388,7 @@ describe('课堂日志 (status log + 任意单条撤销)', () => {
     s = reducer(s, { type: 'undoEvent', eventId: 1 });
     expect(s.events.map((e) => e.id)).toEqual([2, 3]);
     expect(sScore(s.events, 's1')).toBe(-1); // 个人分回退了 id1 的 +1
-    expect(gScore(s.events, 'g1')).toBe(0); // 组分同一事件同时回退（原子性）
+    expect(gScore(s.students, s.events, 'g1')).toBe(0); // 组分同一事件同时回退（原子性）
   });
 
   it('undoEvent with an unknown id is a no-op', () => {
@@ -403,7 +428,7 @@ describe('背书自动加分（「已背完」在一节课内绑定唯一 1 分�
     let s = boot();
     s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完', at });
     expect(sScore(s.events, 's1')).toBe(1);
-    expect(gScore(s.events, 'g1')).toBe(1);
+    expect(gScore(s.students, s.events, 'g1')).toBe(1);
     expect(reciteEvents(s, 's1')).toHaveLength(1);
     expect(reciteEvents(s, 's1')[0]).toMatchObject({ tt: 'student', tid: 's1', g: 'g1', d: 1, createdAt: at });
   });
@@ -425,7 +450,7 @@ describe('背书自动加分（「已背完」在一节课内绑定唯一 1 分�
     s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完', at: at2 });
     expect(sScore(s.events, 's1')).toBe(1); // 多轮往返后仍只有 1 分
     expect(reciteEvents(s, 's1')).toHaveLength(1);
-    expect(gScore(s.events, 'g1')).toBe(1);
+    expect(gScore(s.students, s.events, 'g1')).toBe(1);
   });
 
   it('收回只删背书来源的事件，手动加减分不受影响', () => {
@@ -470,8 +495,8 @@ describe('背书自动加分（「已背完」在一节课内绑定唯一 1 分�
     let s = boot();
     s = reducer(s, { type: 'moveStudent', sid: 's1', gid: 'g2' });
     s = reducer(s, { type: 'setRecite', sid: 's1', v: '已背完', at });
-    expect(gScore(s.events, 'g2')).toBe(1);
-    expect(gScore(s.events, 'g1')).toBe(0);
+    expect(gScore(s.students, s.events, 'g2')).toBe(1);
+    expect(gScore(s.students, s.events, 'g1')).toBe(0);
   });
 });
 
@@ -901,7 +926,7 @@ describe('buildEditSession (编辑上课记录: reopen a committed session)', ()
     // scores derived from the rebuilt event stream match the committed ledger
     expect(sScore(s.events, 's1')).toBe(2);
     expect(sScore(s.events, 's2')).toBe(1);
-    expect(gScore(s.events, 'sg1')).toBe(4); // 小明2 + 小红1 + 组1
+    expect(gScore(s.students, s.events, 'sg1')).toBe(4); // 小明2 + 小红1 + 组1
     expect(s.nid).toBe(s.events.length + 1);
   });
 

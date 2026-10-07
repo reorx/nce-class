@@ -229,6 +229,8 @@ export const scoreEvents = sqliteTable('score_events', {
     .references(() => classSessions.id),
   targetType: text('target_type').notNull(), // group | student
   targetId: text('target_id').notNull(),
+  // Group the target was in when the event fired — history only. Group scores
+  // follow the final session_memberships instead (组分随人走, app.ts sessionGroupScores).
   sessionGroupId: text('session_group_id').references(() => sessionGroups.id),
   delta: integer('delta').notNull(), // +1 or -1
   createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),

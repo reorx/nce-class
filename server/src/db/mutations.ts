@@ -470,8 +470,8 @@ export function saveGrouping(sqlite: DB, classId: string, groups: GroupInput[]):
  * Write one session's ledger rows against an EXISTING class_sessions id:
  * ③ snapshot session_groups (building a clientId→sessionGroupId map),
  * ④ session_memberships (absent ⇒ null group, decision 8), ⑤ score_events
- * (group events' target_id + every event's session_group_id resolved via the
- * map so buildRecap's nested query matches), ⑥ check_records, ⑦ 奖章 tags.
+ * (group events' target_id + every event's fire-time session_group_id resolved
+ * via the map), ⑥ check_records, ⑦ 奖章 tags.
  * Shared by the end-class commit (fresh id) and 编辑上课记录 overwrite (preserved
  * id). NOT a transaction itself — the caller wraps it.
  *

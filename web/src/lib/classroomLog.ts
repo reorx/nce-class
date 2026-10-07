@@ -18,7 +18,7 @@ export interface LogLine {
   icon: string;
   who: string; // 主体：学生名或组名
   action: string; // '+1' / '−1' / '背书 → 已背完' / '标记未到' …
-  detail?: string; // 个人加减分的组同步说明
+  detail?: string; // 个人加减分的来源说明（背书自动加分）
   eventId?: number; // present → an undoable score event
   tone: 'plus' | 'minus' | 'neutral';
 }
@@ -31,8 +31,9 @@ export function buildLogLines(s: Pick<ClassroomSession, 'students' | 'groups' | 
   const lines: LogLine[] = s.events.map((e) => {
     const sign = e.d > 0 ? '+1' : '−1';
     const tone = e.d > 0 ? ('plus' as const) : ('minus' as const);
-    // 背书自动加分标注来源；未分组学生的事件不计任何组分 → 没有同步说明
-    const parts = [...(e.src === 'recite' ? ['背书自动加分'] : []), ...(e.g ? [`${groupName(e.g)} 同步 ${sign}`] : [])];
+    // 背书自动加分标注来源。不写「某组 同步」：组分随学生当前所在组走，
+    // 加分时的组（e.g）调组后就不再代表这一分算在哪组。
+    const detail = e.src === 'recite' ? '背书自动加分' : undefined;
     return e.tt === 'student'
       ? {
           id: e.id,
@@ -40,7 +41,7 @@ export function buildLogLines(s: Pick<ClassroomSession, 'students' | 'groups' | 
           icon: '⭐',
           who: studentName(e.tid),
           action: sign,
-          detail: parts.length ? parts.join(' · ') : undefined,
+          detail,
           eventId: e.id,
           tone,
         }
