@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ClassDetail } from './api';
+import type { ClassDetail } from '../api/classes';
 import { addGroup, moveStudent, removeGroup, renameGroup, toModel, toPayload } from './grouping';
 
 // Minimal class-detail slice mirroring the 分组方案 tab's inputs.

@@ -1,4 +1,4 @@
-import type { ClassListItem } from './api';
+import type { ClassListItem } from '../api/classes';
 
 /** 已归档班级列表页（首页「n 个归档」入口 / 已归档班级详情页的返回链接）。 */
 export const ARCHIVED_CLASSES_URL = '/classes?is_archived=true';

@@ -2,7 +2,7 @@ import { useRef, useState, type CSSProperties } from 'react';
 import { toBlob, toPng } from 'html-to-image';
 import { RecapCardV3 } from './RecapCardV3';
 import { useToast } from './Toast';
-import type { Recap } from '../lib/api';
+import type { Recap } from '../api/sessions';
 import { dateLabel } from '../lib/recapCard';
 import { GREEN } from '../lib/theme';
 

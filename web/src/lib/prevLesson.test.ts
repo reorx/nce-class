@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Recap, Session } from './api';
+import type { Recap, Session } from '../api/sessions';
 import { prevLessonGroups, prevLessonInfo, prevLessonStars } from './prevLesson';
 
 function mkSession(over: Partial<Session>): Session {

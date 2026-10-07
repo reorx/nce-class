@@ -11,7 +11,7 @@
 // gScore / stars / warned) and are reused verbatim.
 // ---------------------------------------------------------------------------
 
-import type { CommitPayload, SessionDetail } from './api';
+import type { CommitPayload, SessionDetail } from '../api/sessions';
 import type { Homework, Recitation, SEvent, SGroup, SStudent } from './session';
 import type { SessionConfig } from './setup';
 import { normalizeTagName, tagKey } from './tags';
@@ -529,6 +529,12 @@ export function listCommitBackups(store: KVStore | null = defaultStore()): Commi
     .sort((x, y) => y.savedAt.localeCompare(x.savedAt));
 }
 
+/** This session's backup entry (the payload last frozen for it), or null. */
+export function loadCommitBackup(clientSessionId: string, store: KVStore | null = defaultStore()): CommitBackup | null {
+  if (!store) return null;
+  return parseBackup(store.getItem(BACKUP_PREFIX + clientSessionId));
+}
+
 /** Drop one session's backup — call ONLY after the server confirmed the commit. */
 export function clearCommitBackup(clientSessionId: string, store: KVStore | null = defaultStore()): void {
   if (!store) return;
@@ -540,6 +546,24 @@ export function clearCommitBackup(clientSessionId: string, store: KVStore | null
 }
 
 // ---- commit ---------------------------------------------------------------
+
+/**
+ * 结束课堂这一次提交的冻结内容。prev 是上次冻结（即备份，见 loadCommitBackup）：
+ * 本地课堂没变就原样复用它的 payload——重试（含刷新页面后重试）不改 endedAt，
+ * clientSessionId 本就随课堂不变；失败后老师继续上课（课堂内容变了）才按当前时刻重新组装。
+ */
+export function freezeCommit(
+  prev: { session: ClassroomSession; payload: CommitPayload } | null,
+  session: ClassroomSession,
+  now: string,
+): { session: ClassroomSession; payload: CommitPayload } {
+  const same =
+    prev != null &&
+    prev.payload.clientSessionId === session.clientSessionId &&
+    (prev.session === session || JSON.stringify(prev.session) === JSON.stringify(session));
+  if (same) return { session, payload: prev.payload };
+  return { session, payload: buildCommitPayload(session, previewEndedAt(session) ?? now) };
+}
 
 /** Assemble the one-shot commit payload from the finished local session. */
 /**

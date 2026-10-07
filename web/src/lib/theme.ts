@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import type { StudentStatus } from './api';
+import type { StudentStatus } from '../api/students';
 
 export const GREEN = '#2fb457';
 export const GREEN_DARK = '#279a49';

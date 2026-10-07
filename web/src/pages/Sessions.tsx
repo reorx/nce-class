@@ -1,17 +1,23 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useMemo, type CSSProperties } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import type { Me } from '../api/auth';
+import type { SessionListItem } from '../api/sessions';
+import { QueryBlock, RefreshStatus } from '../components/QueryState';
 import { SessionsTable } from '../components/SessionsTable';
 import { TopBar } from '../components/TopBar';
-import { api, type ClassListItem, type Me, type SessionListItem } from '../lib/api';
+import { useClassesQuery } from '../queries/classes';
+import { useSessionsQuery } from '../queries/sessions';
 
 /** Rebuild 'YYYY-MM-DD' from the split payload fields for naive string-order range checks. */
 const fullDate = (s: SessionListItem) => `${s.year}-${s.date}`;
 
-/** 管理页「课堂」：全校上课记录，按时间倒序，可按班级/日期范围过滤（纯前端，URL 可分享）。 */
+/** 管理页「课堂」：全校上课记录，按时间倒序，可按班级/日期范围过滤（纯前端，URL 可分享）。
+ *  课堂列表与班级下拉是两个独立的共享查询，并行读取。 */
 export function Sessions({ me }: { me: Me | null }) {
   const [params, setParams] = useSearchParams();
-  const [sessions, setSessions] = useState<SessionListItem[] | null>(null);
-  const [classes, setClasses] = useState<ClassListItem[]>([]);
+  const sessionsQuery = useSessionsQuery();
+  const sessions = sessionsQuery.data;
+  const classes = useClassesQuery().data ?? [];
 
   const classId = params.get('classId') ?? '';
   const from = params.get('from') ?? '';
@@ -26,20 +32,6 @@ export function Sessions({ me }: { me: Me | null }) {
     if (next.to) p.to = next.to;
     setParams(p, { replace: true });
   }
-
-  const reload = () =>
-    api
-      .listSessions()
-      .then(setSessions)
-      .catch(() => {});
-
-  useEffect(() => {
-    reload();
-    api
-      .classes()
-      .then(setClasses)
-      .catch(() => {});
-  }, []);
 
   const filtered = useMemo(() => {
     if (!sessions) return [];
@@ -63,6 +55,7 @@ export function Sessions({ me }: { me: Me | null }) {
               全校上课记录，最新在前
               {sessions &&
                 (hasFilter ? ` · 筛出 ${filtered.length} / ${sessions.length} 节` : ` · 共 ${sessions.length} 节`)}
+              <RefreshStatus query={sessionsQuery} style={{ marginLeft: 10 }} />
             </div>
           </div>
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -101,12 +94,15 @@ export function Sessions({ me }: { me: Me | null }) {
           </div>
         </div>
 
-        <SessionsTable
-          sessions={filtered}
-          showClass
-          reload={reload}
-          emptyText={sessions === null ? '加载中…' : hasFilter ? '没有符合筛选条件的课堂记录' : '还没有上课记录'}
-        />
+        <QueryBlock query={sessionsQuery} what="上课记录">
+          {() => (
+            <SessionsTable
+              sessions={filtered}
+              showClass
+              emptyText={hasFilter ? '没有符合筛选条件的课堂记录' : '还没有上课记录'}
+            />
+          )}
+        </QueryBlock>
       </div>
     </div>
   );

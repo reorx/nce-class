@@ -1,18 +1,20 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { ApiError } from '../api/client';
+import type { TeacherItem } from '../api/teachers';
 import { GroupEditPopover } from '../components/GroupEditMenu';
 import { Markdown } from '../components/Markdown';
+import { LoadErrorBlock } from '../components/QueryState';
 import { TagPicker } from '../components/TagPicker';
 import { useToast } from '../components/Toast';
-import { ApiError, api, type ClassDetail, type TeacherItem } from '../lib/api';
+import { bootPlan, settleBoot } from '../lib/classroomBoot';
 import { mergeTagOptions, tagKey } from '../lib/tags';
 import {
   applyStartTime,
-  buildClassroomSession,
-  buildCommitPayload,
-  buildEditSession,
   clearCommitBackup,
   clearSession,
+  freezeCommit,
+  loadCommitBackup,
   loadSession,
   newClientSessionId,
   nowSql,
@@ -32,8 +34,12 @@ import { allSelected, dragTargets, someSelected, toggleAll, toggleOne } from '..
 import { lessonLabel as fmtLessonLabel } from '../lib/lesson';
 import { HomeworkSidebar } from '../components/HomeworkSidebar';
 import { PrevLessonContent } from '../components/PrevLessonContent';
-import { configFromDetail } from '../lib/setup';
 import { displayZoom } from '../lib/zoom';
+import { useMeQuery, useVerifyPasswordMutation } from '../queries/auth';
+import { useClassQuery, useLatestClassQuery, useUpdateClassNotesMutation } from '../queries/classes';
+import { useCommitSessionMutation, useLatestSessionQuery, useOverwriteSessionMutation } from '../queries/sessions';
+import { useTagsQuery } from '../queries/tags';
+import { useTeachersQuery } from '../queries/teachers';
 import {
   GRAY,
   GROUP_COLORS,
@@ -63,16 +69,30 @@ const NUM = "'Baloo 2','Nunito','PingFang SC',sans-serif";
 /** Parse a naive 'YYYY-MM-DD HH:mm:ss' as local wall-clock ms. */
 const parseLocal = (t: string) => Date.parse(t.replace(' ', 'T'));
 
+/** 进入判定按「班级 + 查询串」做一次；换了实体就整页重来（本地课堂从存储恢复，不丢）。 */
 export function Classroom() {
   const { id = 'c1' } = useParams();
-  const nav = useNavigate();
   const loc = useLocation();
+  return <ClassroomPage key={`${id}${loc.search}`} id={id} search={loc.search} />;
+}
+
+type Phase = 'loading' | 'ready' | 'redirect' | 'conflict' | 'error';
+
+function ClassroomPage({ id, search }: { id: string; search: string }) {
+  const nav = useNavigate();
   const toast = useToast();
 
-  const [session, setSession] = useState<ClassroomSession | null>(null);
-  // 'loading' until we know whether to resume / boot / redirect (decision 13);
-  // 'conflict' = 编辑 blocked because another in-progress session holds the slot.
-  const [phase, setPhase] = useState<'loading' | 'ready' | 'redirect' | 'conflict'>('loading');
+  // ---- boot (lib/classroomBoot): resume from store · else edit_id / URL-param boot · else → 课前配置 ----
+  // 本地恢复同步完成，首帧即是课堂，不等任何服务器读取（断网照常上课）。
+  const [plan] = useState(() => bootPlan(loadSession(id), search));
+  const [session, setSession] = useState<ClassroomSession | null>(() =>
+    plan.kind === 'resume' ? plan.session : null,
+  );
+  // 'loading' = 等服务器数据建本地课堂（edit_id / URL 开课）；'conflict' = 编辑被进行中的课堂拦下；
+  // 'error' = 建课堂所需的读取失败（可重试）。
+  const [phase, setPhase] = useState<Phase>(() =>
+    plan.kind === 'resume' ? 'ready' : plan.kind === 'conflict' ? 'conflict' : plan.kind === 'setup' ? 'redirect' : 'loading',
+  );
   const [view, setView] = useState<View>('board');
   const [openId, setOpenId] = useState<string | null>(null);
   const [openGid, setOpenGid] = useState<string | null>(null);
@@ -83,14 +103,17 @@ export function Classroom() {
   const [showDiscard, setShowDiscard] = useState(false);
   const [discardPw, setDiscardPw] = useState('');
   const [discardErr, setDiscardErr] = useState('');
-  const [discardVerifying, setDiscardVerifying] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const verify = useVerifyPasswordMutation();
+  const discardVerifying = verify.isPending;
+  const commit = useCommitSessionMutation();
+  const overwrite = useOverwriteSessionMutation();
+  const submitting = commit.isPending || overwrite.isPending;
   const [nowMs, setNowMs] = useState(() => Date.now());
-  // 主讲老师 dropdown data (best-effort — the classroom itself stays offline-first)
-  const [teachers, setTeachers] = useState<TeacherItem[]>([]);
-  const [meId, setMeId] = useState('');
-  // org 奖章 tag 库 (best-effort likewise; 离线时下拉只剩本节课新加的 tag)
-  const [orgTags, setOrgTags] = useState<string[]>([]);
+  // 主讲老师下拉、当前老师、org 奖章库：共享查询，尽力而为——失败不阻断课堂（离线时下拉只剩当前值 / 本节课新加的 tag）。
+  const teachers = useTeachersQuery().data ?? [];
+  const meId = useMeQuery().data?.id ?? '';
+  const tagsData = useTagsQuery().data;
+  const orgTags = useMemo(() => (tagsData ?? []).map((t) => t.name), [tagsData]);
   const dragId = useRef<string | null>(null);
   // 投屏放大：>1440 宽（如 1920 投影）整体 zoom 等比放大（lib/zoom）
   const [zoom, setZoom] = useState(() => displayZoom(window.innerWidth));
@@ -100,96 +123,54 @@ export function Classroom() {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  // ---- boot: resume from store · else edit_id / URL-param boot · else → 课前配置 -------
+  // 需要服务器数据建课堂时（edit_id / URL 开课）才读取，且挂载时总是重读最新记录 / 名单——
+  // 不把旧缓存固化成编辑底稿或新课名单；数据到齐只定稿一次，之后的后台刷新不再碰本地课堂。
+  const needServer = phase === 'loading';
+  const editSource = useLatestSessionQuery(plan.kind === 'edit' ? plan.editId : undefined, { enabled: needServer });
+  const classSource = useLatestClassQuery(id, { enabled: needServer });
+  // 重试期间 isError 仍为 true，失败要以「失败且不在读取中」判定。
+  const failedRead = (q: { isError: boolean; isFetching: boolean }) => q.isError && !q.isFetching;
+  const sourcesFailed = failedRead(classSource) || (plan.kind === 'edit' && failedRead(editSource));
+  const sourcesReady =
+    classSource.isFetchedAfterMount &&
+    !classSource.isFetching &&
+    (plan.kind !== 'edit' || (editSource.isFetchedAfterMount && !editSource.isFetching));
+
   useEffect(() => {
-    const sp = new URLSearchParams(loc.search);
-    const editId = sp.get('edit_id');
-    const stored = loadSession(id);
-    if (stored) {
-      // The per-class slot holds at most one in-progress session. If we're asked
-      // to edit a DIFFERENT one than what's stored, that's a conflict — block it
-      // so we never clobber a live class (or another edit) mid-flight.
-      if (editId && stored.editOfSessionId !== editId) {
-        setPhase('conflict');
-        return;
-      }
-      setSession(stored);
-      setPhase('ready');
+    if (phase !== 'loading' || (plan.kind !== 'edit' && plan.kind !== 'url')) return;
+    if (sourcesFailed) {
+      setPhase('error');
       return;
     }
-    // 编辑上课记录: reopen a committed session by fetching its ledger + the class's
-    // current default grouping, then rebuild the editable local session.
-    if (editId) {
-      Promise.all([api.sessionDetail(editId), api.classDetail(id)])
-        .then(([detail, d]) => {
-          if (detail.classId !== id) {
-            setPhase('redirect');
-            return;
-          }
-          const defaultGrouping = d.groups.map((g) => ({
-            clientId: g.id,
-            name: g.name,
-            emoji: g.emoji,
-            orderIndex: g.orderIndex,
-            memberIds: g.memberIds,
-          }));
-          const fresh = buildEditSession(detail, defaultGrouping);
-          saveSession(fresh);
-          setSession(fresh);
-          setPhase('ready');
-        })
-        .catch(() => setPhase('redirect'));
+    if (!sourcesReady || !classSource.data) return;
+    // 建本地课堂前再读一次存储（StrictMode 重跑、晚到回复、别的标签页）：已有的一律优先。
+    const outcome = settleBoot(plan, {
+      classId: id,
+      stored: loadSession(id),
+      classDetail: classSource.data,
+      sessionDetail: editSource.data,
+      clientSessionId: newClientSessionId,
+      now: nowSql(),
+    });
+    if (outcome.kind === 'conflict' || outcome.kind === 'redirect') {
+      setPhase(outcome.kind);
       return;
     }
-    const lesson = sp.get('lesson');
-    const title = sp.get('title');
-    const duration = sp.get('duration');
-    if (lesson || title || duration) {
-      api
-        .classDetail(id)
-        .then((d) => {
-          const cfg = configFromDetail(d, {
-            lessonNumber: (lesson ?? '').replace(/[^0-9]/g, ''),
-            lessonTitle: title ?? '',
-            durationMin: Math.max(1, Number(duration) || 120),
-            className: d.name,
-          });
-          const fresh = buildClassroomSession(cfg, {
-            classId: id,
-            clientSessionId: newClientSessionId(),
-            startedAt: nowSql(),
-          });
-          saveSession(fresh);
-          setSession(fresh);
-          setPhase('ready');
-        })
-        .catch(() => setPhase('redirect'));
-      return;
-    }
-    setPhase('redirect');
-  }, [id, loc.search]);
+    if (outcome.kind === 'create') saveSession(outcome.session);
+    setSession(outcome.session);
+    setPhase('ready');
+  }, [phase, plan, id, sourcesFailed, sourcesReady, classSource.data, editSource.data]);
+
+  const retryBoot = () => {
+    setPhase('loading');
+    if (classSource.isError) void classSource.refetch();
+    if (editSource.isError) void editSource.refetch();
+  };
 
   // Persist after every local change (offline-first).
   useEffect(() => {
     if (session) saveSession(session);
   }, [session]);
-
-  // Same-org teachers + self, for the 主讲老师 dropdown in the info dialog.
-  // A failed fetch just leaves the current choice as the only option.
-  useEffect(() => {
-    api
-      .teachers()
-      .then(setTeachers)
-      .catch(() => {});
-    api
-      .me()
-      .then((m) => setMeId(m.id))
-      .catch(() => {});
-    api
-      .orgTags()
-      .then((ts) => setOrgTags(ts.map((t) => t.name)))
-      .catch(() => {});
-  }, []);
 
   // 1s tick drives the countdown off the persisted startedAt (survives refresh).
   // 补录课堂 (backfill) isn't happening now — no ticking; the header shows a
@@ -204,6 +185,10 @@ export function Classroom() {
 
   if (phase === 'redirect') return <Navigate to={`/classes/${id}/setup`} replace />;
   if (phase === 'conflict') return <EditConflict classId={id} nav={nav} />;
+  if (phase === 'error') {
+    const error = classSource.error ?? editSource.error;
+    return <BootError error={error} what={plan.kind === 'edit' ? '课堂' : '班级'} onRetry={retryBoot} onBack={() => nav(`/classes/${id}`)} />;
+  }
   if (phase === 'loading' || !session) return <Splash />;
 
   const { students, groups, events } = session;
@@ -277,40 +262,40 @@ export function Classroom() {
 
   // ---- end class: commit the whole session once, then to 上课记录 ----------
   const editId = session.editOfSessionId;
-  const confirmEnd = () => {
+  const confirmEnd = async () => {
     if (submitting) return;
-    setSubmitting(true);
-    // Live class ⇒ endedAt is the wall clock at 结束; 补录/编辑 use their fixed
-    // preview time (single-sourced with the 结束确认 dialog).
-    const endedAt = previewEndedAt(session) ?? nowSql();
-    const payload = buildCommitPayload(session, endedAt);
+    // 冻结本次提交（lib/classroomStore freezeCommit）：实时课 endedAt = 此刻，补录 / 编辑用固定预览时间；
+    // 同一份课堂重试（含刷新后）原样复用上次备份的 payload，不改 endedAt 与 clientSessionId。
+    const frozen = freezeCommit(loadCommitBackup(session.clientSessionId), session, nowSql());
+    const { payload } = frozen;
     // Copy to the collision-free backup slot BEFORE the POST: a failed or
     // interrupted submit must never lose the lesson, even if a new session for
     // this class later overwrites nce.classroom.<classId>. Cleared only after
     // the server confirms; clientSessionId keeps any later re-POST idempotent.
-    saveCommitBackup({ session, payload });
-    // 编辑上课记录 overwrites the existing session in place; a normal 结束课堂 creates one.
-    (editId ? api.overwriteSession(editId, payload) : api.commitSession(id, payload))
-      .then((result) => {
-        clearCommitBackup(payload.clientSessionId);
-        clearSession(id);
-        if (editId) {
-          toast('本节课已更新', 'success');
-          nav(`/classes/${id}/sessions/${editId}`);
-        } else if (session.homeworkContent?.trim()) {
-          // 课堂里已写好作业（随 commit 落库）→ 不再引导去作业 tab
-          toast('本节课已保存 · 作业已布置', 'success');
-          nav(`/classes/${id}/sessions/${result.sessionId}`);
-        } else {
-          toast('本节课已保存 · 请布置作业', 'success');
-          // land on 作业布置 (overview is now the default tab); the toast nudges homework
-          nav(`/classes/${id}/sessions/${result.sessionId}?tab=homework`);
-        }
-      })
-      .catch((e) => {
-        setSubmitting(false);
-        toast(`${e instanceof ApiError ? e.message : '保存失败，请重试'}（课堂数据已在本机备份，不会丢失）`, 'error');
-      });
+    saveCommitBackup(frozen);
+    try {
+      // 编辑上课记录 overwrites the existing session in place; a normal 结束课堂 creates one.
+      // 成功后的缓存刷新失败不会让这里变成失败；CommitResult 不是 SessionDetail，详情页自己完整读取。
+      const result = editId
+        ? await overwrite.mutateAsync({ sessionId: editId, classId: id, payload })
+        : await commit.mutateAsync({ classId: id, payload });
+      clearCommitBackup(payload.clientSessionId);
+      clearSession(id);
+      if (editId) {
+        toast('本节课已更新', 'success');
+        nav(`/classes/${id}/sessions/${editId}`);
+      } else if (session.homeworkContent?.trim()) {
+        // 课堂里已写好作业（随 commit 落库）→ 不再引导去作业 tab
+        toast('本节课已保存 · 作业已布置', 'success');
+        nav(`/classes/${id}/sessions/${result.sessionId}`);
+      } else {
+        toast('本节课已保存 · 请布置作业', 'success');
+        // land on 作业布置 (overview is now the default tab); the toast nudges homework
+        nav(`/classes/${id}/sessions/${result.sessionId}?tab=homework`);
+      }
+    } catch (e) {
+      toast(`${e instanceof ApiError ? e.message : '保存失败，请重试'}（课堂数据已在本机备份，不会丢失）`, 'error');
+    }
   };
 
   // 放弃本节课: the only self-rescue for a broken local session (decision 12).
@@ -318,23 +303,19 @@ export function Classroom() {
   const openDiscard = () => {
     setDiscardPw('');
     setDiscardErr('');
-    setDiscardVerifying(false);
     setShowDiscard(true);
   };
-  const discard = () => {
+  // 密码类 Mutation 完成即 reset，错误只能从 mutateAsync 的 rejection 拿。
+  const discard = async () => {
     if (discardVerifying || !discardPw) return;
-    setDiscardVerifying(true);
     setDiscardErr('');
-    api
-      .verifyPassword(discardPw)
-      .then(() => {
-        clearSession(id);
-        nav(`/classes/${id}?tab=sessions`);
-      })
-      .catch((e) => {
-        setDiscardVerifying(false);
-        setDiscardErr(e instanceof ApiError && e.status === 403 ? '密码错误' : '验证失败，请重试');
-      });
+    try {
+      await verify.mutateAsync({ password: discardPw });
+      clearSession(id);
+      nav(`/classes/${id}?tab=sessions`);
+    } catch (e) {
+      setDiscardErr(e instanceof ApiError && e.status === 403 ? '密码错误' : '验证失败，请重试');
+    }
   };
 
   return (
@@ -1045,6 +1026,53 @@ function Splash() {
   );
 }
 
+/** 建本地课堂所需的读取失败（edit_id 的原始记录 / URL 开课的班级名单）：可重试，或回班级页。 */
+function BootError({
+  error,
+  what,
+  onRetry,
+  onBack,
+}: {
+  error: unknown;
+  what: string;
+  onRetry: () => void;
+  onBack: () => void;
+}) {
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: '#e9f3e4',
+        fontFamily: FONT,
+      }}
+    >
+      <LoadErrorBlock error={error} what={what} onRetry={onRetry} />
+      <button
+        onClick={onBack}
+        style={{
+          height: 40,
+          padding: '0 20px',
+          borderRadius: 12,
+          border: '2px solid #dfe6da',
+          background: '#fff',
+          color: '#5b6672',
+          fontWeight: 800,
+          fontSize: 15,
+          fontFamily: 'inherit',
+          cursor: 'pointer',
+        }}
+      >
+        返回班级
+      </button>
+    </div>
+  );
+}
+
 // Shown when 编辑上课记录 is blocked: the per-class classroom slot already holds a
 // live class (or a different session's edit). We never silently clobber it.
 function EditConflict({ classId, nav }: { classId: string; nav: (to: string) => void }) {
@@ -1215,8 +1243,8 @@ interface Seg {
 
 // ---- 上节课 popover: header button opens a downward card with the previous
 // session's 日期/课次/作业 for quick reference. Content = shared PrevLessonContent
-// (also used by 课前配置的「上节课回顾」卡); it fetches on mount, so the panel
-// mounts lazily on first open and stays mounted (hidden) to cache for the lesson.
+// (also used by 课前配置的「上节课回顾」卡); its queries start on mount, so the panel
+// mounts lazily on first open (no request before that) and then stays mounted (hidden).
 function PrevLessonButton({ classId }: { classId: string }) {
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -1283,38 +1311,30 @@ function PrevLessonButton({ classId }: { classId: string }) {
 }
 
 // ---- 班级信息 view: left = class/lesson facts, right = 班级资源 markdown ----
-// Notes deliberately live on the server (not in the offline session snapshot),
-// so this view fetches fresh on entry and saving needs the network.
+// Notes deliberately live on the server (not in the offline session snapshot):
+// this view reads the shared class detail (cached, refreshed in the background
+// when stale) and saving needs the network.
 function ClassInfoView({ classId, session }: { classId: string; session: ClassroomSession }) {
   const toast = useToast();
-  const [detail, setDetail] = useState<ClassDetail | null>(null);
-  const [failed, setFailed] = useState(false);
+  const classQuery = useClassQuery(classId);
+  const detail = classQuery.data;
+  const failed = !detail && classQuery.isError;
+  const saveNotes = useUpdateClassNotesMutation();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
-  const [busy, setBusy] = useState(false);
+  const busy = saveNotes.isPending;
 
-  const load = () => {
-    setFailed(false);
-    api
-      .classDetail(classId)
-      .then(setDetail)
-      .catch(() => setFailed(true));
-  };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(load, [classId]);
+  const load = () => void classQuery.refetch();
 
-  const save = () => {
+  const save = async () => {
     if (busy) return;
-    setBusy(true);
-    api
-      .updateClassNotes(classId, draft)
-      .then((d) => {
-        setDetail(d);
-        setEditing(false);
-        toast('班级资源已保存');
-      })
-      .catch(() => toast('保存失败，请重试', 'error'))
-      .finally(() => setBusy(false));
+    try {
+      await saveNotes.mutateAsync({ classId, notes: draft });
+      setEditing(false);
+      toast('班级资源已保存');
+    } catch {
+      toast('保存失败，请重试', 'error');
+    }
   };
 
   const startedHm = session.startedAt.slice(11, 16);

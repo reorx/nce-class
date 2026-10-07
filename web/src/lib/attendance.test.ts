@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ClassAttendance } from './api';
+import type { ClassAttendance } from '../api/attendance';
 import {
   buildAttendanceCsv,
   classAttendanceStats,

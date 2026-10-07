@@ -1,5 +1,5 @@
 // /admin 管理页的纯派生逻辑：删除班级弹窗的影响面文案 + 修改成员密码 / 添加老师表单校验。
-import type { AdminClassItem } from './api';
+import type { AdminClassItem } from '../api/admin';
 import { fmtMoney } from './money';
 
 const MIN_PASSWORD_LENGTH = 6; // 与服务端 provision.MIN_PASSWORD_LENGTH 同口径

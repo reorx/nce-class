@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, type Me } from '../lib/api';
+import type { Me } from '../api/auth';
+import { useSignOut } from './SignOut';
+import { useToast } from './Toast';
 
 const navBtn = (active: boolean): React.CSSProperties => ({
   padding: '7px 13px',
@@ -21,7 +23,19 @@ export function TopBar({
   active?: 'classes' | 'sessions' | 'billing' | 'teachers' | 'admin';
 }) {
   const [open, setOpen] = useState(false);
+  const { signOut, pending } = useSignOut();
+  const toast = useToast();
   const name = me?.name ?? '王莉';
+
+  // 退出成功：清空服务端缓存并跳登录页（本地课堂草稿保留）。失败如实提示，会话保持原样。
+  async function onSignOut() {
+    if (pending) return;
+    try {
+      await signOut();
+    } catch (e) {
+      toast(`退出失败：${e instanceof Error ? e.message : '请重试'}`, 'error');
+    }
+  }
   return (
     <div
       style={{
@@ -143,15 +157,8 @@ export function TopBar({
                 </button>
               ))}
               <div style={{ height: 1, background: '#f1f3f6', margin: '5px 0' }} />
-              <button
-                style={menuItem('#cf4444')}
-                onClick={async () => {
-                  await api.logout().catch(() => {});
-                  // Full reload clears in-memory auth state and re-runs the guard.
-                  window.location.assign('/login');
-                }}
-              >
-                退出登录
+              <button style={menuItem('#cf4444')} onClick={onSignOut} disabled={pending}>
+                {pending ? '退出中…' : '退出登录'}
               </button>
             </div>
           </>

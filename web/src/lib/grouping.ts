@@ -1,4 +1,4 @@
-import type { ClassDetail, GroupSave } from './api';
+import type { ClassDetail, GroupSave } from '../api/classes';
 
 // Editable in-memory model for the 分组方案 tab. Operations are pure and return
 // a fresh model so the component can optimistically apply then roll back on a

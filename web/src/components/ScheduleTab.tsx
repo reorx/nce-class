@@ -1,6 +1,7 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
-import { api, ApiError, type ScheduleItem } from '../lib/api';
+import { ApiError } from '../api/client';
+import type { ScheduleItem } from '../api/schedules';
 import { weekdayCN } from '../lib/attendance';
 import {
   addBrush,
@@ -22,7 +23,15 @@ import {
   type EditorState,
 } from '../lib/scheduleEditor';
 import { GREEN } from '../lib/theme';
+import {
+  useCreateScheduleMutation,
+  useDeleteScheduleMutation,
+  useScheduleQuery,
+  useSchedulesQuery,
+  useUpdateScheduleMutation,
+} from '../queries/schedules';
 import { Modal } from './Modal';
+import { LoadErrorBlock, LoadingBlock, QueryBlock, RefreshStatus } from './QueryState';
 import { useToast } from './Toast';
 
 // 时间刷配色：按刷子下标取色（mockup：蓝 / 橙 起步）。
@@ -37,86 +46,92 @@ const todayStr = () => {
 
 const md = (d: string) => d.slice(5); // YYYY-MM-DD → MM-DD
 
+// 编辑状态：null = 列表；{ id: null } = 新建；{ id } = 编辑已有周期（详情到达后才建立编辑器草稿）。
+type Editing = { id: string | null; state: EditorState | null };
+
 export function ScheduleTab({ classId, isArchived }: { classId: string; isArchived: boolean }) {
   const toast = useToast();
-  const [schedules, setSchedules] = useState<ScheduleItem[] | null>(null);
-  // list 视图，或编辑器（editingId = null 表示新建）
-  const [editor, setEditor] = useState<{ state: EditorState; editingId: string | null } | null>(null);
+  const schedulesQuery = useSchedulesQuery(classId);
+  const [editing, setEditing] = useState<Editing | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ScheduleItem | null>(null);
-  const [busy, setBusy] = useState(false);
+  const create = useCreateScheduleMutation();
+  const update = useUpdateScheduleMutation();
+  const del = useDeleteScheduleMutation();
+  const busy = create.isPending || update.isPending || del.isPending;
 
-  const reload = () =>
-    api
-      .listSchedules(classId)
-      .then(setSchedules)
-      .catch(() => toast('排班列表加载失败', 'error'));
-
+  // 编辑已有周期：编辑 ID 决定详情查询。只用新鲜的详情建立草稿（过期缓存先后台刷新），
+  // 且每次打开只初始化一次——之后的后台刷新不会重置日历上的修改。
+  const detailQuery = useScheduleQuery(editing?.id ?? undefined);
+  const detail = detailQuery.data;
+  const detailReady = detail !== undefined && detail.id === editing?.id && !detailQuery.isStale;
   useEffect(() => {
-    reload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [classId]);
+    if (!detailReady || editing?.state) return;
+    setEditing({
+      id: detail.id,
+      state: initEditor({
+        name: detail.name,
+        lessons: detail.lessons.map((l) => ({ date: l.date, startTime: l.startTime, endTime: l.endTime })),
+        today: todayStr(),
+      }),
+    });
+  }, [detailReady, detail, editing?.state]);
 
-  async function openEditor(item: ScheduleItem | null) {
+  function openEditor(item: ScheduleItem | null) {
     if (!item) {
       if (isArchived) return;
-      setEditor({ state: initEditor({ today: todayStr() }), editingId: null });
+      setEditing({ id: null, state: initEditor({ today: todayStr() }) });
       return;
     }
-    try {
-      const d = await api.scheduleDetail(item.id);
-      setEditor({
-        state: initEditor({
-          name: d.name,
-          lessons: d.lessons.map((l) => ({ date: l.date, startTime: l.startTime, endTime: l.endTime })),
-          today: todayStr(),
-        }),
-        editingId: d.id,
-      });
-    } catch {
-      toast('课程周期加载失败', 'error');
-    }
+    setEditing({ id: item.id, state: null });
   }
 
   async function save(state: EditorState, editingId: string | null) {
     if (busy || !canSave(state) || (isArchived && !editingId)) return;
-    setBusy(true);
     try {
-      if (editingId) await api.updateSchedule(editingId, toPayload(state));
-      else await api.createSchedule(classId, toPayload(state));
-      await reload();
-      setEditor(null);
+      if (editingId) await update.mutateAsync({ scheduleId: editingId, classId, input: toPayload(state) });
+      else await create.mutateAsync({ classId, input: toPayload(state) });
+      setEditing(null);
       toast(editingId ? '课程周期已保存' : '课程周期已创建');
     } catch (e) {
       toast(e instanceof ApiError ? e.message : '保存失败，请重试', 'error');
-    } finally {
-      setBusy(false);
     }
   }
 
   async function confirmDelete() {
     if (!pendingDelete || busy) return;
-    setBusy(true);
     try {
-      await api.deleteSchedule(pendingDelete.id);
-      await reload();
+      await del.mutateAsync({ scheduleId: pendingDelete.id, classId });
       toast(`已删除「${pendingDelete.name}」`);
       setPendingDelete(null);
     } catch (e) {
       toast(e instanceof ApiError ? e.message : '删除失败，请重试', 'error');
-    } finally {
-      setBusy(false);
     }
   }
 
-  if (editor && (!isArchived || editor.editingId)) {
+  if (editing && (!isArchived || editing.id)) {
+    if (!editing.state) {
+      return (
+        <div style={{ background: '#fff', border: '1px solid #e7e9ee', borderRadius: 14, padding: '18px 22px' }}>
+          <button style={smallGhostBtn} onClick={() => setEditing(null)}>
+            返回列表
+          </button>
+          {detailQuery.isError && !detailQuery.isFetching ? (
+            <LoadErrorBlock error={detailQuery.error} what="课程周期" onRetry={detailQuery.refetch} />
+          ) : (
+            <LoadingBlock />
+          )}
+        </div>
+      );
+    }
+    const { id, state } = editing;
     return (
       <ScheduleEditor
-        state={editor.state}
-        setState={(s) => setEditor({ ...editor, state: s })}
-        editing={editor.editingId != null}
+        state={state}
+        setState={(next) => setEditing({ id, state: next })}
+        editing={id != null}
         busy={busy}
-        onCancel={() => setEditor(null)}
-        onSave={() => save(editor.state, editor.editingId)}
+        onCancel={() => setEditing(null)}
+        onSave={() => save(state, id)}
       />
     );
   }
@@ -125,7 +140,10 @@ export function ScheduleTab({ classId, isArchived }: { classId: string; isArchiv
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
         <div>
-          <div style={{ fontWeight: 700, fontSize: 16, color: '#1e2430' }}>课程周期（排班表）</div>
+          <div style={{ fontWeight: 700, fontSize: 16, color: '#1e2430' }}>
+            课程周期（排班表）
+            <RefreshStatus query={schedulesQuery} style={{ marginLeft: 10 }} />
+          </div>
           <div style={{ fontSize: 12.5, color: '#7a828f', marginTop: 3 }}>
             {isArchived ? '班级已归档，无法新建课程周期；如需排课，请先取消归档。' : '日历点选排课，一个周期对应一次收费；收款在顶部「收银台」按周期发起。'}
           </div>
@@ -155,7 +173,10 @@ export function ScheduleTab({ classId, isArchived }: { classId: string; isArchiv
         </button>
       </div>
 
-      {schedules && schedules.length === 0 && (
+      <QueryBlock query={schedulesQuery} what="课程周期">
+        {(schedules) => (
+          <>
+      {schedules.length === 0 && (
         <div
           style={{
             textAlign: 'center',
@@ -172,7 +193,7 @@ export function ScheduleTab({ classId, isArchived }: { classId: string; isArchiv
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {(schedules ?? []).map((s) => (
+        {schedules.map((s) => (
           <div
             key={s.id}
             style={{
@@ -236,6 +257,9 @@ export function ScheduleTab({ classId, isArchived }: { classId: string; isArchiv
           </div>
         ))}
       </div>
+          </>
+        )}
+      </QueryBlock>
 
       <Modal open={!!pendingDelete} onClose={() => setPendingDelete(null)} title="删除课程周期">
         <div style={{ fontSize: 14, color: '#3c4451', lineHeight: 1.7 }}>
@@ -252,7 +276,7 @@ export function ScheduleTab({ classId, isArchived }: { classId: string; isArchiv
             style={{ ...primaryBtn, background: '#d94a4a', boxShadow: 'none', opacity: busy ? 0.6 : 1 }}
             onClick={confirmDelete}
           >
-            {busy ? '删除中…' : '删除'}
+            {del.isPending ? '删除中…' : '删除'}
           </button>
         </div>
       </Modal>

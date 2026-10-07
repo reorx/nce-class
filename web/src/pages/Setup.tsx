@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import type { TeacherItem } from '../api/teachers';
 import { GroupEditPopover } from '../components/GroupEditMenu';
 import { PrevLessonContent } from '../components/PrevLessonContent';
-import { api, type ClassDetail, type TeacherItem } from '../lib/api';
+import { LoadErrorBlock } from '../components/QueryState';
 import {
   buildClassroomSession,
   loadSession,
@@ -25,6 +26,9 @@ import {
   sums,
   type SetupState,
 } from '../lib/setup';
+import { useMeQuery } from '../queries/auth';
+import { useLatestClassQuery } from '../queries/classes';
+import { useTeachersQuery } from '../queries/teachers';
 
 // 课前配置 · 开始课堂 (§7.2). Boots from the class's default grouping, lets the
 // teacher set lesson info + micro-adjust groups, then freezes a session snapshot
@@ -44,7 +48,11 @@ export function Setup() {
   const [params] = useSearchParams();
   const backfill = params.get('backfill') === '1';
 
-  const [detail, setDetail] = useState<ClassDetail | null>(null);
+  // 已有进行中的本地课堂 → 直接回课堂，不读取也不建新的（见 return 前的 Navigate）。
+  const [resuming] = useState(() => loadSession(id) != null);
+  // 课前配置的名单与分组必须是最新的：即便缓存新鲜也重读一次，读到后才建立配置草稿（只建一次）。
+  const classQuery = useLatestClassQuery(id, { enabled: !resuming });
+  const detail = classQuery.data;
   const [state, setState] = useState<SetupState | null>(null);
   const [lessonNo, setLessonNo] = useState('');
   const [lessonTitle, setLessonTitle] = useState('');
@@ -53,39 +61,23 @@ export function Setup() {
   const [dateStr, setDateStr] = useState(() => nowSql().slice(0, 10));
   const [timeStr, setTimeStr] = useState(() => nowSql().slice(11, 16));
   const [startErr, setStartErr] = useState('');
-  // 主讲老师: all same-org teachers, defaulting to the logged-in one.
-  const [teachers, setTeachers] = useState<TeacherItem[]>([]);
-  const [teacherId, setTeacherId] = useState('');
+  // 主讲老师: all same-org teachers, defaulting to the logged-in one (shared queries, best-effort).
+  const teachers = useTeachersQuery({ enabled: !resuming }).data ?? [];
+  const meId = useMeQuery().data?.id ?? '';
+  const [pickedTeacherId, setTeacherId] = useState('');
+  const teacherId = pickedTeacherId || meId;
   const [hoverZone, setHoverZone] = useState<string | null>(null);
   // 组编辑菜单：点表头开/关（gid + 定位锚点）
   const [edit, setEdit] = useState<{ gid: string; el: HTMLElement } | null>(null);
   const dragId = useRef<string | null>(null);
 
+  // 最新名单到达后建立一次配置草稿；之后的后台刷新不覆盖老师的调整。
+  const fresh = classQuery.isFetchedAfterMount && !classQuery.isFetching && !classQuery.isError;
   useEffect(() => {
-    // If a lesson is already in progress for this class, resume it rather than
-    // silently overwriting it with a fresh session (M3 — e.g. teacher hits Back
-    // to setup mid-class). 放弃本节课 in the classroom is the explicit reset.
-    if (loadSession(id)) {
-      nav(`/classes/${id}/classroom`, { replace: true });
-      return;
-    }
-    api
-      .classDetail(id)
-      .then((d) => {
-        setDetail(d);
-        setState(buildSetup(d));
-        setLessonNo(String((d.lastRecap?.lessonNumber ?? 0) + 1));
-      })
-      .catch(() => {});
-    api
-      .me()
-      .then((me) => setTeacherId((cur) => cur || me.id))
-      .catch(() => {});
-    api
-      .teachers()
-      .then(setTeachers)
-      .catch(() => {});
-  }, [id, nav]);
+    if (state || !fresh || !detail) return;
+    setState(buildSetup(detail));
+    setLessonNo(String((detail.lastRecap?.lessonNumber ?? 0) + 1));
+  }, [state, fresh, detail]);
 
   const s = sums(state ?? { groups: [], students: [], assign: {}, absent: {}, gidSeq: 1 });
 
@@ -126,6 +118,11 @@ export function Setup() {
     saveSession(session);
     nav(`/classes/${id}/classroom`);
   };
+
+  // If a lesson is already in progress for this class, resume it rather than
+  // silently overwriting it with a fresh session (M3 — e.g. teacher hits Back
+  // to setup mid-class). 放弃本节课 in the classroom is the explicit reset.
+  if (resuming) return <Navigate to={`/classes/${id}/classroom`} replace />;
 
   return (
     <div
@@ -173,8 +170,12 @@ export function Setup() {
         )}
       </div>
 
+      {!state && classQuery.isError && !classQuery.isFetching && (
+        <LoadErrorBlock error={classQuery.error} what="班级" onRetry={classQuery.refetch} />
+      )}
+
       {/* body */}
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 20, padding: '0 30px' }}>
+      <div style={{ flex: 1, minHeight: 0, display: state || !classQuery.isError ? 'flex' : 'none', gap: 20, padding: '0 30px' }}>
         {/* left rail */}
         <div
           style={{

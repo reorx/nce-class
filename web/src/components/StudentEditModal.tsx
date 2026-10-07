@@ -1,21 +1,25 @@
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
-import { Modal } from './Modal';
-import { useToast } from './Toast';
-import { api } from '../lib/api';
 import { validateStudentNameForm } from '../lib/studentName';
 import { GREEN } from '../lib/theme';
+import { useUpdateStudentMutation } from '../queries/students';
+import { Modal } from './Modal';
+import { useToast } from './Toast';
 
 // ---------------------------------------------------------------------------
 // 全局「编辑学生」弹窗：Provider 内部只挂一个 Modal 实例，任何页面（含 .map()
 // 循环里的卡片/表格行）通过 useStudentModal() 拿到的 open 函数触发。理由同
 // ToastProvider——省掉每页 hoist 一份 editing state 再把回调穿过循环的 plumbing。
 // 只做编辑：新建走各页面自己的表单，两者共用 lib/studentName 的校验。
+// 改名后的刷新由 useUpdateStudentMutation 负责（班级、档案、历史课堂、考勤、收费里的名字都会更新），
+// 调用页面不用再传 reload；onSaved 只作交互通知。
 // ---------------------------------------------------------------------------
 
 export interface StudentEditTarget {
   studentId: string;
   name: string;
   cnName: string | null;
+  /** 所属班级：只用来收窄缓存失效范围，不发给后端；不传则从缓存推断。 */
+  classId?: string;
 }
 
 type OpenFn = (target: StudentEditTarget, onSaved?: () => void) => void;
@@ -27,7 +31,8 @@ export function StudentModalProvider({ children }: { children: ReactNode }) {
   const [target, setTarget] = useState<StudentEditTarget | null>(null);
   const [name, setName] = useState('');
   const [cnName, setCnName] = useState('');
-  const [busy, setBusy] = useState(false);
+  const update = useUpdateStudentMutation();
+  const busy = update.isPending;
   const savedCb = useRef<(() => void) | undefined>(undefined);
 
   const open = useCallback<OpenFn>((t, onSaved) => {
@@ -43,16 +48,13 @@ export function StudentModalProvider({ children }: { children: ReactNode }) {
     if (!target || busy) return;
     const v = validateStudentNameForm({ name, cnName });
     if ('error' in v) return toast(v.error, 'error');
-    setBusy(true);
     try {
-      await api.updateStudent(target.studentId, v);
+      await update.mutateAsync({ studentId: target.studentId, classId: target.classId, input: v });
       toast('学生信息已更新');
       setTarget(null);
       savedCb.current?.();
     } catch {
       toast('保存失败，请重试', 'error');
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -93,7 +95,7 @@ export function StudentModalProvider({ children }: { children: ReactNode }) {
   );
 }
 
-/** `open(target, onSaved?)` — onSaved 由调用页面传自己的 reload()，Provider 不管刷新策略。 */
+/** `open(target, onSaved?)` — 刷新由 Mutation 完成；onSaved 只是保存成功后的交互通知（可不传）。 */
 export function useStudentModal(): OpenFn {
   return useContext(StudentModalCtx);
 }

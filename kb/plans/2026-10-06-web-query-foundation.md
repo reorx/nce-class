@@ -9,7 +9,7 @@ tags:
 
 # Plan 1：Web API 与 TanStack Query 基础层
 
-状态：设计已确认，待实施。本文是实施计划，不表示代码已完成。
+状态：已实施（2026-10-06，分支 `web-query-foundation`，未合并、未部署）。实施与计划的差异见文末「实施记录」。
 
 后续：[Plan 2：组件全量迁移](2026-10-06-web-query-component-migration.md)。两个 Plan 顺序执行；本次会话只写规划。
 
@@ -253,19 +253,34 @@ staleTime 到期只表示允许刷新，不是定时请求。聚焦/重连和手
 
 按 BDD/TDD 先写行为测试，再拆实现；测试目录放在 api/queries 对应模块旁。新增测试依赖用 pnpm add，优先沿用 Vitest；需要 hook DOM harness 时加 Testing Library 与 jsdom，不引入额外状态框架。
 
-- [ ] 先建立 HTTP 回归用例：cookie、JSON、204、错误 status/message、非 JSON 错误、取消、缺省字段与空值区别。
-- [ ] 拆分 47 个 API 和 DTO，建立旧出口；检查 URL、HTTP method、payload 与响应不变，重点 commit、cnName、金额分、可选 recalculate body。
-- [ ] 写 Query 行为用例后实现 keys、options、client、Provider：相同 key 并发去重，fresh 重挂载不请求，stale 后台刷新保留数据，gc 后才冷加载，不同 ID 隔离，取消透传。
-- [ ] 写完整失效矩阵用例后实现 Mutation 与 cache-effects，验证精确响应回写、跨领域失效、删除清理及兼容桥；断言用户可观察的数据变化，不只 mock invalidateQueries 调用次数。
-- [ ] 完成 auth hooks 与会话代次保护测试：401/403/网络错误分流、账号切换、晚到查询/Mutation 不污染新会话。
-- [ ] 完成按需查询、上节课依赖查询、考勤并发/回滚测试；不存在上节课时不请求空 ID。
-- [ ] 测试写成功读刷新失败仍为成功；敏感 variables 清理；后台查询不覆盖本地课堂或编辑草稿的集成约束由 Plan 2 补充。
-- [ ] 运行 Web 测试、类型检查、生产 build；用现有页面做兼容冒烟。Provider/旧桥改变运行行为，仍按 verification-guide 做浏览器验证。
-- [ ] 文档记录交付与未迁移范围，提交代码，不 push/部署。
+- [x] 先建立 HTTP 回归用例：cookie、JSON、204、错误 status/message、非 JSON 错误、取消、缺省字段与空值区别。
+- [x] 拆分 47 个 API 和 DTO，建立旧出口；检查 URL、HTTP method、payload 与响应不变，重点 commit、cnName、金额分、可选 recalculate body。
+- [x] 写 Query 行为用例后实现 keys、options、client、Provider：相同 key 并发去重，fresh 重挂载不请求，stale 后台刷新保留数据，gc 后才冷加载，不同 ID 隔离，取消透传。
+- [x] 写完整失效矩阵用例后实现 Mutation 与 cache-effects，验证精确响应回写、跨领域失效、删除清理及兼容桥；断言用户可观察的数据变化，不只 mock invalidateQueries 调用次数。
+- [x] 完成 auth hooks 与会话代次保护测试：401/403/网络错误分流、账号切换、晚到查询/Mutation 不污染新会话。
+- [x] 完成按需查询、上节课依赖查询、考勤并发/回滚测试；不存在上节课时不请求空 ID。
+- [x] 测试写成功读刷新失败仍为成功；敏感 variables 清理；后台查询不覆盖本地课堂或编辑草稿的集成约束由 Plan 2 补充。
+- [x] 运行 Web 测试、类型检查、生产 build；用现有页面做兼容冒烟。Provider/旧桥改变运行行为，仍按 verification-guide 做浏览器验证。
+- [x] 文档记录交付与未迁移范围，提交代码，不 push/部署。
 
 验证命令：`pnpm --filter web test`、`pnpm --filter web exec tsc --noEmit`、`pnpm --filter web build`。禁止主动运行 formatter/linter。测试截图存 `tmp/<实际日期>-web-query-foundation/`；结束后 `mac-dev-cleanup --only browser --min-age 2`。
 
 验收：47 个旧方法均有新 API 与 hook，16 个读取均有可复用 options；旧页面仍可运行；基础缓存和 Mutation 规则有行为测试；未修改 miniapp、服务端或课堂提交契约。已知“往返白屏”保留到 Plan 2 验收成功再关闭。
+
+## 实施记录
+
+按本计划落地，以下是与正文不同或正文未写到的决定，Plan 2 以代码为准：
+
+- **多出的两个文件**：`queries/session.ts`（会话代次、`switchSession` / `expireSession` / `dropSessionData`）与 `queries/mutation.ts`（`useAppMutation` 统一代次保护与 hook 层 onSuccess；`useSensitiveMutation` 完成即 reset、gcTime 0）。`test-utils/` 放假 fetch、fixtures、渲染 harness 和写后矩阵用的「全量缓存」。
+- **Mutation variables 形状**：一律单对象，后端参数放 `input` / `payload` 等原样字段，`classId` / `batchId` 等失效上下文是同级可选字段，从不进请求体。例：`useUpdateClassMutation().mutateAsync({ classId, input })`。
+- **key 命名**：列表统一 `xxxKeys.lists()`（为日后服务端筛选参数预留前缀），带参数的列表另有 `list(id)`；老师列表是 `teacherKeys.lists()`。
+- **身份**：`useMeQuery` 的 data 为 `null` 表示未登录（/api/me 401 映射），`undefined + error` 才是读取失败。me 后台刷新读到 null（别处退出 / cookie 过期）时，QueryCache 也会丢弃其余服务端缓存。登录 Mutation 以 `meta.loginFlow` 排除在「401 = 会话过期」之外；写操作 401 只有发起时仍是当前会话才判定过期。
+- **考勤**：没有做乐观写缓存，而是 pending overlay——缓存只放服务端确认的记录，`useClassAttendanceQuery` 用 select 叠加进行中的修改；失败时 overlay 自然消失，只回到这一格的服务端值。同格占用用每个 QueryClient 一份的集合在 onMutate 判定，重复提交抛 `AttendanceCellBusyError`；`usePendingAttendanceCells` 供撤销/格子禁用。写入完成时若该表正有请求在途，重启它，防写入前的旧快照覆盖本格。
+- **写入完整详情前先取消该 key 的在途读取**（cache-effects 的 `put`），否则写入前发出的 GET 晚到会把新数据覆盖成旧的；本人改名同理失效 me。
+- **HTTP 层**：断网等传输失败包装为 `NetworkError`（固定中文文案，cause 保留原错误）；非 JSON / 坏 JSON / 缺 `error` 字段的错误响应兜底为「请求失败（HTTP <status>）」。取消保持原生 AbortError。
+- **后台错误通知**：`setBackgroundErrorHandler(client, handler)` 注入；只对已有数据的查询刷新失败触发，401 走会话过期，不通知。Plan 2 接 Toast。
+- **兼容桥**：`lib/api.ts` 旧方法名、签名、返回值不变；写入成功后跑与 hook 相同的 cache-effects（缺 classId 时从缓存推断，推断不出按领域前缀失效）；旧 `login` / `logout` 也走 `switchSession`。`main.tsx` 已在路由外装 `QueryClientProvider`，页面仍未使用 hooks。
+- **验证**：web 468 个测试（新增 api 契约、Query 行为、身份/代次、写后矩阵、考勤、上节课、兼容桥、清点）、tsc、build、server 292 个测试通过；浏览器冒烟走旧页面登录 → 班级 / 收银台（含创建弹窗）/ 老师改名并改回 / 上课记录 / 考勤 / 课前配置 / 管理 → 退出 → 重新登录，无页面错误。截图 `tmp/2026-10-06-web-query-foundation/`。
 
 ## 参考
 

@@ -1,4 +1,4 @@
-import { usePrevLessonData } from './PrevLessonContent';
+import { usePrevLessonQuery } from '../queries/prev-lesson';
 
 // 课堂「作业检查」右侧栏：上 1/3 只读展示上节课（严格紧邻一节）布置的作业，
 // 供检查时对照；下 2/3 是本节课作业 textarea（草稿存 classroomStore，随结束
@@ -14,7 +14,8 @@ export function HomeworkSidebar({
   readOnly: boolean;
   onChange: (v: string) => void;
 }) {
-  const prev = usePrevLessonData(classId);
+  // 上节课作业：与「上节课」popover 共用同一组查询（班级详情 + 该节 session 详情）。
+  const prev = usePrevLessonQuery(classId);
 
   const card: React.CSSProperties = {
     display: 'flex',
@@ -60,14 +61,14 @@ export function HomeworkSidebar({
   return (
     <div style={{ flex: '0 0 30%', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ ...card, flex: 1 }}>
-        {header('📚', '上节课作业', prev.status === 'ready' && prev.info ? prev.info.dateLabel : undefined)}
-        {prev.status === 'loading' && muted('加载中…')}
+        {header('📚', '上节课作业', prev.data ? prev.data.info.dateLabel : undefined)}
+        {prev.status === 'pending' && muted('加载中…')}
         {prev.status === 'error' && muted('加载失败')}
-        {prev.status === 'ready' &&
-          (!prev.info ? (
+        {prev.status === 'success' &&
+          (!prev.data ? (
             muted('本班还没有上课记录')
-          ) : prev.homework ? (
-            <div style={prose}>{prev.homework}</div>
+          ) : prev.data.homework ? (
+            <div style={prose}>{prev.data.homework}</div>
           ) : (
             muted('上节课未布置作业')
           ))}

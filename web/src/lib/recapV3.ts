@@ -1,7 +1,7 @@
 // 课堂战报 v3（Recap v3.dc.html）的纯派生逻辑，配合 components/RecapCardV3.tsx。
 // 数据来自 recap.groups[].members / recap.ungrouped（服务端 buildRecap 的成员明细）。
 
-import type { Recap, RecapGroup, RecapMember } from './api';
+import type { Recap, RecapGroup, RecapMember } from '../api/sessions';
 
 export const isPresent = (m: RecapMember) => m.attendance === 'present';
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { api, type AttendanceStatus, type ClassAttendance as AttendanceData } from '../lib/api';
+import type { AttendanceStatus } from '../api/attendance';
+import { LoadErrorBlock } from '../components/QueryState';
 import {
   buildAttendanceCsv,
   classAttendanceStats,
@@ -13,6 +14,12 @@ import {
   weekdayCN,
   type CellRecord,
 } from '../lib/attendance';
+import {
+  AttendanceCellBusyError,
+  useClassAttendanceQuery,
+  usePendingAttendanceCells,
+  useUpdateAttendanceMutation,
+} from '../queries/attendance';
 
 // 课堂界面 family (设计稿「历史出勤.dc.html」), not the IBM Plex management shell.
 const FONT = "'Nunito','PingFang SC','Microsoft YaHei',system-ui,sans-serif";
@@ -52,10 +59,16 @@ const LEGEND = [
 
 type HistEntry = { sessionId: string; studentId: string; prev: CellRecord };
 
+// 考勤表：数据来自 useClassAttendanceQuery（服务端确认的记录 + 进行中修改的 pending overlay），
+// 不再自存一份 records。即时反馈、单格回滚由 overlay 保证：失败只让那一格回到服务端值，
+// 其他格（含并行进行中的）不受影响，整表重取也覆盖不了 pending 格。
+// 撤销历史只收录服务端确认成功的修改；撤销本身也是一次写入，失败时保留记录可重试。
 export function ClassAttendance() {
   const { id = '' } = useParams();
-  const [data, setData] = useState<AttendanceData | null>(null);
-  const [recs, setRecs] = useState<Map<string, CellRecord>>(new Map());
+  const attendanceQuery = useClassAttendanceQuery(id);
+  const data = attendanceQuery.data;
+  const pendingCells = usePendingAttendanceCells(id);
+  const update = useUpdateAttendanceMutation();
   const [hist, setHist] = useState<HistEntry[]>([]);
   const [hoverR, setHoverR] = useState<number | null>(null);
   const [hoverC, setHoverC] = useState<number | null>(null);
@@ -63,18 +76,15 @@ export function ClassAttendance() {
   const [toast, setToast] = useState('');
   const toastTimer = useRef<ReturnType<typeof setTimeout>>();
 
-  useEffect(() => {
-    api
-      .classAttendance(id)
-      .then((d) => {
-        setData(d);
-        setRecs(
-          new Map(d.records.map((r) => [recordKey(r.sessionId, r.studentId), { status: r.status, madeUp: r.madeUp }])),
-        );
-      })
-      .catch(() => {});
-    return () => clearTimeout(toastTimer.current);
-  }, [id]);
+  useEffect(() => () => clearTimeout(toastTimer.current), []);
+
+  const recs = useMemo(
+    () =>
+      new Map<string, CellRecord>(
+        (data?.records ?? []).map((r) => [recordKey(r.sessionId, r.studentId), { status: r.status, madeUp: r.madeUp }]),
+      ),
+    [data],
+  );
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -82,16 +92,17 @@ export function ClassAttendance() {
     toastTimer.current = setTimeout(() => setToast(''), 2200);
   };
 
-  /** Optimistic write-through: flip locally, PUT, roll back on failure. */
-  const applyRec = (sessionId: string, studentId: string, next: CellRecord, prev: CellRecord, record: boolean) => {
-    const key = recordKey(sessionId, studentId);
-    setRecs((m) => new Map(m).set(key, next));
-    if (record) setHist((h) => [...h, { sessionId, studentId, prev }]);
-    api.updateAttendance(sessionId, studentId, { status: next.status, madeUp: next.madeUp }).catch(() => {
-      setRecs((m) => new Map(m).set(key, prev));
-      if (record) setHist((h) => h.slice(0, -1));
-      showToast('保存失败，请重试');
-    });
+  const write = (sessionId: string, studentId: string, next: CellRecord) =>
+    update.mutateAsync({ classId: id, sessionId, studentId, input: { status: next.status, madeUp: next.madeUp } });
+
+  /** 改一格：成功后才进入撤销历史。同格正在保存时页面已禁用入口，这里只兜底提示。 */
+  const applyRec = async (sessionId: string, studentId: string, next: CellRecord, prev: CellRecord) => {
+    try {
+      await write(sessionId, studentId, next);
+      setHist((h) => [...h, { sessionId, studentId, prev }]);
+    } catch (e) {
+      showToast(e instanceof AttendanceCellBusyError ? e.message : '保存失败，请重试');
+    }
   };
 
   const rows = useMemo(() => {
@@ -108,7 +119,11 @@ export function ClassAttendance() {
   if (!data) {
     return (
       <div style={{ minHeight: '100vh', background: '#e9f3e4', fontFamily: FONT }}>
-        <div style={{ padding: '40px 32px', color: '#8a94a0', fontWeight: 700 }}>加载中…</div>
+        {attendanceQuery.isError ? (
+          <LoadErrorBlock error={attendanceQuery.error} what="考勤" onRetry={attendanceQuery.refetch} />
+        ) : (
+          <div style={{ padding: '40px 32px', color: '#8a94a0', fontWeight: 700 }}>加载中…</div>
+        )}
       </div>
     );
   }
@@ -116,28 +131,33 @@ export function ClassAttendance() {
   const { sessions, students } = data;
   const cellOf = (r: number, c: number): CellRecord | null =>
     recs.get(recordKey(sessions[c].id, students[r].id)) ?? null;
+  const cellBusy = (r: number, c: number) => pendingCells.has(recordKey(sessions[c].id, students[r].id));
 
   const setStatus = (r: number, c: number, k: AttendanceStatus) => {
     const cur = cellOf(r, c);
-    if (!cur || cur.status === k) return;
+    if (!cur || cur.status === k || cellBusy(r, c)) return;
     // Coming back to 到勤 makes the makeup moot — mirror the server's clearing.
-    applyRec(sessions[c].id, students[r].id, { status: k, madeUp: k === 'present' ? false : cur.madeUp }, cur, true);
+    void applyRec(sessions[c].id, students[r].id, { status: k, madeUp: k === 'present' ? false : cur.madeUp }, cur);
   };
 
   const toggleMakeup = (r: number, c: number) => {
     const cur = cellOf(r, c);
-    if (!cur) return;
-    applyRec(sessions[c].id, students[r].id, { status: cur.status, madeUp: !cur.madeUp }, cur, true);
+    if (!cur || cellBusy(r, c)) return;
+    void applyRec(sessions[c].id, students[r].id, { status: cur.status, madeUp: !cur.madeUp }, cur);
   };
 
-  const undo = () => {
-    const last = hist[hist.length - 1];
-    if (!last) return;
-    setHist((h) => h.slice(0, -1));
-    const key = recordKey(last.sessionId, last.studentId);
-    const cur = recs.get(key);
-    if (!cur) return;
-    applyRec(last.sessionId, last.studentId, last.prev, cur, false);
+  const lastEntry = hist[hist.length - 1];
+  const undoBusy = lastEntry != null && pendingCells.has(recordKey(lastEntry.sessionId, lastEntry.studentId));
+
+  const undo = async () => {
+    const last = lastEntry;
+    if (!last || undoBusy) return;
+    try {
+      await write(last.sessionId, last.studentId, last.prev);
+      setHist((h) => h.filter((x) => x !== last));
+    } catch (e) {
+      showToast(e instanceof AttendanceCellBusyError ? e.message : '撤销失败，请重试');
+    }
   };
 
   const doExport = () => {
@@ -160,7 +180,9 @@ export function ClassAttendance() {
   const fmtMD = (date: string) => `${dateParts(date).mm}/${dateParts(date).dd}`;
   const range = sessions.length ? `${fmtMD(sessions[0].date)} – ${fmtMD(sessions[sessions.length - 1].date)}` : '';
 
-  const popup = open ? { st: students[open.r], sess: sessions[open.c], rec: cellOf(open.r, open.c) } : null;
+  const popup = open
+    ? { st: students[open.r], sess: sessions[open.c], rec: cellOf(open.r, open.c), busy: cellBusy(open.r, open.c) }
+    : null;
 
   return (
     <div
@@ -282,6 +304,7 @@ export function ClassAttendance() {
         <div style={{ marginLeft: 'auto' }}>
           <button
             onClick={undo}
+            disabled={!lastEntry || undoBusy}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -295,7 +318,7 @@ export function ClassAttendance() {
               fontSize: 15,
               fontFamily: 'inherit',
               cursor: 'pointer',
-              ...(hist.length ? {} : { opacity: 0.4, pointerEvents: 'none' as const }),
+              ...(lastEntry && !undoBusy ? {} : { opacity: 0.4, pointerEvents: 'none' as const }),
             }}
           >
             <span style={{ fontSize: 15 }}>↩</span>撤销
@@ -792,7 +815,10 @@ export function ClassAttendance() {
               </button>
             </div>
 
-            <div style={{ fontWeight: 800, fontSize: 14, color: '#5b6672', marginBottom: 10 }}>出勤状态</div>
+            <div style={{ fontWeight: 800, fontSize: 14, color: '#5b6672', marginBottom: 10 }}>
+              出勤状态
+              {popup.busy && <span style={{ marginLeft: 8, fontWeight: 700, color: '#98a2b0' }}>保存中…</span>}
+            </div>
             <div style={{ display: 'flex', gap: 9, marginBottom: 18 }}>
               {STATUS_DEFS.map((sd) => {
                 const sel = popup.rec!.status === sd.k;
@@ -800,6 +826,7 @@ export function ClassAttendance() {
                   <button
                     key={sd.k}
                     onClick={() => setStatus(open!.r, open!.c, sd.k)}
+                    disabled={popup.busy}
                     style={{
                       flex: 1,
                       display: 'flex',
@@ -814,7 +841,8 @@ export function ClassAttendance() {
                       fontWeight: 800,
                       fontSize: 16,
                       fontFamily: 'inherit',
-                      cursor: 'pointer',
+                      cursor: popup.busy ? 'default' : 'pointer',
+                      opacity: popup.busy && !sel ? 0.55 : 1,
                       transition: 'all .12s',
                     }}
                   >
@@ -863,6 +891,7 @@ export function ClassAttendance() {
                 </div>
                 <button
                   onClick={() => toggleMakeup(open!.r, open!.c)}
+                  disabled={popup.busy}
                   style={{
                     marginLeft: 'auto',
                     width: 48,

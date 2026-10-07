@@ -1,4 +1,5 @@
-import type { AttendanceSession, AttendanceStatus, ClassAttendance, StudentStatus } from './api';
+import type { AttendanceSession, AttendanceStatus, ClassAttendance } from '../api/attendance';
+import type { StudentStatus } from '../api/students';
 
 /** One grid cell: status null = no membership row that day (未入班/已停课). */
 export interface CellState {

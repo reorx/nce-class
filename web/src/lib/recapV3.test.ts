@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Recap, RecapGroup, RecapMember } from './api';
+import type { Recap, RecapGroup, RecapMember } from '../api/sessions';
 import {
   absentText,
   groupCards,

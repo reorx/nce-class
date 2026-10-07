@@ -1,11 +1,13 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
+import type { Me } from '../api/auth';
+import type { SessionDetail as SessionData, UpdateSessionInput } from '../api/sessions';
 import { HomeworkTemplateDialog } from '../components/HomeworkTemplateEditor';
 import { OverviewTab } from '../components/OverviewTab';
+import { QueryBlock, RefreshStatus } from '../components/QueryState';
 import { RecapPanel } from '../components/RecapPanel';
 import { TopBar } from '../components/TopBar';
 import { useToast } from '../components/Toast';
-import { api, type Me, type SessionDetail as SessionData, type TeacherItem } from '../lib/api';
 import { applyStartTime, minutesBetweenSql, startTimeOf } from '../lib/classroomStore';
 import {
   BOOK_LABELS,
@@ -20,10 +22,15 @@ import {
 import { lessonLabel } from '../lib/lesson';
 import { fmtDurationCn } from '../lib/recapCard';
 import { GREEN } from '../lib/theme';
+import { useUpdateHomeworkTemplateMutation } from '../queries/classes';
+import { useSessionQuery, useUpdateSessionHomeworkMutation, useUpdateSessionMutation } from '../queries/sessions';
+import { useTeachersQuery } from '../queries/teachers';
 
 // Session 详情页（结束课堂后落地，也可从上课记录点课名进入）：
 // 作业布置 tab（模板 + 生成作业内容 + 课文复习级联选择）+ Recap tab（战报预览/导出）
 // + 课堂信息 tab（课次/课题/开始时间/主讲老师 record fix-up，与课堂内弹窗同字段）。
+// 数据来自 useSessionQuery；各 tab 的表单草稿按 session id 只初始化一次，后台刷新不覆盖，
+// 保存由领域 Mutation 回写详情并刷新关联（同班其他课的上次作业引用、上节课参考等）。
 
 type Tab = 'overview' | 'homework' | 'recap' | 'info';
 const TAB_LABELS: Record<Tab, string> = {
@@ -38,15 +45,8 @@ export function SessionDetail({ me }: { me: Me | null }) {
   const [params, setParams] = useSearchParams();
   const tab = (params.get('tab') as Tab) || 'overview';
   const setTab = (t: Tab) => setParams(t === 'overview' ? {} : { tab: t }, { replace: true });
-  const [d, setD] = useState<SessionData | null>(null);
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    api
-      .sessionDetail(sid)
-      .then(setD)
-      .catch(() => setFailed(true));
-  }, [sid]);
+  const sessionQuery = useSessionQuery(sid);
+  const d = sessionQuery.data;
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -77,6 +77,7 @@ export function SessionDetail({ me }: { me: Me | null }) {
               <div style={{ marginTop: 8, fontSize: 13.5, color: '#7a828f' }}>
                 {d.className} · {d.year}-{d.date} {d.weekday} · {d.durationLabel}
                 {d.teacherName ? ` · 主讲 ${d.teacherName}` : ''}
+                <RefreshStatus query={sessionQuery} style={{ marginLeft: 10 }} />
               </div>
             )}
           </div>
@@ -115,32 +116,32 @@ export function SessionDetail({ me }: { me: Me | null }) {
           ))}
         </div>
 
-        {failed && (
-          <div style={{ padding: '80px 20px', textAlign: 'center', color: '#9aa1ac', fontSize: 13.5 }}>
-            课堂详情加载失败，请刷新重试
-          </div>
-        )}
-        {!failed && !d && (
-          <div style={{ padding: '80px 20px', textAlign: 'center', color: '#9aa1ac', fontSize: 13.5 }}>加载中…</div>
-        )}
-        {d && tab === 'overview' && <OverviewTab d={d} />}
-        {d && tab === 'homework' && <HomeworkTab d={d} onSaved={setD} />}
-        {d && tab === 'recap' && (
-          <RecapPanel recap={d.recap} className={d.className} year={d.year} homework={d.homeworkContent} />
-        )}
-        {d && tab === 'info' && <InfoTab d={d} onSaved={setD} />}
+        <QueryBlock query={sessionQuery} what="课堂">
+          {(d) => (
+            <>
+              {tab === 'overview' && <OverviewTab d={d} />}
+              {tab === 'homework' && <HomeworkTab d={d} />}
+              {tab === 'recap' && (
+                <RecapPanel recap={d.recap} className={d.className} year={d.year} homework={d.homeworkContent} />
+              )}
+              {tab === 'info' && <InfoTab d={d} />}
+            </>
+          )}
+        </QueryBlock>
       </div>
     </div>
   );
 }
 
 // ===== 作业布置 TAB =========================================================
-function HomeworkTab({ d, onSaved }: { d: SessionData; onSaved: (fresh: SessionData) => void }) {
+function HomeworkTab({ d }: { d: SessionData }) {
   const toast = useToast();
+  const saveHomework = useUpdateSessionHomeworkMutation();
+  const updateTemplate = useUpdateHomeworkTemplateMutation();
   const [content, setContent] = useState('');
   const [book, setBook] = useState<BookKey | null>(null);
   const [lesson, setLesson] = useState<number | null>(null);
-  const [busy, setBusy] = useState(false);
+  const busy = saveHomework.isPending;
   const [templateOpen, setTemplateOpen] = useState(false);
 
   const generate = () =>
@@ -162,19 +163,14 @@ function HomeworkTab({ d, onSaved }: { d: SessionData; onSaved: (fresh: SessionD
 
   async function finish() {
     if (busy) return;
-    setBusy(true);
     try {
-      const fresh = await api.saveSessionHomework(d.id, {
-        content,
-        reviewBook: book,
-        reviewLesson: book != null ? lesson : null,
+      await saveHomework.mutateAsync({
+        sessionId: d.id,
+        input: { content, reviewBook: book, reviewLesson: book != null ? lesson : null },
       });
-      onSaved(fresh);
       toast('本节课作业已布置');
     } catch {
       toast('保存失败，请重试', 'error');
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -287,10 +283,8 @@ function HomeworkTab({ d, onSaved }: { d: SessionData; onSaved: (fresh: SessionD
         open={templateOpen}
         onClose={() => setTemplateOpen(false)}
         template={d.homeworkTemplate}
-        onSave={async (v) => {
-          await api.updateHomeworkTemplate(d.classId, v);
-          onSaved(await api.sessionDetail(d.id));
-        }}
+        // 模板存到班级上；Mutation 回写班级详情并让本班各节课详情（含本页）重读，模板随之更新。
+        onSave={(template) => updateTemplate.mutateAsync({ classId: d.classId, template })}
       />
     </div>
   );
@@ -327,9 +321,10 @@ function PrevHomeworkCard({ p, classId }: { p: NonNullable<SessionData['prevHome
 // The in-classroom LessonInfoDialog fields (课次/课题/开始时间/主讲老师) plus
 // 结束时间, in the management system's plain card style; 实际时长 stays
 // read-only since it is derived from startedAt/endedAt.
-function InfoTab({ d, onSaved }: { d: SessionData; onSaved: (fresh: SessionData) => void }) {
+function InfoTab({ d }: { d: SessionData }) {
   const toast = useToast();
-  const [teachers, setTeachers] = useState<TeacherItem[]>([]);
+  const teachers = useTeachersQuery().data ?? [];
+  const updateSession = useUpdateSessionMutation();
   const [no, setNo] = useState('');
   const [title, setTitle] = useState('');
   const [time, setTime] = useState('');
@@ -337,14 +332,7 @@ function InfoTab({ d, onSaved }: { d: SessionData; onSaved: (fresh: SessionData)
   const [endTime, setEndTime] = useState('');
   const [endErr, setEndErr] = useState('');
   const [tid, setTid] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    api
-      .teachers()
-      .then(setTeachers)
-      .catch(() => {});
-  }, []);
+  const busy = updateSession.isPending;
 
   // Seed once per session; after a save the echoed payload matches the form.
   useEffect(() => {
@@ -360,7 +348,7 @@ function InfoTab({ d, onSaved }: { d: SessionData; onSaved: (fresh: SessionData)
 
   async function save() {
     if (busy) return;
-    const patch: Parameters<typeof api.updateSessionInfo>[1] = {
+    const patch: UpdateSessionInput = {
       lessonNumber: no.trim() ? Number(no.trim()) : null,
       lessonTitle: title,
       teacherId: tid || null,
@@ -390,14 +378,11 @@ function InfoTab({ d, onSaved }: { d: SessionData; onSaved: (fresh: SessionData)
       else setTimeErr('开始时间必须早于结束时间');
       return;
     }
-    setBusy(true);
     try {
-      onSaved(await api.updateSessionInfo(d.id, patch));
+      await updateSession.mutateAsync({ sessionId: d.id, input: patch });
       toast('课堂信息已保存');
     } catch {
       toast('保存失败，请重试', 'error');
-    } finally {
-      setBusy(false);
     }
   }
 

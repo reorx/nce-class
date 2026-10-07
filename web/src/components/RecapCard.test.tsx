@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import type { Recap } from '../lib/api';
+import type { Recap } from '../api/sessions';
 import { RecapCard } from './RecapCard';
 
 const recap: Recap = {

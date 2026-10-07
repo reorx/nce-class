@@ -1,7 +1,7 @@
 import { useEffect, useState, type CSSProperties } from 'react';
-import { api, type TeacherItem } from '../lib/api';
 import { BOOK_LABELS, BOOKS, type BookKey, parseBook } from '../lib/homework';
 import { GREEN } from '../lib/theme';
+import { useTeachersQuery } from '../queries/teachers';
 import { Modal } from './Modal';
 import { useToast } from './Toast';
 
@@ -15,8 +15,8 @@ export interface ClassInfoValues {
 
 /**
  * 班级基本信息表单弹窗（名称/教材/负责老师，编辑时另有归档开关），新建班级（ClassList）与
- * 编辑班级信息（ClassDetail）共用。onSubmit 由调用方注入（API 调用 + reload +
- * 成功 toast/跳转），成功后弹窗自动关闭，抛错则留在弹窗并提示 errorText。
+ * 编辑班级信息（ClassDetail）共用。onSubmit 由调用方注入（领域 Mutation + 成功 toast/跳转），
+ * 成功后弹窗自动关闭，抛错则留在弹窗并提示 errorText。老师下拉读共享的老师列表（打开时才启用）。
  */
 export function ClassInfoModal({
   open,
@@ -42,7 +42,8 @@ export function ClassInfoModal({
   onSubmit: (v: ClassInfoValues) => Promise<void>;
 }) {
   const toast = useToast();
-  const [teachers, setTeachers] = useState<TeacherItem[]>([]);
+  const teachersQuery = useTeachersQuery({ enabled: open });
+  const teachers = teachersQuery.data ?? [];
   const [name, setName] = useState('');
   const [textbook, setTextbook] = useState('');
   const [teacherId, setTeacherId] = useState('');
@@ -50,16 +51,13 @@ export function ClassInfoModal({
   const [busy, setBusy] = useState(false);
   const archivable = initial.isArchived !== undefined;
 
+  // 每次打开从 initial 建立一次草稿；之后的后台刷新不覆盖输入。
   useEffect(() => {
     if (!open) return;
     setName(initial.name);
     setTextbook(initial.textbook ?? '');
     setTeacherId(initial.teacherId);
     setArchived(initial.isArchived ?? false);
-    api
-      .teachers()
-      .then(setTeachers)
-      .catch(() => toast('老师列表加载失败', 'error'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -120,6 +118,17 @@ export function ClassInfoModal({
           </option>
         ))}
       </select>
+      {teachersQuery.isError && !teachersQuery.data && (
+        <div role="alert" style={{ marginTop: 6, fontSize: 12, color: '#d94a4a' }}>
+          老师列表加载失败 ·{' '}
+          <button
+            onClick={() => teachersQuery.refetch()}
+            style={{ border: 'none', background: 'transparent', padding: 0, color: GREEN, fontWeight: 600, cursor: 'pointer' }}
+          >
+            重试
+          </button>
+        </div>
+      )}
       {archivable && (
         <label
           style={{
