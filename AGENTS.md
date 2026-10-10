@@ -70,7 +70,7 @@ push master → GitHub Actions 构建镜像 → hookploy 部署，迁移随服�
 ## 文档
 
 - `kb/docs/classroom-session-lifecycle.md` — 课堂数据从开课到落库的流转：进入判定、结束课堂、补录、编辑上课记录、兼容纪律的由来。改 Classroom、classroomStore、commit 接口前读。
-- `kb/docs/web-data-layer.md` — Web 读取缓存时效、页面加载/错误/后台刷新的展示口径、写后刷新规则、草稿与最新读取、身份切换、课堂本地优先在数据层的例外。改 Web 页面的数据读取或写入、加新接口前读。
+- `kb/docs/web-data-layer.md` — React SPA 的 HTTP / Query 开发指南：分层、缓存一致性、草稿、身份与离线边界、重构流程和验收；含两次重构的实际调整与证据。设计同类 SPA 数据层、改 Web 请求或新增接口前读。
 - `kb/docs/business-rules.md` — 学生姓名与状态、班级归档、账户邀请、出勤作业、教材、管理员、排班收费的业务口径。改这些功能前读对应小节。
 - `kb/docs/verification-guide.md` — curl 冒烟、agent-browser 流程与坑、小程序 h5 切角色、微信开发者工具。做端到端验证时读。
 - `kb/docs/miniapp-h5-three-role-e2e.md` — 小程序 h5 三角色流程（生成邀请 → 注册 → 关联 → recap）。改邀请、账户、小程序后跑回归时读。
