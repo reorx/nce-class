@@ -58,6 +58,53 @@ async function openDetailFromList() {
   await screen.findByRole('heading', { name: CARD });
 }
 
+describe('delete one student invoice', () => {
+  it('requires confirmation, preserves the draft on cancel, and updates detail and cached list after deletion', async () => {
+    serveBilling();
+    const remaining = invoice({ id: 'i2', studentName: 'Paid student', status: 'paid' });
+    const after = batchDetail({ invoices: [remaining], ...paidTotals });
+    const before = batchDetail({ invoices: [invoice(), remaining], invoiceCount: 2, totalAmountCents: 30000 });
+    server.on('GET', '/api/billing/batches/b1', before);
+    server.on('DELETE', '/api/invoices/i1', after);
+    renderApp(client, '/billing');
+    await openDetailFromList();
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }));
+    await screen.findByText(/编辑费用/);
+    fireEvent.change(screen.getAllByRole('textbox')[0], { target: { value: '123' } });
+    fireEvent.click(screen.getByRole('button', { name: '删除此学生条目' }));
+    expect(server.count('DELETE', '/api/invoices/i1')).toBe(0);
+    fireEvent.click(screen.getByRole('button', { name: '返回编辑' }));
+    expect((screen.getAllByRole('textbox')[0] as HTMLInputElement).value).toBe('123');
+    fireEvent.click(screen.getByRole('button', { name: '删除此学生条目' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认删除' }));
+    await waitFor(() => expect(client.getQueryData(billingKeys.detail('b1'))).toEqual(after));
+    expect(screen.queryByText(/编辑费用/)).toBeNull();
+    expect(client.getQueryData(billingKeys.invoiceLessons('i1'))).toBeUndefined();
+    expect(client.getQueryData<any[]>(billingKeys.lists())?.[0]).toMatchObject(paidTotals);
+    expect(screen.getByText('Paid student')).toBeTruthy();
+    expect(server.count('DELETE', '/api/invoices/i1')).toBe(1);
+    expect(server.count('PUT', '/api/invoices/i1')).toBe(0);
+    expect(server.count('POST', '/api/billing/batches/b1/recalculate')).toBe(0);
+  });
+
+  it('keeps the invoice and confirmation open on failure, and blocks duplicate clicks while deleting', async () => {
+    serveBilling();
+    const deletion = deferred<Response>();
+    server.on('DELETE', '/api/invoices/i1', () => deletion.promise);
+    renderApp(client, '/billing/b1');
+    fireEvent.click(await screen.findByRole('button', { name: '编辑' }));
+    fireEvent.click(screen.getByRole('button', { name: '删除此学生条目' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认删除' }));
+    await waitFor(() => expect((screen.getByRole('button', { name: '删除中…' }) as HTMLButtonElement).disabled).toBe(true));
+    fireEvent.click(screen.getByRole('button', { name: '删除中…' }));
+    await act(async () => deletion.resolve(json({ error: '已确认收款，请先撤销' }, 409)));
+    expect(await screen.findByText('已确认收款，请先撤销')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '确认删除' })).toBeTruthy();
+    expect(client.getQueryData(billingKeys.detail('b1'))).toEqual(batchDetail());
+    expect(server.count('DELETE', '/api/invoices/i1')).toBe(1);
+  });
+});
+
 describe('B01 list ↔ detail round trip within staleTime', () => {
   it('the list paints from cache on the first frame after returning; no extra list GET', async () => {
     serveBilling();

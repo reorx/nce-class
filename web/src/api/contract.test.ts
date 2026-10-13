@@ -231,6 +231,7 @@ const cases: Case[] = [
     '{"unitPriceCents":16000,"lessonCount":10}',
   ],
   ['deleteBillingBatch', () => billing.deleteBillingBatch('b1'), 'DELETE', '/api/billing/batches/b1'],
+  ['deleteInvoice', () => billing.deleteInvoice('i1'), 'DELETE', '/api/invoices/i1'],
   [
     'updateInvoice',
     () => billing.updateInvoice('i1', { finalAmountCents: 120000, note: '' }),
@@ -295,6 +296,6 @@ describe('domain API wire contract', () => {
       .sort();
     const tested = [...new Set(cases.map(([name]) => name.split(' ')[0]))].sort();
     expect(exported).toEqual(tested);
-    expect(exported).toHaveLength(47);
+    expect(exported).toHaveLength(48);
   });
 });

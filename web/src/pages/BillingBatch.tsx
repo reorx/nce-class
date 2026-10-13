@@ -19,6 +19,7 @@ import {
   useBillingBatchQuery,
   useConfirmInvoiceMutation,
   useDeleteBillingBatchMutation,
+  useDeleteInvoiceMutation,
   useInvoiceLessonsQuery,
   useUnconfirmInvoiceMutation,
   useUpdateInvoiceMutation,
@@ -149,6 +150,9 @@ export function BillingBatch({ me }: { me: Me | null }) {
                   </tr>
                 </thead>
                 <tbody>
+                  {d.invoices.length === 0 && (
+                    <tr><td colSpan={6} style={{ ...td, textAlign: 'center', color: '#5b6472' }}>当前收款项暂无学生条目</td></tr>
+                  )}
                   {d.invoices.map((inv) => (
                     <InvoiceRow
                       key={inv.id}
@@ -345,12 +349,14 @@ function InvoiceEditModal({
   onClose: () => void;
 }) {
   const toast = useToast();
-  const lessons = useInvoiceLessonsQuery(inv.id);
   const update = useUpdateInvoiceMutation();
+  const remove = useDeleteInvoiceMutation();
+  const lessons = useInvoiceLessonsQuery(inv.id, { enabled: !remove.isPending && !remove.isSuccess });
+  const [deleteOpen, setDeleteOpen] = useState(false);
   // 草稿只在打开弹窗时从当前收款单建立一次；之后的后台刷新不覆盖输入。
   const [finalAmount, setFinalAmount] = useState(() => centsToYuan(inv.finalAmountCents));
   const [note, setNote] = useState(() => inv.note ?? '');
-  const busy = update.isPending;
+  const busy = update.isPending || remove.isPending;
 
   const computed = inv.computedAmountCents;
   const finalCents = yuanToCents(finalAmount);
@@ -368,8 +374,36 @@ function InvoiceEditModal({
     }
   }
 
+  async function confirmRemove() {
+    if (busy) return;
+    try {
+      await remove.mutateAsync({ invoiceId: inv.id });
+      toast(`已删除 ${inv.studentName} 的收款条目`);
+      onClose();
+    } catch (e) {
+      toast(errText(e, '删除失败，请重试'), 'error');
+    }
+  }
+
+  if (deleteOpen) return (
+    <Modal open onClose={() => { if (!busy) setDeleteOpen(false); }} title="删除学生收款条目">
+      <div style={{ fontSize: 14, color: '#3c4451', lineHeight: 1.8 }}>
+        确定从「{batch.className} · {batch.scheduleName}」中删除 <b>{inv.studentName}</b> 的收款条目吗？
+        <p>将移除待收金额 <b>{fmtMoney(inv.finalAmountCents)}</b>，学生人数减少 1 人。</p>
+        <p>仅影响此收款项，不删除学生档案，也不修改其他学生的金额和收款状态。重置收款项时不会重新加入该学生。</p>
+        <p style={{ color: '#b42318' }}>删除后无法撤销，当前未保存的编辑也会放弃。</p>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 9, marginTop: 20 }}>
+        <button style={ghostBtn} disabled={busy} onClick={() => setDeleteOpen(false)}>返回编辑</button>
+        <button style={{ ...primaryBtn, background: '#b42318', boxShadow: 'none', opacity: busy ? 0.6 : 1 }} disabled={busy} onClick={confirmRemove}>
+          {remove.isPending ? '删除中…' : '确认删除'}
+        </button>
+      </div>
+    </Modal>
+  );
+
   return (
-    <Modal open onClose={onClose} title={`编辑费用 — ${inv.studentName} · ${batch.scheduleName}`} width={640}>
+    <Modal open onClose={() => { if (!busy) onClose(); }} title={`编辑费用 — ${inv.studentName} · ${batch.scheduleName}`} width={640}>
       <div style={{ display: 'flex', alignItems: 'baseline', marginBottom: 6 }}>
         <div style={{ fontSize: 12.5, fontWeight: 700, color: '#5b6472' }}>周期出勤明细</div>
         <div className="mono" style={{ marginLeft: 'auto', fontSize: 12, color: '#8a929e' }}>
@@ -441,7 +475,10 @@ function InvoiceEditModal({
         style={{ ...fieldSm, width: '100%', margin: '4px 0 18px' }}
       />
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 9 }}>
-        <button style={ghostBtn} onClick={onClose}>
+        <button style={{ ...ghostBtn, color: '#b42318', marginRight: 'auto' }} disabled={busy} onClick={() => setDeleteOpen(true)}>
+          删除此学生条目
+        </button>
+        <button style={ghostBtn} disabled={busy} onClick={onClose}>
           取消
         </button>
         <button

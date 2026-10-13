@@ -21,6 +21,7 @@ import {
   bindTeacherWechat,
   commitSession,
   confirmInvoice,
+  deleteInvoice,
   createBillingBatch,
   createClass,
   createInvite,
@@ -1975,6 +1976,8 @@ export function createApp() {
       });
 
     const known = new Set(existing.map((iv) => iv.student_id));
+    const excluded = sqlite.prepare('SELECT student_id FROM billing_exclusions WHERE batch_id=?').all(b.id) as { student_id: string }[];
+    for (const row of excluded) known.add(row.student_id);
     const additions = buildBatchSnapshot({ ...inputs, lessons, today, lessonCountOverride })
       .filter((r) => !known.has(r.studentId))
       .map(
@@ -2005,6 +2008,16 @@ export function createApp() {
   });
 
   // ---- 收款单 (invoices) ----
+  app.delete('/api/invoices/:id', (req, res) => {
+    const found = invoiceInOrg(req.params.id, res.locals.teacher.org_id);
+    if (!found) return res.status(404).json({ error: 'invoice not found' });
+    if (!deleteInvoice(sqlite, found.inv.id)) {
+      return res.status(409).json({ error: '已确认收款的收款单不可删除，请先撤销收款' });
+    }
+    // 仅重新读取汇总，绝不调用重算；其余收款单与批次快照保持原样。
+    res.json(batchDetailPayload(found.batch));
+  });
+
   app.put('/api/invoices/:id', (req, res) => {
     const found = invoiceInOrg(req.params.id, res.locals.teacher.org_id);
     if (!found) return res.status(404).json({ error: 'invoice not found' });

@@ -2321,6 +2321,8 @@ describe('admin (/api/admin/*)', () => {
     const paid = await agent.post(`/api/invoices/${s1.id}/confirm`);
     expect(paid.status).toBe(200);
     expect(paid.body.finalAmountCents).toBeGreaterThan(0);
+    const s2 = batch.body.invoices.find((i: any) => i.studentId === 's2');
+    expect((await agent.delete(`/api/invoices/${s2.id}`)).status).toBe(200);
     sqlite
       .prepare(
         `INSERT INTO class_invites (id, class_id, token, created_by, expires_at)
@@ -2334,7 +2336,7 @@ describe('admin (/api/admin/*)', () => {
       )
       .run();
     expect((await agent.put('/api/students/s4/status').send({ status: 'archived' })).status).toBe(200);
-    return { invoiceCount: batch.body.invoiceCount as number, paidCents: paid.body.finalAmountCents as number };
+    return { invoiceCount: batch.body.invoiceCount - 1, paidCents: paid.body.finalAmountCents as number };
   }
 
   /** Every id owned by a class: itself + its students/sessions/session groups/groups/schedules/batches/invites. */
@@ -2489,6 +2491,7 @@ describe('admin (/api/admin/*)', () => {
     // the fixture really reaches every class-owned table
     expect(Object.keys(rowsReferencing(c1Ids)).sort()).toEqual([
       'billing_batches',
+      'billing_exclusions',
       'check_records',
       'class_group_memberships',
       'class_groups',

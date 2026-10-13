@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 // ---- Organization (school) — data-isolation unit; M1 runs a single one, but every model carries orgId ----
 export const organizations = sqliteTable('organizations', {
@@ -322,6 +322,12 @@ export const billingBatches = sqliteTable('billing_batches', {
 // on read, so what the teacher confirmed is what stays on record. 应收 is the
 // batch standard (单价 × 课程次数 + 附加费), the same for everyone; attendance is
 // recorded for display only, exceptions go through final_amount_cents.
+// 当前批次手动移除的学生，重算不能自动补回；不影响其他批次。
+export const billingExclusions = sqliteTable('billing_exclusions', {
+  batchId: text('batch_id').notNull().references(() => billingBatches.id),
+  studentId: text('student_id').notNull().references(() => students.id),
+}, (t) => [primaryKey({ columns: [t.batchId, t.studentId] })]);
+
 export const invoices = sqliteTable(
   'invoices',
   {

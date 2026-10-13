@@ -37,6 +37,7 @@ import {
   useUpdateHomeworkTemplateMutation,
 } from './classes';
 import { createQueryClient, setBackgroundErrorHandler } from './client';
+import { invoiceDeleted } from './cache-effects';
 import { authKeys, billingKeys, classKeys, scheduleKeys, sessionKeys, teacherKeys } from './keys';
 import { useCreateScheduleMutation, useDeleteScheduleMutation, useUpdateScheduleMutation } from './schedules';
 import {
@@ -58,6 +59,32 @@ import { useUpdateTeacherMutation } from './teachers';
 
 let server: FakeServer;
 let client: QueryClient;
+
+it('invoice deletion cancels stale reads, updates cached totals and leaves other batches untouched', async () => {
+  const oldDetail = f.batchDetail();
+  const other = f.batchDetail({ id: 'b2' });
+  const deleted = f.batchDetail({ invoices: [], invoiceCount: 0, totalAmountCents: 0, pendingAmountCents: 0 });
+  client.setQueryData(billingKeys.detail('b1'), oldDetail);
+  client.setQueryData(billingKeys.detail('b2'), other);
+  client.setQueryData(billingKeys.lists(), [f.batchItem(), f.batchItem({ id: 'b2' })]);
+  client.setQueryData(billingKeys.invoiceLessons('i1'), f.invoiceLessons());
+  const oldDetailRead = deferred<BillingBatchDetail>();
+  const oldListRead = deferred<BillingBatchItem[]>();
+  const detailRead = client.fetchQuery({ queryKey: billingKeys.detail('b1'), queryFn: () => oldDetailRead.promise, staleTime: 0 });
+  const listRead = client.fetchQuery({ queryKey: billingKeys.lists(), queryFn: () => oldListRead.promise, staleTime: 0 });
+  const reads = Promise.allSettled([detailRead, listRead]);
+  await invoiceDeleted(client, deleted, 'i1');
+  oldDetailRead.resolve(oldDetail);
+  oldListRead.resolve([f.batchItem()]);
+  await reads;
+  expect(client.getQueryData(billingKeys.detail('b1'))).toEqual(deleted);
+  expect(client.getQueryData(billingKeys.detail('b2'))).toEqual(other);
+  expect(client.getQueryData<BillingBatchItem[]>(billingKeys.lists())).toEqual([
+    expect.objectContaining({ id: 'b1', invoiceCount: 0, totalAmountCents: 0, pendingAmountCents: 0 }),
+    f.batchItem({ id: 'b2' }),
+  ]);
+  expect(client.getQueryData(billingKeys.invoiceLessons('i1'))).toBeUndefined();
+});
 
 beforeEach(() => {
   server = installFakeFetch();

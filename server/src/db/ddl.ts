@@ -137,4 +137,8 @@ CREATE TABLE IF NOT EXISTS invoices (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_invoice_batch_student
   ON invoices(batch_id, student_id);
+CREATE TABLE IF NOT EXISTS billing_exclusions (
+  batch_id TEXT NOT NULL, student_id TEXT NOT NULL,
+  PRIMARY KEY (batch_id, student_id)
+);
 `;

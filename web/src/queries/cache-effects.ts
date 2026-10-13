@@ -362,10 +362,22 @@ export async function billingBatchDeleted(client: QueryClient, batchId: string) 
   );
 }
 
-/**
- * 改费用 / 确认 / 撤销收款：响应只有这一行。先替换已缓存批次里的对应行（即时反馈），
- * 汇总金额不手工推算，靠失效后重读。
- */
+/** 删除单条收款单：服务端返回完整详情，列表汇总也用该响应回写，不手工算金额。 */
+export async function invoiceDeleted(client: QueryClient, detail: BillingBatchDetail, invoiceId: string) {
+  await Promise.all([
+    client.cancelQueries({ queryKey: billingKeys.detail(detail.id), exact: true }),
+    client.cancelQueries({ queryKey: billingKeys.lists(), exact: true }),
+  ]);
+  client.removeQueries({ queryKey: billingKeys.invoiceLessons(invoiceId), exact: true });
+  client.setQueryData(billingKeys.detail(detail.id), detail);
+  const { invoices: _invoices, ...item } = detail;
+  client.setQueryData<BillingBatchItem[]>(billingKeys.lists(), (old) =>
+    old?.map((batch) => batch.id === detail.id ? item : batch),
+  );
+  await all(invalidate(client, billingKeys.lists()), invalidate(client, adminKeys.all));
+}
+
+/** 改费用 / 确认 / 撤销：先回写单行，批次汇总靠失效重读。 */
 export async function invoiceChanged(client: QueryClient, invoice: InvoiceItem, batchId?: string) {
   const contains = (d: BillingBatchDetail | undefined) => d?.invoices.some((i) => i.id === invoice.id) ?? false;
   const holders = client

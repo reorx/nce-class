@@ -4,6 +4,7 @@ import {
   confirmInvoice,
   createBillingBatch,
   deleteBillingBatch,
+  deleteInvoice,
   getBillingBatch,
   getInvoiceLessons,
   listBillingBatches,
@@ -14,7 +15,7 @@ import {
   type CreateBillingBatchInput,
   type UpdateInvoiceInput,
 } from '../api/billing';
-import { billingBatchCreated, billingBatchDeleted, billingBatchRecalculated, invoiceChanged } from './cache-effects';
+import { billingBatchCreated, billingBatchDeleted, billingBatchRecalculated, invoiceChanged, invoiceDeleted } from './cache-effects';
 import { enabledWith, type QueryHookOptions } from './client';
 import { billingKeys } from './keys';
 import { useAppMutation } from './mutation';
@@ -79,6 +80,13 @@ export function useDeleteBillingBatchMutation() {
 }
 
 type InvoiceVariables = { invoiceId: string; batchId?: string };
+
+export function useDeleteInvoiceMutation() {
+  return useAppMutation({
+    mutationFn: ({ invoiceId }: { invoiceId: string }) => deleteInvoice(invoiceId),
+    onSuccess: (client, detail, { invoiceId }) => invoiceDeleted(client, detail, invoiceId),
+  });
+}
 
 export function useUpdateInvoiceMutation() {
   return useAppMutation({

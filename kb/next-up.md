@@ -27,3 +27,8 @@
   `SELECT e.session_id, COUNT(*) FROM score_events e LEFT JOIN session_memberships sm ON sm.session_id=e.session_id AND sm.student_id=e.target_id WHERE e.target_type='student' AND e.session_group_id IS NOT (CASE WHEN sm.attendance='present' THEN sm.session_group_id END) GROUP BY e.session_id`
   挑一节打开课堂情况，核对每组分数 = 到堂组员个人分之和 + 小组独立分。
   → 受影响节次告诉老师（已发出去的旧战报图里组分会和线上对不上）；核对完删掉本节
+
+## 单个学生收款条目删除功能部署之后（2026-10-13）
+
+- **删除入口与隔离**：核对待收款编辑弹窗有删除和二次确认；实际删除时核对当前人数与最终合计，其他条目的金额、备注与收款时间不变。Jimmy 已在生产只读副本完成本地验证，线上尚未删除；上线后的数据修改需按用户当时指示执行。
+  → 结果记到 `kb/sessions/2026-10-13-delete-student-invoice.md`

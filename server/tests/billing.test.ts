@@ -389,6 +389,85 @@ describe('invoices API', () => {
     return { agent, sched, batch, invOf };
   }
 
+  function databaseSnapshot() {
+    const tables = sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as { name: string }[];
+    return Object.fromEntries(tables.map(({ name }) => [name, sqlite.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all()]));
+  }
+
+  it('deletes only the selected pending invoice, preserving every other row in a mixed-payment database', async () => {
+    const { agent, batch, invOf } = await scene();
+    await createBatch(agent, (await createSchedule(agent, LESSONS, '另一期')).id);
+    await agent.post(`/api/invoices/${invOf('s1').id}/confirm`);
+    await agent.put(`/api/invoices/${invOf('s2').id}`).send({ finalAmountCents: 30000, note: '优惠保留' });
+    await agent.put(`/api/invoices/${invOf('s3').id}`).send({ finalAmountCents: 12345, note: '删除目标' });
+    sqlite.prepare("UPDATE students SET status='archived' WHERE id='s3'").run();
+    const before = databaseSnapshot();
+    const res = await agent.delete(`/api/invoices/${invOf('s3').id}`);
+    expect(res.status).toBe(200);
+    const after = databaseSnapshot();
+    expect(after.invoices).toEqual((before.invoices as any[]).filter((r) => r.id !== invOf('s3').id));
+    for (const table of Object.keys(before).filter((t) => !['invoices', 'billing_exclusions'].includes(t))) {
+      expect(after[table], table).toEqual(before[table]);
+    }
+    expect(after.billing_exclusions).toEqual([{ batch_id: batch.id, student_id: 's3' }]);
+    const expected = { invoiceCount: 3, paidCount: 1, paidAmountCents: 53000, pendingAmountCents: 83000, totalAmountCents: 136000 };
+    expect(res.body).toMatchObject({ id: batch.id, ...expected });
+    expect((await agent.get(`/api/billing/batches/${batch.id}`)).body).toMatchObject(expected);
+    expect((await agent.get('/api/billing/batches')).body.find((b: any) => b.id === batch.id)).toMatchObject(expected);
+    expect((await agent.delete(`/api/invoices/${invOf('s3').id}`)).status).toBe(404);
+    expect((await agent.put(`/api/invoices/${invOf('s3').id}`).send({ finalAmountCents: 1 })).status).toBe(404);
+    expect((await agent.post(`/api/invoices/${invOf('s3').id}/confirm`)).status).toBe(404);
+  });
+
+  it('rejects unauthenticated, cross-org, missing and already-paid deletes without changing any data', async () => {
+    const { agent, invOf } = await scene();
+    await agent.post(`/api/invoices/${invOf('s1').id}/confirm`);
+    const { agent: outsider } = await login('waiguo');
+    const before = databaseSnapshot();
+    expect((await request(app).delete(`/api/invoices/${invOf('s2').id}`)).status).toBe(401);
+    expect((await outsider.delete(`/api/invoices/${invOf('s2').id}`)).status).toBe(404);
+    expect((await agent.delete('/api/invoices/missing')).status).toBe(404);
+    expect((await agent.delete(`/api/invoices/${invOf('s1').id}`)).status).toBe(409);
+    expect(databaseSnapshot()).toEqual(before);
+  });
+
+  it('keeps deleted students excluded on reset, including archived attendees, only within this batch', async () => {
+    const { agent, batch, invOf } = await scene();
+    sqlite.prepare("UPDATE students SET status='archived' WHERE id='s3'").run();
+    for (const sid of ['s2', 's3']) expect((await agent.delete(`/api/invoices/${invOf(sid).id}`)).status).toBe(200);
+    const reset = await agent.post(`/api/billing/batches/${batch.id}/recalculate`);
+    expect(reset.body.invoices.map((r: any) => r.studentId).sort()).toEqual(['s1', 's4']);
+    const other = await createBatch(agent, (await createSchedule(agent, LESSONS, '另一期')).id);
+    expect(other.body.invoices.map((r: any) => r.studentId)).toContain('s3');
+    await agent.delete(`/api/billing/batches/${batch.id}`);
+    expect(sqlite.prepare('SELECT * FROM billing_exclusions').all()).toEqual([]);
+  });
+
+  it('allows deleting the last invoice and reports zero totals without deleting the batch', async () => {
+    const { agent, batch } = await scene();
+    for (const inv of batch.invoices) expect((await agent.delete(`/api/invoices/${inv.id}`)).status).toBe(200);
+    const detail = await agent.get(`/api/billing/batches/${batch.id}`);
+    expect(detail.status).toBe(200);
+    expect(detail.body).toMatchObject({ invoices: [], invoiceCount: 0, paidCount: 0, paidAmountCents: 0, pendingAmountCents: 0, totalAmountCents: 0 });
+  });
+
+  it('rolls back invoice deletion if recording the exclusion fails', async () => {
+    const { invOf } = await scene();
+    const { deleteInvoice } = await import('../src/db/mutations.js');
+    sqlite.exec("CREATE TEMP TRIGGER fail_exclusion BEFORE INSERT ON billing_exclusions BEGIN SELECT RAISE(ABORT, 'test failure'); END");
+    const before = databaseSnapshot();
+    expect(() => deleteInvoice(sqlite, invOf('s2').id)).toThrow('test failure');
+    expect(databaseSnapshot()).toEqual(before);
+    sqlite.exec('DROP TRIGGER fail_exclusion');
+  });
+
+  it('cleans up the exclusion when its student is deleted', async () => {
+    const { agent, invOf } = await scene();
+    expect((await agent.delete(`/api/invoices/${invOf('s2').id}`)).status).toBe(200);
+    expect((await agent.delete('/api/students/s2')).status).toBe(200);
+    expect(sqlite.prepare('SELECT * FROM billing_exclusions').all()).toEqual([]);
+  });
+
   it('confirms and unconfirms payment, stamping who and when', async () => {
     const { agent, invOf } = await scene();
     const res = await agent.post(`/api/invoices/${invOf('s1').id}/confirm`);

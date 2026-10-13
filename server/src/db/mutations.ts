@@ -316,6 +316,7 @@ export function deleteStudent(sqlite: DB, studentId: string): void {
     sqlite.prepare(`DELETE FROM check_records WHERE student_id=?`).run(sid);
     sqlite.prepare(`DELETE FROM session_tags WHERE student_id=?`).run(sid);
     sqlite.prepare(`DELETE FROM invoices WHERE student_id=?`).run(sid);
+    sqlite.prepare(`DELETE FROM billing_exclusions WHERE student_id=?`).run(sid);
     sqlite.prepare(`DELETE FROM students WHERE id=?`).run(sid);
   });
   tx(studentId);
@@ -366,6 +367,7 @@ export function deleteClass(sqlite: DB, classId: string): void {
     `DELETE FROM session_groups WHERE session_id IN (${sessions})`,
     `DELETE FROM class_sessions WHERE class_id=@classId`,
     `DELETE FROM invoices WHERE batch_id IN (${batches}) OR student_id IN (${students})`,
+    `DELETE FROM billing_exclusions WHERE batch_id IN (${batches}) OR student_id IN (${students})`,
     `DELETE FROM billing_batches WHERE class_id=@classId`,
     `DELETE FROM schedule_lessons WHERE schedule_id IN (${schedules})`,
     `DELETE FROM class_schedules WHERE class_id=@classId`,
@@ -800,15 +802,25 @@ export function recalculateBatch(
 export function deleteBillingBatch(sqlite: DB, batchId: string): void {
   const tx = sqlite.transaction(() => {
     sqlite.prepare(`DELETE FROM invoices WHERE batch_id=?`).run(batchId);
+    sqlite.prepare(`DELETE FROM billing_exclusions WHERE batch_id=?`).run(batchId);
     sqlite.prepare(`DELETE FROM billing_batches WHERE id=?`).run(batchId);
   });
   tx();
 }
 
-/**
- * Edit a pending invoice (编辑弹窗): final amount / note. adjusted = final
- * differs from computed after the edit (setting it back to 应收 clears the flag).
- */
+/** 原子删除单条待收款台账并记录本批次排除项；不重算或修改其他收款单。 */
+export function deleteInvoice(sqlite: DB, invoiceId: string): boolean {
+  return sqlite.transaction(() => {
+    const removed = sqlite.prepare(`DELETE FROM invoices WHERE id=? AND status='pending' RETURNING batch_id, student_id`)
+      .get(invoiceId) as { batch_id: string; student_id: string } | undefined;
+    if (!removed) return false;
+    sqlite.prepare(`INSERT INTO billing_exclusions (batch_id, student_id) VALUES (?, ?)`)
+      .run(removed.batch_id, removed.student_id);
+    return true;
+  })();
+}
+
+/** 编辑待收款金额与备注；最终金额与应收不同时标记 adjusted。 */
 export function updateInvoice(
   sqlite: DB,
   invoiceId: string,

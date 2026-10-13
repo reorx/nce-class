@@ -108,6 +108,9 @@ export const recalculateBillingBatch = (id: string, terms?: BillingTermsInput) =
 
 export const deleteBillingBatch = (id: string) => request<{ ok: true }>('DELETE', `/api/billing/batches/${id}`);
 
+/** 删除单条待收款记录，返回当前批次详情及汇总；已收款 → 409。 */
+export const deleteInvoice = (id: string) => request<BillingBatchDetail>('DELETE', `/api/invoices/${id}`);
+
 /** 已确认收款 → 409。响应只是这一行，批次汇总需重新读取。 */
 export const updateInvoice = (id: string, input: UpdateInvoiceInput) =>
   request<InvoiceItem>('PUT', `/api/invoices/${id}`, input);
