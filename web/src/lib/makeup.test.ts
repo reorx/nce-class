@@ -40,16 +40,17 @@ describe('makeup derivations', () => {
     expect(makeupCandidates(covered, 's1')).toEqual([]);
     expect(makeupCandidates(covered, 's1', 'mk1').map((c) => c.checked)).toEqual([true, true, true]);
   });
-  it('validates each field and legacy null duration without allowing an empty selection', () => {
+  it('validates each field and legacy null duration, allowing an empty selection', () => {
     const draft = { studentId: 's1', date: '2026-11-09', durationMinutes: '60', sessionIds: ['a'], note: '' };
     expect(validateMakeupForm(draft, { durationRequired: true })).toEqual({});
     for (const durationMinutes of ['', '0', '-1', '601', '1.5', 'abc'])
       expect(
         validateMakeupForm({ ...draft, durationMinutes }, { durationRequired: true }).durationMinutes,
       ).toBeTruthy();
-    expect(
-      validateMakeupForm({ ...draft, studentId: '', date: '', sessionIds: [] }, { durationRequired: true }),
-    ).toMatchObject({ studentId: expect.any(String), date: expect.any(String), sessionIds: expect.any(String) });
+    expect(validateMakeupForm({ ...draft, sessionIds: [] }, { durationRequired: true })).toEqual({});
+    const invalid = validateMakeupForm({ ...draft, studentId: '', date: '', sessionIds: [] }, { durationRequired: true });
+    expect(invalid).toMatchObject({ studentId: expect.any(String), date: expect.any(String) });
+    expect(invalid).not.toHaveProperty('sessionIds');
     expect(validateMakeupForm({ ...draft, durationMinutes: '' }, { durationRequired: false })).toEqual({});
   });
   it('formats lessons, empty coverage, sorts records and includes archived students only with history', () => {

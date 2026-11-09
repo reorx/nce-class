@@ -101,4 +101,40 @@ describe('attendance makeup behavior', () => {
     expect((within(form).getByLabelText('时长（分钟）') as HTMLInputElement).value).toBe('60');
     await screen.findByText('部分课程已不可抵扣，已取消勾选，请重新选择');
   });
+
+  it('saves a record with no covered lessons for a student without absences', async () => {
+    server.on('GET', '/api/classes/c1/attendance', f.attendance());
+    server.on('POST', '/api/classes/c1/makeups', { ...record, sessionIds: [] });
+    renderApp(client, '/classes/c1/attendance?view=makeups');
+    fireEvent.click(await screen.findByRole('button', { name: '登记补课' }));
+    const form = screen.getByRole('form', { name: '补课记录表单' });
+    fireEvent.change(within(form).getByLabelText('学生'), { target: { value: 's1' } });
+    expect(within(form).getByText(/可以先登记，之后有缺课时再编辑这条记录勾选/)).toBeTruthy();
+    const save = within(form).getByRole('button', { name: '保存补课记录' }) as HTMLButtonElement;
+    expect(save.disabled).toBe(false);
+    fireEvent.click(within(form).getByRole('button', { name: '60' }));
+    fireEvent.click(save);
+    await waitFor(() => expect(server.count('POST', '/api/classes/c1/makeups')).toBe(1));
+    expect(server.calls.find((c) => c.method === 'POST')?.body).toMatchObject({ studentId: 's1', sessionIds: [] });
+  });
+
+  it('saves an edited record after unchecking every covered lesson', async () => {
+    server.on('GET', '/api/classes/c1/attendance', { ...data(), makeups: [record] });
+    server.on('PUT', '/api/makeups/mk1', { ...record, sessionIds: [] });
+    renderApp(client, '/classes/c1/attendance?view=makeups');
+    fireEvent.click(await screen.findByRole('button', { name: /11\/9/ }));
+    const form = screen.getByRole('form', { name: '补课记录表单' });
+    fireEvent.click(within(form).getByRole('checkbox', { name: /L7/ }));
+    fireEvent.click(within(form).getByRole('button', { name: '保存补课记录' }));
+    await waitFor(() => expect(server.count('PUT', '/api/makeups/mk1')).toBe(1));
+    expect(server.calls.find((c) => c.method === 'PUT')?.body).toMatchObject({ sessionIds: [] });
+  });
+
+  it('uses the short delete confirmation for a record without covered lessons', async () => {
+    server.on('GET', '/api/classes/c1/attendance', { ...data(), makeups: [{ ...record, sessionIds: [] }] });
+    renderApp(client, '/classes/c1/attendance?view=makeups');
+    fireEvent.click(await screen.findByRole('button', { name: /11\/9/ }));
+    fireEvent.click(screen.getByRole('button', { name: '删除这条补课记录' }));
+    expect(screen.getByText('确定删除这条补课记录吗？')).toBeTruthy();
+  });
 });

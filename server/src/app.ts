@@ -741,11 +741,10 @@ function parseMakeup(
   const ids = body?.sessionIds;
   if (
     !Array.isArray(ids) ||
-    !ids.length ||
     ids.some((id) => typeof id !== 'string') ||
     new Set(ids).size !== ids.length
   )
-    return invalid('请至少选择一节课，且不能重复');
+    return invalid('抵扣的课必须是不重复的课程 ID 列表');
   for (const id of ids) {
     const session = q.sessionById.get(id) as any;
     if (!session || session.class_id !== classId || session.status !== 'ended')

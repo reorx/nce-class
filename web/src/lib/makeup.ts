@@ -41,7 +41,6 @@ export function validateMakeupForm(draft: MakeupDraft, options: { durationRequir
     (!Number.isInteger(duration) || duration < 1 || duration > 600)
   )
     errors.durationMinutes = '请填写 1–600 的正整数';
-  if (!draft.sessionIds.length) errors.sessionIds = '请至少选择一节课';
   return errors;
 }
 

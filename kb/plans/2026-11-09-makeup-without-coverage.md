@@ -99,13 +99,13 @@ tags:
 
 ### 实施步骤
 
-- [ ] 1. server 测试先行：在 `server/tests/api.test.ts` 的 `describe('makeup records（补课台账）')` 里，把 `{ sessionIds: [] }` 从 `rejects invalid creation` 表中移除，再补上 `{ sessionIds: undefined }`、`{ sessionIds: 'sess1' }`（仍应 400）；新增用例「creates and updates a record with no covered lessons」（断言见下）。跑测试，新用例应失败
-- [ ] 2. 改 `parseMakeup`，server 测试全绿，`pnpm --filter server exec tsc --noEmit` 通过
-- [ ] 3. web 单测先行：改 `web/src/lib/makeup.test.ts` 的 `validates each field ...` 用例（重命名，空 `sessionIds` 不再报错）；在 `web/src/pages/ClassAttendance.test.tsx` 新增页面级用例（见下）。跑测试，新用例应失败
-- [ ] 4. 改 `validateMakeupForm` 与 `MakeupFormModal.tsx`，web 测试全绿，`pnpm --filter web exec tsc --noEmit` 通过
-- [ ] 5. 更新 `kb/docs/business-rules.md` 与原补课 plan 里那几处
-- [ ] 6. agent-browser 端到端验证（见下），截图存到 `tmp/2026-11-09-makeup-without-coverage/`
-- [ ] 7. 提交（代码 + 文档 + 本 plan 勾选，一个 commit，commit message 按 AGENTS.md 格式）。**不要 push**：push master 会触发生产部署，由用户决定
+- [x] 1. server 测试先行：在 `server/tests/api.test.ts` 的 `describe('makeup records（补课台账）')` 里，把 `{ sessionIds: [] }` 从 `rejects invalid creation` 表中移除，再补上 `{ sessionIds: undefined }`、`{ sessionIds: 'sess1' }`（仍应 400）；新增用例「creates and updates a record with no covered lessons」（断言见下）。跑测试，新用例应失败
+- [x] 2. 改 `parseMakeup`，server 测试全绿，`pnpm --filter server exec tsc --noEmit` 通过
+- [x] 3. web 单测先行：改 `web/src/lib/makeup.test.ts` 的 `validates each field ...` 用例（重命名，空 `sessionIds` 不再报错）；在 `web/src/pages/ClassAttendance.test.tsx` 新增页面级用例（见下）。跑测试，新用例应失败
+- [x] 4. 改 `validateMakeupForm` 与 `MakeupFormModal.tsx`，web 测试全绿，`pnpm --filter web exec tsc --noEmit` 通过
+- [x] 5. 更新 `kb/docs/business-rules.md` 与原补课 plan 里那几处
+- [x] 6. agent-browser 端到端验证（见下），截图存到 `tmp/2026-11-09-makeup-without-coverage/`
+- [x] 7. 提交（代码 + 文档 + 本 plan 勾选，一个 commit，commit message 按 AGENTS.md 格式）。**不要 push**：push master 会触发生产部署，由用户决定
 
 ### 测试与验证
 

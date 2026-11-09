@@ -104,7 +104,11 @@ export function MakeupFormModal({
     >
       {confirmDelete ? (
         <div className="makeup-form">
-          <p>删除后，它抵扣的 {editing?.sessionIds.length ?? 0} 节课将恢复为原状态，确定吗？</p>
+          {editing?.sessionIds.length ? (
+            <p>删除后，它抵扣的 {editing.sessionIds.length} 节课将恢复为原状态，确定吗？</p>
+          ) : (
+            <p>确定删除这条补课记录吗？</p>
+          )}
           <div className="makeup-actions">
             <button disabled={busy} onClick={() => setConfirmDelete(false)}>
               取消
@@ -184,7 +188,7 @@ export function MakeupFormModal({
             {!draft.studentId ? (
               <p className="makeup-hint">请先选择学生</p>
             ) : !candidates.length ? (
-              <p className="makeup-hint">该学生没有可抵扣的缺课</p>
+              <p className="makeup-hint">该学生暂时没有可抵扣的缺课，可以先登记，之后有缺课时再编辑这条记录勾选</p>
             ) : (
               <>
                 <label className="makeup-check">
@@ -227,7 +231,6 @@ export function MakeupFormModal({
                 </div>
               </>
             )}
-            {errors.sessionIds && <p className="makeup-error">{errors.sessionIds}</p>}
 
             <label htmlFor="makeup-note">备注（可选）</label>
             <textarea
@@ -246,7 +249,7 @@ export function MakeupFormModal({
               <button type="button" onClick={onClose}>
                 取消
               </button>
-              <button type="submit" className="makeup-primary" disabled={!!draft.studentId && candidates.length === 0}>
+              <button type="submit" className="makeup-primary">
                 {busy ? '保存中…' : '保存补课记录'}
               </button>
             </div>

@@ -53,11 +53,34 @@ describe('makeup records（补课台账）', () => {
     expect(data.records.some((r: any) => r.sessionId === 'early' && r.studentId === 's4')).toBe(false);
   });
 
+  it('creates and updates a record with no covered lessons', async () => {
+    const { agent } = await login();
+    const created = await agent.post('/api/classes/c1/makeups').send(input({ sessionIds: [] }));
+    expect(created.status).toBe(201);
+    expect(created.body.sessionIds).toEqual([]);
+    const data = (await agent.get('/api/classes/c1/attendance')).body;
+    expect(data.makeups.find((m: any) => m.id === created.body.id).sessionIds).toEqual([]);
+    expect(data.makeups.flatMap((m: any) => m.sessionIds)).toEqual([]);
+
+    const covered = (await agent.post('/api/classes/c1/makeups').send(input({ sessionIds: ['sess1'] }))).body;
+    const released = await agent.put(`/api/makeups/${covered.id}`).send(input({ sessionIds: [] }));
+    expect(released.status).toBe(200);
+    expect(released.body.sessionIds).toEqual([]);
+    const reused = await agent.post('/api/classes/c1/makeups').send(input({ sessionIds: ['sess1'] }));
+    expect(reused.status).toBe(201);
+    await agent.delete(`/api/makeups/${reused.body.id}`);
+
+    const linked = await agent.put(`/api/makeups/${created.body.id}`).send(input({ sessionIds: ['sess1'] }));
+    expect(linked.status).toBe(200);
+    expect(linked.body.sessionIds).toEqual(['sess1']);
+  });
+
   it.each([
     { studentId: 's1' },
     { studentId: 'so1' },
     { studentId: 'missing' },
-    { sessionIds: [] },
+    { sessionIds: undefined },
+    { sessionIds: 'sess1' },
     { sessionIds: ['sess1', 'sess1'] },
     { sessionIds: ['live'] },
     { sessionIds: ['foreign'] },
