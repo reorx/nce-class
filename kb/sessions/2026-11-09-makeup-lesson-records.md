@@ -120,7 +120,7 @@ agent-browser 人工流程与截图索引：
 
 ## 遗留问题
 
-- 尚未部署，线上原 11 格的迁移结果待用户部署后核对，已写入 next-up；本次未 SSH、未查询或修改生产数据。
+- 已部署（2026-11-09，hookploy `dp_1a1be61cbd9508dd569` succeeded，`/api/health` ok）。部署前在服务器留了快照 `/tmp/nce-class-pre-makeup-20261109.db`（含 11 个旧标记）。线上只读核对：`makeup_records` 11 条（启航班 8、六年级 3，时长均为 NULL），抵扣 11 条，`made_up=1` 剩 0，没有抵扣落在到勤格上。考勤页界面待老师账号登录确认，见 next-up。
 - 已有离线写入暂停后自动恢复的问题仍按 `kb/known-issues.md` 跟进，本次未扩大修改范围。
 - miniapp 未改动，未运行其测试。
 
