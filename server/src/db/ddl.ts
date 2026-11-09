@@ -79,9 +79,20 @@ CREATE TABLE IF NOT EXISTS session_groups (
 );
 CREATE TABLE IF NOT EXISTS session_memberships (
   id TEXT PRIMARY KEY, session_id TEXT NOT NULL, student_id TEXT NOT NULL,
-  session_group_id TEXT, attendance TEXT NOT NULL DEFAULT 'present',
-  made_up INTEGER NOT NULL DEFAULT 0
+  session_group_id TEXT, attendance TEXT NOT NULL DEFAULT 'present'
 );
+CREATE TABLE IF NOT EXISTS makeup_records (
+  id TEXT PRIMARY KEY, class_id TEXT NOT NULL, student_id TEXT NOT NULL,
+  date TEXT NOT NULL, duration_minutes INTEGER, note TEXT, created_by TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_makeup_records_class ON makeup_records(class_id);
+CREATE TABLE IF NOT EXISTS makeup_record_sessions (
+  makeup_id TEXT NOT NULL, session_id TEXT NOT NULL, student_id TEXT NOT NULL,
+  PRIMARY KEY (makeup_id, session_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_makeup_session_student ON makeup_record_sessions(session_id, student_id);
 CREATE TABLE IF NOT EXISTS score_events (
   id TEXT PRIMARY KEY, session_id TEXT NOT NULL, target_type TEXT NOT NULL,
   target_id TEXT NOT NULL, session_group_id TEXT, delta INTEGER NOT NULL,

@@ -152,11 +152,12 @@ export const profile = (over: Partial<StudentProfile> = {}): StudentProfile => (
 });
 
 export const attendance = (over: Partial<ClassAttendance> = {}): ClassAttendance => ({
+  makeups: [],
   classId: 'c1',
   className: '三年级A班',
   sessions: [{ id: 'x1', date: '2026-10-01', startedAt: null, lessonNumber: 7, lessonTitle: null }],
   students: [{ id: 's1', name: 'Tom', cnName: '汤姆', status: 'active' }],
-  records: [{ sessionId: 'x1', studentId: 's1', status: 'present', madeUp: false }],
+  records: [{ sessionId: 'x1', studentId: 's1', status: 'present' }],
   ...over,
 });
 

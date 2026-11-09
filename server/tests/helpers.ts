@@ -36,6 +36,8 @@ export async function setupTestApp(): Promise<{ app: Server; sqlite: DB; reseed:
 }
 
 const TABLES = [
+  'makeup_record_sessions',
+  'makeup_records',
   'billing_exclusions',
   'invoices',
   'billing_batches',

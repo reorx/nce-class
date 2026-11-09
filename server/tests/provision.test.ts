@@ -28,6 +28,62 @@ beforeAll(async () => {
 });
 
 describe('migrate', () => {
+  it('converts legacy makeup flags atomically and idempotently, keeps the rollback column', () => {
+    const old = new Database(':memory:');
+    old.exec(DDL);
+    old.exec(`ALTER TABLE session_memberships ADD COLUMN made_up INTEGER NOT NULL DEFAULT 0;
+      INSERT INTO class_sessions (id,class_id,teacher_id,date) VALUES ('old','c1','teacher','2026-09-02');
+      INSERT INTO session_memberships (id,session_id,student_id,attendance,made_up) VALUES
+        ('a','old','s1','absent',1),('b','old','s2','leave',1),('c','old','s3','present',1);`);
+    provision.migrate(old);
+    provision.migrate(old);
+    expect(
+      old
+        .prepare('SELECT student_id,date,duration_minutes,note,created_by FROM makeup_records ORDER BY student_id')
+        .all(),
+    ).toEqual(
+      ['s1', 's2'].map((student_id) => ({
+        student_id,
+        date: '2026-09-02',
+        duration_minutes: null,
+        note: '由旧版「已补课」标记转换',
+        created_by: 'teacher',
+      })),
+    );
+    expect(old.prepare('SELECT session_id,student_id FROM makeup_record_sessions ORDER BY student_id').all()).toEqual([
+      { session_id: 'old', student_id: 's1' },
+      { session_id: 'old', student_id: 's2' },
+    ]);
+    expect(old.prepare('SELECT COUNT(*) n FROM session_memberships WHERE made_up=1').get()).toEqual({ n: 0 });
+    old.close();
+  });
+
+  it('keeps existing coverage when a rolled-back page reopens the same legacy flag', () => {
+    const old = new Database(':memory:');
+    old.exec(DDL);
+    old.exec(`ALTER TABLE session_memberships ADD COLUMN made_up INTEGER NOT NULL DEFAULT 0;
+      INSERT INTO class_sessions (id,class_id,teacher_id,date) VALUES ('old','c1','teacher','2026-09-02');
+      INSERT INTO session_memberships (id,session_id,student_id,attendance,made_up) VALUES ('a','old','s1','absent',1);`);
+    provision.migrate(old);
+    const original = old.prepare('SELECT * FROM makeup_records').all();
+    old.exec('UPDATE session_memberships SET made_up=1');
+    expect(() => provision.migrate(old)).not.toThrow();
+    expect(old.prepare('SELECT * FROM makeup_records').all()).toEqual(original);
+    expect(old.prepare('SELECT COUNT(*) n FROM makeup_record_sessions').get()).toEqual({ n: 1 });
+    expect(old.prepare('SELECT made_up FROM session_memberships').get()).toEqual({ made_up: 0 });
+    old.close();
+  });
+
+  it('does not add the legacy makeup column on new databases', () => {
+    const fresh = new Database(':memory:');
+    provision.migrate(fresh);
+    provision.migrate(fresh);
+    expect((fresh.prepare('PRAGMA table_info(session_memberships)').all() as any[]).map((r) => r.name)).not.toContain(
+      'made_up',
+    );
+    expect(fresh.prepare('SELECT * FROM makeup_records').all()).toEqual([]);
+    fresh.close();
+  });
   it('creates the full schema on an empty database and is idempotent', () => {
     provision.migrate(sqlite);
     provision.migrate(sqlite); // second run must be a no-op, not an error
@@ -221,9 +277,9 @@ describe('migrate: students.cn_name replaces en_name', () => {
     expect(columns(db)).toContain('cn_name');
     expect(columns(db)).not.toContain('en_name');
     // 旧列不回填: 英文名本来就在 name 里, cn_name 留空等老师补
-    expect(db.prepare(`SELECT name, cn_name, parent_phone, source, status FROM students WHERE id='s-old'`).get()).toEqual(
-      { name: 'Lucy', cn_name: null, parent_phone: '13800138000', source: 'teacher', status: 'active' },
-    );
+    expect(
+      db.prepare(`SELECT name, cn_name, parent_phone, source, status FROM students WHERE id='s-old'`).get(),
+    ).toEqual({ name: 'Lucy', cn_name: null, parent_phone: '13800138000', source: 'teacher', status: 'active' });
 
     const fresh = new Database(':memory:');
     provision.migrate(fresh);
@@ -299,7 +355,9 @@ describe('createTeacher', () => {
 
 async function login(username: string, password: string) {
   const { createApp } = await import('../src/app.js');
-  return request(await listenLocal(createApp())).post('/api/auth/login').send({ username, password });
+  return request(await listenLocal(createApp()))
+    .post('/api/auth/login')
+    .send({ username, password });
 }
 
 describe('resetPassword', () => {

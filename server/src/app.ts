@@ -20,6 +20,9 @@ import {
   addStudent,
   bindTeacherWechat,
   commitSession,
+  createMakeup,
+  updateMakeup,
+  deleteMakeup,
   confirmInvoice,
   deleteInvoice,
   createBillingBatch,
@@ -56,6 +59,7 @@ import {
   type GroupInput,
   type InvoiceSnapshotRow,
   type ScheduleLessonInput,
+  type MakeupWriteInput,
 } from './db/mutations.js';
 import { MIN_PASSWORD_LENGTH, resetPassword } from './db/provision.js';
 import {
@@ -203,10 +207,18 @@ const q = {
     `SELECT id, name, cn_name, status FROM students WHERE class_id=? AND status != 'archived' ORDER BY created_at, id`,
   ),
   attendanceRecordsOfClass: sqlite.prepare(
-    `SELECT sm.session_id sid, sm.student_id stid, sm.attendance, sm.made_up
+    `SELECT sm.session_id sid, sm.student_id stid, sm.attendance
      FROM session_memberships sm JOIN class_sessions cs ON cs.id = sm.session_id
      WHERE cs.class_id=? AND cs.status='ended'`,
   ),
+  makeupsOfClass: sqlite.prepare(`SELECT mr.*, st.name student_name, st.status student_status, t.name created_by_name
+    FROM makeup_records mr JOIN students st ON st.id=mr.student_id LEFT JOIN teachers t ON t.id=mr.created_by
+    WHERE mr.class_id=? ORDER BY mr.date DESC, mr.created_at DESC, mr.rowid DESC`),
+  makeupSessionsOfClass: sqlite.prepare(`SELECT ms.* FROM makeup_record_sessions ms
+    JOIN class_sessions cs ON cs.id=ms.session_id WHERE cs.class_id=? ORDER BY cs.date, cs.started_at, cs.id`),
+  makeupById: sqlite.prepare(`SELECT mr.*, st.name student_name, st.status student_status, t.name created_by_name
+    FROM makeup_records mr JOIN students st ON st.id=mr.student_id LEFT JOIN teachers t ON t.id=mr.created_by WHERE mr.id=?`),
+  coverageOf: sqlite.prepare('SELECT makeup_id FROM makeup_record_sessions WHERE session_id=? AND student_id=?'),
   defaultGroupOfStudent: sqlite.prepare(
     `SELECT g.name, g.emoji FROM class_group_memberships m JOIN class_groups g ON g.id=m.class_group_id
      WHERE m.student_id=?`,
@@ -299,7 +311,7 @@ const q = {
   ),
   // 计费口径的出勤源：该班全部已结束课堂的快照行（lib/billing.ts 消费）
   billingMembershipsOfClass: sqlite.prepare(
-    `SELECT sm.session_id, sm.student_id, sm.attendance, sm.made_up
+    `SELECT sm.session_id, sm.student_id, sm.attendance
      FROM session_memberships sm JOIN class_sessions cs ON cs.id = sm.session_id
      WHERE cs.class_id=? AND cs.status='ended'`,
   ),
@@ -686,10 +698,65 @@ function billingInputsOfClass(classId: string) {
         sessionId: m.session_id,
         studentId: m.student_id,
         attendance: m.attendance,
-        madeUp: m.made_up,
       }),
     ),
+    makeups: (q.makeupSessionsOfClass.all(classId) as any[]).map((r) => ({
+      sessionId: r.session_id,
+      studentId: r.student_id,
+    })),
   };
+}
+
+function makeupPayload(record: any, links: any[]) {
+  return {
+    id: record.id,
+    studentId: record.student_id,
+    studentName: record.student_name,
+    studentStatus: record.student_status,
+    date: record.date,
+    durationMinutes: record.duration_minutes,
+    note: record.note,
+    createdByName: record.created_by_name ?? null,
+    createdAt: record.created_at,
+    sessionIds: links.filter((l) => l.makeup_id === record.id).map((l) => l.session_id),
+  };
+}
+
+/** 请求边界校验；同步 SQLite 的检查与写入之间不会让其他请求插入。 */
+function parseMakeup(
+  body: any,
+  classId: string,
+  studentId: string,
+  editing?: any,
+): { input: MakeupWriteInput } | { error: string; status: number } {
+  const invalid = (error: string) => ({ error, status: 400 });
+  if (!DATE_RE.test(typeof body?.date === 'string' ? body.date : '')) return invalid('补课日期必须是 YYYY-MM-DD');
+  const duration = body?.durationMinutes;
+  if (
+    !(duration === null && editing?.duration_minutes === null) &&
+    !(Number.isInteger(duration) && duration >= 1 && duration <= 600)
+  )
+    return invalid('时长必须是 1–600 的正整数');
+  if (body?.note != null && typeof body.note !== 'string') return invalid('备注必须是字符串或 null');
+  const ids = body?.sessionIds;
+  if (
+    !Array.isArray(ids) ||
+    !ids.length ||
+    ids.some((id) => typeof id !== 'string') ||
+    new Set(ids).size !== ids.length
+  )
+    return invalid('请至少选择一节课，且不能重复');
+  for (const id of ids) {
+    const session = q.sessionById.get(id) as any;
+    if (!session || session.class_id !== classId || session.status !== 'ended')
+      return invalid('只能抵扣本班已结束的课');
+    const member = q.membershipOfStudent.get(id, studentId) as any;
+    if (member?.attendance === 'present') return invalid('已到勤的课无需补课');
+    const coverage = q.coverageOf.get(id, studentId) as any;
+    if (coverage && coverage.makeup_id !== editing?.id)
+      return { error: '有课程已被其他补课记录抵扣，请重新选择', status: 409 };
+  }
+  return { input: { date: body.date, durationMinutes: duration, note: contentOrNull(body.note), sessionIds: ids } };
 }
 
 function invoicePayload(r: any) {
@@ -1785,12 +1852,45 @@ export function createApp() {
       sessionId: r.sid,
       studentId: r.stid,
       status: r.attendance,
-      madeUp: r.made_up === 1,
     }));
-    res.json({ classId: c.id, className: c.name, sessions, students, records });
+    const links = q.makeupSessionsOfClass.all(c.id) as any[];
+    const makeups = (q.makeupsOfClass.all(c.id) as any[]).map((r) => makeupPayload(r, links));
+    res.json({ classId: c.id, className: c.name, sessions, students, records, makeups });
   });
 
-  // ---- 考勤 correction (status + 补课 flag; cells without a membership row stay locked) ----
+  app.post('/api/classes/:id/makeups', (req, res) => {
+    const teacher = res.locals.teacher;
+    const cls = classInOrg(req.params.id, teacher.org_id);
+    if (!cls) return res.status(404).json({ error: 'class not found' });
+    const studentId = str(req.body?.studentId);
+    const student = studentId ? (q.studentById.get(studentId) as any) : null;
+    if (!student || student.class_id !== cls.id || student.status === 'archived')
+      return res.status(400).json({ error: '请选择本班未归档的学生' });
+    const parsed = parseMakeup(req.body, cls.id, studentId!);
+    if ('error' in parsed) return res.status(parsed.status).json({ error: parsed.error });
+    const id = createMakeup(sqlite, { ...parsed.input, classId: cls.id, studentId: studentId!, createdBy: teacher.id });
+    res.status(201).json(makeupPayload(q.makeupById.get(id), q.makeupSessionsOfClass.all(cls.id) as any[]));
+  });
+
+  app.put('/api/makeups/:id', (req, res) => {
+    const record = q.makeupById.get(req.params.id) as any;
+    if (!record || !classInOrg(record.class_id, res.locals.teacher.org_id))
+      return res.status(404).json({ error: 'makeup not found' });
+    const parsed = parseMakeup(req.body, record.class_id, record.student_id, record);
+    if ('error' in parsed) return res.status(parsed.status).json({ error: parsed.error });
+    updateMakeup(sqlite, record.id, parsed.input);
+    res.json(makeupPayload(q.makeupById.get(record.id), q.makeupSessionsOfClass.all(record.class_id) as any[]));
+  });
+
+  app.delete('/api/makeups/:id', (req, res) => {
+    const record = q.makeupById.get(req.params.id) as any;
+    if (!record || !classInOrg(record.class_id, res.locals.teacher.org_id))
+      return res.status(404).json({ error: 'makeup not found' });
+    deleteMakeup(sqlite, record.id);
+    res.json({ ok: true });
+  });
+
+  // ---- 考勤更正；没有快照行的格子仅可登记补课，不能更正当天出勤 ----
   app.put('/api/sessions/:id/attendance/:studentId', (req, res) => {
     const teacher = res.locals.teacher;
     const s = q.sessionById.get(req.params.id) as any;
@@ -1800,10 +1900,8 @@ export function createApp() {
       return res.status(400).json({ error: 'status 必须是 present / absent / leave' });
     const mem = q.membershipOfStudent.get(s.id, req.params.studentId) as any;
     if (!mem) return res.status(404).json({ error: 'attendance record not found' });
-    // 补课 only makes sense for a missed class; going back to present clears it.
-    const madeUp = status !== 'present' && req.body?.madeUp === true;
-    setAttendance(sqlite, { sessionId: s.id, studentId: req.params.studentId, status, madeUp });
-    res.json({ sessionId: s.id, studentId: req.params.studentId, status, madeUp });
+    const result = setAttendance(sqlite, { sessionId: s.id, studentId: req.params.studentId, status });
+    res.json({ sessionId: s.id, studentId: req.params.studentId, status, ...result });
   });
 
   // ---- recap (read) ----
@@ -1957,6 +2055,7 @@ export function createApp() {
           lessons,
           sessions: inputs.sessions,
           memberships: inputs.memberships,
+          makeups: inputs.makeups,
           today,
           lessonCountOverride,
         });
@@ -1976,7 +2075,9 @@ export function createApp() {
       });
 
     const known = new Set(existing.map((iv) => iv.student_id));
-    const excluded = sqlite.prepare('SELECT student_id FROM billing_exclusions WHERE batch_id=?').all(b.id) as { student_id: string }[];
+    const excluded = sqlite.prepare('SELECT student_id FROM billing_exclusions WHERE batch_id=?').all(b.id) as {
+      student_id: string;
+    }[];
     for (const row of excluded) known.add(row.student_id);
     const additions = buildBatchSnapshot({ ...inputs, lessons, today, lessonCountOverride })
       .filter((r) => !known.has(r.studentId))
@@ -2087,7 +2188,7 @@ export function createApp() {
         lessonNumber: s.lesson_number ?? null,
         lessonTitle: s.lesson_title ?? null,
         attendance: mem?.attendance ?? null, // null = 未入班（该节无快照行）
-        madeUp: mem?.made_up === 1,
+        madeUp: mem?.attendance !== 'present' && !!q.coverageOf.get(s.id, inv.student_id),
         inSchedule: lessonDates.has(s.date),
       });
     }

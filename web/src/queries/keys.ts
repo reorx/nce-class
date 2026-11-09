@@ -48,6 +48,7 @@ export const attendanceKeys = {
   byClass: (classId: string) => ['attendance', 'class', classId] as const,
   /** Mutation key：考勤格 pending overlay 与按格防重复提交据此筛选。 */
   update: () => ['attendance', 'update'] as const,
+  makeup: () => ['attendance', 'makeup'] as const,
 };
 
 export const inviteKeys = {

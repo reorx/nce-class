@@ -23,7 +23,31 @@ export interface AttendanceRecord {
   sessionId: string;
   studentId: string;
   status: AttendanceStatus;
-  madeUp: boolean;
+}
+
+export interface MakeupRecord {
+  id: string;
+  studentId: string;
+  studentName: string;
+  studentStatus: StudentStatus;
+  date: string;
+  durationMinutes: number | null;
+  note: string | null;
+  createdByName: string | null;
+  createdAt: string;
+  sessionIds: string[];
+}
+
+export interface AttendanceUpdateResult extends AttendanceRecord {
+  unlinkedMakeupId: string | null;
+}
+
+export interface MakeupInput {
+  studentId?: string;
+  date: string;
+  durationMinutes: number | null;
+  note: string | null;
+  sessionIds: string[];
 }
 
 export interface ClassAttendance {
@@ -32,16 +56,22 @@ export interface ClassAttendance {
   sessions: AttendanceSession[];
   students: AttendanceStudent[];
   records: AttendanceRecord[];
+  makeups: MakeupRecord[];
 }
 
 export interface AttendanceInput {
   status: AttendanceStatus;
-  madeUp?: boolean;
 }
 
 export const getClassAttendance = (classId: string, options?: RequestOptions) =>
   get<ClassAttendance>(`/api/classes/${classId}/attendance`, options);
 
-/** 考勤更正（leave 只由这里产生）；补课只对未到堂有效，改回 present 服务端会清掉。 */
+/** 考勤更正（leave 只由这里产生）；改回 present 时原子解除补课抵扣。 */
 export const updateAttendance = (sessionId: string, studentId: string, input: AttendanceInput) =>
-  request<AttendanceRecord>('PUT', `/api/sessions/${sessionId}/attendance/${studentId}`, input);
+  request<AttendanceUpdateResult>('PUT', `/api/sessions/${sessionId}/attendance/${studentId}`, input);
+
+export const createMakeup = (classId: string, input: MakeupInput) =>
+  request<MakeupRecord>('POST', `/api/classes/${classId}/makeups`, input);
+export const updateMakeup = (id: string, input: MakeupInput) =>
+  request<MakeupRecord>('PUT', `/api/makeups/${id}`, input);
+export const deleteMakeup = (id: string) => request<{ ok: true }>('DELETE', `/api/makeups/${id}`);

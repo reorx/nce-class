@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import type { AttendanceStatus } from '../api/attendance';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
+import type { AttendanceStatus, MakeupRecord } from '../api/attendance';
+import { Modal } from '../components/Modal';
+import { MakeupList } from '../components/MakeupList';
+import { MakeupFormModal } from '../components/MakeupFormModal';
+import { coverageMap } from '../lib/makeup';
 import { LoadErrorBlock } from '../components/QueryState';
 import {
   buildAttendanceCsv,
@@ -54,7 +58,7 @@ const LEGEND = [
   { ic: '✓', t: '到勤', c: '#2fb457' },
   { ic: '✕', t: '缺勤', c: '#e0454a' },
   { ic: '假', t: '请假', c: '#e0912a' },
-  { ic: '补', t: '补课（计入出勤）', c: '#2a75be' },
+  { ic: '✓', t: '补课抵扣（计入出勤）', c: '#2a75be' },
 ];
 
 type HistEntry = { sessionId: string; studentId: string; prev: CellRecord };
@@ -65,6 +69,10 @@ type HistEntry = { sessionId: string; studentId: string; prev: CellRecord };
 // 撤销历史只收录服务端确认成功的修改；撤销本身也是一次写入，失败时保留记录可重试。
 export function ClassAttendance() {
   const { id = '' } = useParams();
+  const [search, setSearch] = useSearchParams();
+  const makeupView = search.get('view') === 'makeups';
+  const [makeupForm, setMakeupForm] = useState<{ initial?: { studentId: string; sessionId: string }; editing?: MakeupRecord } | null>(null);
+  const [confirmPresent, setConfirmPresent] = useState<{ r: number; c: number; makeup: MakeupRecord } | null>(null);
   const attendanceQuery = useClassAttendanceQuery(id);
   const data = attendanceQuery.data;
   const pendingCells = usePendingAttendanceCells(id);
@@ -81,7 +89,7 @@ export function ClassAttendance() {
   const recs = useMemo(
     () =>
       new Map<string, CellRecord>(
-        (data?.records ?? []).map((r) => [recordKey(r.sessionId, r.studentId), { status: r.status, madeUp: r.madeUp }]),
+        (data?.records ?? []).map((r) => [recordKey(r.sessionId, r.studentId), { status: r.status }]),
       ),
     [data],
   );
@@ -93,7 +101,7 @@ export function ClassAttendance() {
   };
 
   const write = (sessionId: string, studentId: string, next: CellRecord) =>
-    update.mutateAsync({ classId: id, sessionId, studentId, input: { status: next.status, madeUp: next.madeUp } });
+    update.mutateAsync({ classId: id, sessionId, studentId, input: { status: next.status } });
 
   /** 改一格：成功后才进入撤销历史。同格正在保存时页面已禁用入口，这里只兜底提示。 */
   const applyRec = async (sessionId: string, studentId: string, next: CellRecord, prev: CellRecord) => {
@@ -105,14 +113,16 @@ export function ClassAttendance() {
     }
   };
 
+  const coverage = useMemo(() => coverageMap(data?.makeups ?? []), [data?.makeups]);
+
   const rows = useMemo(() => {
     if (!data) return [];
     return data.students.map((st, i) => {
-      const cells = rowCells(st.id, data.sessions, recs);
+      const cells = rowCells(st.id, data.sessions, recs, coverage);
       const stats = rowStats(cells);
       return { st, i, cells, stats, tag: rowTag(st.status, cells), ring: RINGS[i % RINGS.length] };
     });
-  }, [data, recs]);
+  }, [data, recs, coverage]);
 
   const totals = useMemo(() => classAttendanceStats(rows.map((r) => r.stats)), [rows]);
 
@@ -136,14 +146,12 @@ export function ClassAttendance() {
   const setStatus = (r: number, c: number, k: AttendanceStatus) => {
     const cur = cellOf(r, c);
     if (!cur || cur.status === k || cellBusy(r, c)) return;
-    // Coming back to 到勤 makes the makeup moot — mirror the server's clearing.
-    void applyRec(sessions[c].id, students[r].id, { status: k, madeUp: k === 'present' ? false : cur.madeUp }, cur);
-  };
-
-  const toggleMakeup = (r: number, c: number) => {
-    const cur = cellOf(r, c);
-    if (!cur || cellBusy(r, c)) return;
-    void applyRec(sessions[c].id, students[r].id, { status: cur.status, madeUp: !cur.madeUp }, cur);
+    const makeup = coverage.get(recordKey(sessions[c].id, students[r].id));
+    if (k === 'present' && makeup) {
+      setConfirmPresent({ r, c, makeup });
+      return;
+    }
+    void applyRec(sessions[c].id, students[r].id, { status: k }, cur);
   };
 
   const lastEntry = hist[hist.length - 1];
@@ -181,7 +189,7 @@ export function ClassAttendance() {
   const range = sessions.length ? `${fmtMD(sessions[0].date)} – ${fmtMD(sessions[sessions.length - 1].date)}` : '';
 
   const popup = open
-    ? { st: students[open.r], sess: sessions[open.c], rec: cellOf(open.r, open.c), busy: cellBusy(open.r, open.c) }
+    ? { st: students[open.r], sess: sessions[open.c], rec: cellOf(open.r, open.c), busy: cellBusy(open.r, open.c), makeup: rows[open.r].cells[open.c].makeup }
     : null;
 
   return (
@@ -224,6 +232,10 @@ export function ClassAttendance() {
         <span style={{ fontWeight: 900, fontSize: 23 }}>{data.className}</span>
         <span style={{ color: '#b7c5ad', fontSize: 20, fontWeight: 800 }}>·</span>
         <span style={{ fontWeight: 800, fontSize: 19, color: '#66756c' }}>考勤</span>
+        <div className="att-view-tabs" aria-label="考勤视图">
+          <button aria-pressed={!makeupView} onClick={() => setSearch((p) => { const next = new URLSearchParams(p); next.delete('view'); return next; })}>出勤表</button>
+          <button aria-pressed={makeupView} onClick={() => setSearch((p) => { const next = new URLSearchParams(p); next.set('view', 'makeups'); return next; })}>补课记录</button>
+        </div>
         <div style={{ marginLeft: 'auto' }}>
           <button
             onClick={doExport}
@@ -250,6 +262,8 @@ export function ClassAttendance() {
         </div>
       </div>
 
+      {attendanceQuery.isError && <LoadErrorBlock error={attendanceQuery.error} what="考勤" onRetry={attendanceQuery.refetch} />}
+      {makeupView ? <MakeupList data={data} onCreate={() => setMakeupForm({})} onEdit={(editing) => setMakeupForm({ editing })} /> : <>
       {/* info strip */}
       <div
         style={{
@@ -299,7 +313,7 @@ export function ClassAttendance() {
         <span
           style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 13.5, fontWeight: 700, color: '#8a94a0' }}
         >
-          <span style={{ fontSize: 15 }}>💡</span>点击任意格子可更正出勤记录 · 缺勤 / 请假可登记补课
+          <span style={{ fontSize: 15 }}>💡</span>点击任意格子可更正出勤记录或登记补课
         </span>
         <div style={{ marginLeft: 'auto' }}>
           <button
@@ -579,7 +593,7 @@ export function ClassAttendance() {
                     </div>
                     {cells.map((cell, c) => {
                       const off = cell.status == null;
-                      const md = cell.madeUp && !off;
+                      const md = !!cell.makeup;
                       let bg = '#ffffff';
                       if (off) bg = '#f1f3ef';
                       if (md) bg = '#eef5fc';
@@ -589,15 +603,17 @@ export function ClassAttendance() {
                         if (rc && ch) bg = '#e7f4e3';
                         else if (rc || ch) bg = md ? '#e6eefb' : '#f3f8ef';
                       }
-                      const mi = MARKS[cell.status ?? 'off'];
+                      const mi = md ? { t: '✓', s: { ...MARKS.present.s, color: '#2a75be' } } : MARKS[cell.status ?? 'off'];
                       const dl = fmtMD(sessions[c].date);
-                      const title = off
-                        ? `${dl} · 未在班`
-                        : `${dl} · ${STATUS_CN[cell.status as AttendanceStatus]}${md ? '（已补课）' : ''}`;
+                      const title = `${dl} · ${off ? '未在班' : STATUS_CN[cell.status as AttendanceStatus]}${cell.makeup ? `（已补课 · ${fmtMD(cell.makeup.date)} ${cell.makeup.durationMinutes == null ? '未记录时长' : `补 ${cell.makeup.durationMinutes} 分钟`}）` : ''}`;
                       return (
                         <div
                           key={sessions[c].id}
-                          onClick={off ? undefined : () => setOpen({ r, c })}
+                          onClick={() => setOpen({ r, c })}
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`${st.name} ${title}`}
+                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen({ r, c }); } }}
                           onMouseEnter={() => {
                             setHoverR(r);
                             setHoverC(c);
@@ -616,7 +632,7 @@ export function ClassAttendance() {
                             userSelect: 'none',
                             transition: 'background .1s',
                             background: bg,
-                            cursor: off ? 'default' : 'pointer',
+                            cursor: 'pointer',
                           }}
                         >
                           <span style={mi.s}>{mi.t}</span>
@@ -713,7 +729,7 @@ export function ClassAttendance() {
               key={lg.t}
               style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 700, color: '#66756c' }}
             >
-              <span style={{ color: lg.c, fontWeight: 900, fontSize: 15 }}>{lg.ic}</span>
+              <span style={{ color: lg.c, fontWeight: 900, fontSize: 15, position: 'relative', paddingRight: lg.t.startsWith('补课') ? 8 : 0 }}>{lg.ic}{lg.t.startsWith('补课') && <sup style={{ position: 'absolute', right: 0, top: -4, fontSize: 8 }}>补</sup>}</span>
               {lg.t}
             </span>
           ))}
@@ -741,216 +757,37 @@ export function ClassAttendance() {
         </div>
       </div>
 
-      {/* edit popup */}
-      {popup && popup.rec && (
-        <div
-          onClick={() => setOpen(null)}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 60,
-            background: 'rgba(28,40,26,.32)',
-            backdropFilter: 'blur(3px)',
-            WebkitBackdropFilter: 'blur(3px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            animation: 'att-ov-in .16s ease',
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: 420,
-              maxWidth: '92vw',
-              background: '#fff',
-              borderRadius: 26,
-              padding: '24px 26px 22px',
-              boxShadow: '0 30px 70px rgba(20,40,20,.28)',
-              animation: 'att-pop-in .2s cubic-bezier(.2,.9,.3,1.2)',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 13, marginBottom: 20 }}>
-              <div
-                style={{
-                  width: 48,
-                  height: 48,
-                  borderRadius: '50%',
-                  background: '#dbe1e8',
-                  color: '#7c8794',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontWeight: 800,
-                  fontSize: 19,
-                  flexShrink: 0,
-                  border: `2.5px solid ${rows[open!.r].ring}`,
-                }}
-              >
-                {popup.st.name[0]}
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                <span style={{ fontWeight: 900, fontSize: 21 }}>{popup.st.name}</span>
-                <span style={{ fontWeight: 700, fontSize: 14, color: '#8a94a0' }}>
-                  {fmtMD(popup.sess.date)} {weekdayCN(popup.sess.date)} · 第 {open!.c + 1} 次课
-                </span>
-              </div>
-              <button
-                onClick={() => setOpen(null)}
-                style={{
-                  marginLeft: 'auto',
-                  width: 36,
-                  height: 36,
-                  borderRadius: 11,
-                  border: 'none',
-                  background: '#f0f3ed',
-                  color: '#8a94a0',
-                  fontSize: 19,
-                  cursor: 'pointer',
-                  lineHeight: 1,
-                  alignSelf: 'flex-start',
-                }}
-              >
-                ✕
-              </button>
-            </div>
+      </>}
 
-            <div style={{ fontWeight: 800, fontSize: 14, color: '#5b6672', marginBottom: 10 }}>
-              出勤状态
-              {popup.busy && <span style={{ marginLeft: 8, fontWeight: 700, color: '#98a2b0' }}>保存中…</span>}
+      {popup && <Modal open title={`${popup.st.name} · ${fmtMD(popup.sess.date)} ${weekdayCN(popup.sess.date)}`} onClose={() => setOpen(null)} width={450}>
+        <div className="makeup-form">
+          {popup.rec ? <>
+            <div style={{ fontWeight: 800, marginBottom: 10 }}>出勤状态{popup.busy ? ' · 保存中…' : ''}</div>
+            <div style={{ display: 'flex', gap: 9, marginBottom: 22 }}>
+              {STATUS_DEFS.map((sd) => <button key={sd.k} disabled={popup.busy} onClick={() => setStatus(open!.r, open!.c, sd.k)} style={{ flex: 1, padding: '13px 6px', border: `2px solid ${popup.rec!.status === sd.k ? sd.c : '#e6eae4'}`, background: popup.rec!.status === sd.k ? sd.bg : '#fff', borderRadius: 12 }}>{sd.ic} {sd.label}</button>)}
             </div>
-            <div style={{ display: 'flex', gap: 9, marginBottom: 18 }}>
-              {STATUS_DEFS.map((sd) => {
-                const sel = popup.rec!.status === sd.k;
-                return (
-                  <button
-                    key={sd.k}
-                    onClick={() => setStatus(open!.r, open!.c, sd.k)}
-                    disabled={popup.busy}
-                    style={{
-                      flex: 1,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 6,
-                      padding: '13px 6px',
-                      borderRadius: 14,
-                      border: `2px solid ${sel ? sd.c : '#e6eae4'}`,
-                      background: sel ? sd.bg : '#fff',
-                      color: sel ? '#2c3340' : '#8a94a0',
-                      fontWeight: 800,
-                      fontSize: 16,
-                      fontFamily: 'inherit',
-                      cursor: popup.busy ? 'default' : 'pointer',
-                      opacity: popup.busy && !sel ? 0.55 : 1,
-                      transition: 'all .12s',
-                    }}
-                  >
-                    <span style={{ color: sd.c, fontWeight: 900, fontSize: 16 }}>{sd.ic}</span>
-                    {sd.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            <div style={{ fontWeight: 800, fontSize: 14, color: '#5b6672', marginBottom: 10 }}>补课</div>
-            {popup.rec.status === 'present' ? (
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 9,
-                  background: '#f4f6f2',
-                  borderRadius: 16,
-                  padding: '14px 16px',
-                  marginBottom: 16,
-                  color: '#98a2b0',
-                  fontWeight: 700,
-                  fontSize: 13.5,
-                }}
-              >
-                <span style={{ fontSize: 15, color: '#2fb457' }}>✓</span>已到勤，无需补课
-              </div>
-            ) : (
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 14,
-                  background: '#f6f9f2',
-                  borderRadius: 16,
-                  padding: '14px 16px',
-                  marginBottom: 16,
-                }}
-              >
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
-                  <span style={{ fontWeight: 800, fontSize: 16 }}>登记补课</span>
-                  <span style={{ fontWeight: 700, fontSize: 12.5, color: '#8a94a0' }}>
-                    {popup.rec.madeUp ? '已补课 · 统计中计为已上 1 次课' : '本次未到勤 · 开启后计入出勤统计'}
-                  </span>
-                </div>
-                <button
-                  onClick={() => toggleMakeup(open!.r, open!.c)}
-                  disabled={popup.busy}
-                  style={{
-                    marginLeft: 'auto',
-                    width: 48,
-                    height: 27,
-                    borderRadius: 14,
-                    border: 'none',
-                    cursor: 'pointer',
-                    padding: 0,
-                    position: 'relative',
-                    flexShrink: 0,
-                    transition: 'background .15s',
-                    background: popup.rec.madeUp ? '#2fb457' : '#cdd6c8',
-                  }}
-                >
-                  <span
-                    style={{
-                      position: 'absolute',
-                      top: 3,
-                      left: 3,
-                      width: 21,
-                      height: 21,
-                      borderRadius: '50%',
-                      background: '#fff',
-                      boxShadow: '0 1px 3px rgba(0,0,0,.2)',
-                      transition: 'transform .15s',
-                      transform: `translateX(${popup.rec.madeUp ? '21px' : '0px'})`,
-                    }}
-                  />
-                </button>
-              </div>
-            )}
-
-            <div style={{ fontSize: 12.5, fontWeight: 600, color: '#a7b0bb', lineHeight: 1.5, marginBottom: 18 }}>
-              出勤已在上课时记录，此处用于更正记录，或为未到勤的学生登记补课。
-            </div>
-
-            <button
-              onClick={() => setOpen(null)}
-              style={{
-                width: '100%',
-                padding: 14,
-                borderRadius: 15,
-                border: 'none',
-                background: '#2fb457',
-                color: '#fff',
-                fontWeight: 800,
-                fontSize: 17,
-                fontFamily: 'inherit',
-                cursor: 'pointer',
-                boxShadow: '0 5px 14px rgba(47,180,87,.3)',
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = '#28a04d')}
-              onMouseLeave={(e) => (e.currentTarget.style.background = '#2fb457')}
-            >
-              完成
-            </button>
-          </div>
+          </> : <p>该生当天未在班</p>}
+          <div style={{ fontWeight: 800, marginBottom: 10 }}>补课</div>
+          {popup.rec?.status === 'present' ? <p className="makeup-hint">已到勤，无需补课</p> : popup.makeup ? <div className="makeup-hint">
+            <p style={{ marginTop: 0 }}>已通过 {fmtMD(popup.makeup.date)} 补课抵扣 · {popup.makeup.durationMinutes == null ? '未记录时长' : `${popup.makeup.durationMinutes} 分钟`}</p>
+            <button onClick={() => { setMakeupForm({ editing: popup.makeup! }); setOpen(null); }}>查看补课记录</button>
+          </div> : <div className="makeup-hint"><button onClick={() => { setMakeupForm({ initial: { studentId: popup.st.id, sessionId: popup.sess.id } }); setOpen(null); }}>登记补课</button></div>}
+          <div className="makeup-actions"><button className="makeup-primary" onClick={() => setOpen(null)}>完成</button></div>
         </div>
-      )}
+      </Modal>}
+
+      {confirmPresent && <Modal open title="解除补课抵扣" onClose={() => setConfirmPresent(null)}>
+        <div className="makeup-form"><p>这节已通过 {fmtMD(confirmPresent.makeup.date)} 补课抵扣，改为到勤将解除抵扣，确定吗？</p>
+          <div className="makeup-actions"><button onClick={() => setConfirmPresent(null)}>取消</button><button className="makeup-primary" onClick={() => {
+            const { r, c } = confirmPresent;
+            const prev = cellOf(r, c);
+            setConfirmPresent(null);
+            if (prev && !cellBusy(r, c)) void applyRec(sessions[c].id, students[r].id, { status: 'present' }, prev);
+          }}>确认改为到勤</button></div>
+        </div>
+      </Modal>}
+
+      {makeupForm && <MakeupFormModal data={data} initial={makeupForm.initial} editing={makeupForm.editing} onClose={() => setMakeupForm(null)} />}
 
       {toast && (
         <div
@@ -959,7 +796,7 @@ export function ClassAttendance() {
             left: '50%',
             bottom: 26,
             transform: 'translate(-50%,0)',
-            zIndex: 80,
+            zIndex: 210,
             background: '#1e2a20',
             color: '#fff',
             padding: '11px 20px',

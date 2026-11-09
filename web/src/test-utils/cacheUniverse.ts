@@ -53,7 +53,7 @@ const universe: Record<string, [QueryKey, unknown]> = {
       classId: 'c2',
       sessions: [{ id: 'x9', date: '2026-10-01', startedAt: null, lessonNumber: 7, lessonTitle: null }],
       students: [{ id: 's9', name: 'Amy', cnName: null, status: 'active' }],
-      records: [{ sessionId: 'x9', studentId: 's9', status: 'present', madeUp: false }],
+      records: [{ sessionId: 'x9', studentId: 's9', status: 'present' }],
     }),
   ],
   'invites/c1': [inviteKeys.requests('c1'), []],

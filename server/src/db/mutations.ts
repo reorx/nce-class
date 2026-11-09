@@ -277,18 +277,51 @@ export function setSessionHomework(
     .run(p.content, p.reviewBook, p.reviewLesson, sessionId);
 }
 
-/**
- * 考勤 correction: rewrite one membership's attendance status (+补课 flag).
- * The group snapshot is left untouched — flipping present↔absent after the
- * fact must not lose where the student sat that day.
- */
-export function setAttendance(
-  sqlite: DB,
-  p: { sessionId: string; studentId: string; status: string; madeUp: boolean },
-): void {
-  sqlite
-    .prepare(`UPDATE session_memberships SET attendance=?, made_up=? WHERE session_id=? AND student_id=?`)
-    .run(p.status, p.madeUp ? 1 : 0, p.sessionId, p.studentId);
+/** 更正出勤并在同一事务中解除到勤格的抵扣；保留当天分组座位。 */
+export function setAttendance(sqlite: DB, p: { sessionId: string; studentId: string; status: string }): { unlinkedMakeupId: string | null } {
+  return sqlite.transaction(() => {
+    sqlite.prepare('UPDATE session_memberships SET attendance=? WHERE session_id=? AND student_id=?').run(p.status, p.sessionId, p.studentId);
+    const coverage = p.status === 'present' ? sqlite.prepare('SELECT makeup_id FROM makeup_record_sessions WHERE session_id=? AND student_id=?').get(p.sessionId, p.studentId) as { makeup_id: string } | undefined : undefined;
+    if (coverage) sqlite.prepare('DELETE FROM makeup_record_sessions WHERE session_id=? AND student_id=?').run(p.sessionId, p.studentId);
+    return { unlinkedMakeupId: coverage?.makeup_id ?? null };
+  })();
+}
+
+export interface MakeupWriteInput {
+  date: string;
+  durationMinutes: number | null;
+  note: string | null;
+  sessionIds: string[];
+}
+
+function writeMakeupSessions(sqlite: DB, id: string, studentId: string, sessionIds: string[]): void {
+  const insert = sqlite.prepare('INSERT INTO makeup_record_sessions (makeup_id,session_id,student_id) VALUES (?,?,?)');
+  for (const sessionId of sessionIds) insert.run(id, sessionId, studentId);
+}
+
+export function createMakeup(sqlite: DB, p: MakeupWriteInput & { classId: string; studentId: string; createdBy: string }): string {
+  return sqlite.transaction(() => {
+    const id = `mk-${nanoid(10)}`;
+    sqlite.prepare('INSERT INTO makeup_records (id,class_id,student_id,date,duration_minutes,note,created_by) VALUES (?,?,?,?,?,?,?)').run(id, p.classId, p.studentId, p.date, p.durationMinutes, p.note, p.createdBy);
+    writeMakeupSessions(sqlite, id, p.studentId, p.sessionIds);
+    return id;
+  })();
+}
+
+export function updateMakeup(sqlite: DB, id: string, p: MakeupWriteInput): void {
+  sqlite.transaction(() => {
+    const record = sqlite.prepare('SELECT student_id FROM makeup_records WHERE id=?').get(id) as { student_id: string };
+    sqlite.prepare("UPDATE makeup_records SET date=?,duration_minutes=?,note=?,updated_at=datetime('now') WHERE id=?").run(p.date, p.durationMinutes, p.note, id);
+    sqlite.prepare('DELETE FROM makeup_record_sessions WHERE makeup_id=?').run(id);
+    writeMakeupSessions(sqlite, id, record.student_id, p.sessionIds);
+  })();
+}
+
+export function deleteMakeup(sqlite: DB, id: string): void {
+  sqlite.transaction(() => {
+    sqlite.prepare('DELETE FROM makeup_record_sessions WHERE makeup_id=?').run(id);
+    sqlite.prepare('DELETE FROM makeup_records WHERE id=?').run(id);
+  })();
 }
 
 /**
@@ -317,6 +350,8 @@ export function deleteStudent(sqlite: DB, studentId: string): void {
     sqlite.prepare(`DELETE FROM session_tags WHERE student_id=?`).run(sid);
     sqlite.prepare(`DELETE FROM invoices WHERE student_id=?`).run(sid);
     sqlite.prepare(`DELETE FROM billing_exclusions WHERE student_id=?`).run(sid);
+    sqlite.prepare('DELETE FROM makeup_record_sessions WHERE student_id=?').run(sid);
+    sqlite.prepare('DELETE FROM makeup_records WHERE student_id=?').run(sid);
     sqlite.prepare(`DELETE FROM students WHERE id=?`).run(sid);
   });
   tx(studentId);
@@ -340,6 +375,7 @@ function deleteSessionLedger(sqlite: DB, sessionId: string): void {
  */
 export function deleteSession(sqlite: DB, sessionId: string): void {
   const tx = sqlite.transaction((sid: string) => {
+    sqlite.prepare('DELETE FROM makeup_record_sessions WHERE session_id=?').run(sid);
     deleteSessionLedger(sqlite, sid);
     sqlite.prepare(`DELETE FROM class_sessions WHERE id=?`).run(sid);
   });
@@ -360,6 +396,8 @@ export function deleteClass(sqlite: DB, classId: string): void {
   const schedules = `SELECT id FROM class_schedules WHERE class_id=@classId`;
   const groups = `SELECT id FROM class_groups WHERE class_id=@classId`;
   const statements = [
+    `DELETE FROM makeup_record_sessions WHERE makeup_id IN (SELECT id FROM makeup_records WHERE class_id=@classId) OR session_id IN (${sessions}) OR student_id IN (${students})`,
+    `DELETE FROM makeup_records WHERE class_id=@classId OR student_id IN (${students})`,
     `DELETE FROM score_events WHERE session_id IN (${sessions}) OR (target_type='student' AND target_id IN (${students}))`,
     `DELETE FROM session_memberships WHERE session_id IN (${sessions}) OR student_id IN (${students})`,
     `DELETE FROM check_records WHERE session_id IN (${sessions}) OR student_id IN (${students})`,
@@ -478,14 +516,14 @@ export function saveGrouping(sqlite: DB, classId: string, groups: GroupInput[]):
  * id). NOT a transaction itself — the caller wraps it.
  *
  * `corrections` (overwrite only) restores post-commit 考勤 fixes: a student the
- * new payload still marks not-present keeps their prior leave / 补课 (made_up)
+ * new payload still marks not-present keeps their prior leave
  * instead of collapsing back to a plain absent row. Omitted → a plain commit.
  */
 function writeSessionLedger(
   sqlite: DB,
   sessionId: string,
   input: CommitInput,
-  corrections?: Map<string, { attendance: string; madeUp: number; groupId: string | null }>,
+  corrections?: Map<string, { attendance: string; groupId: string | null }>,
 ): void {
   // ③ session_groups + clientId → sessionGroupId map
   const groupIdByClient = new Map<string, string>();
@@ -500,24 +538,22 @@ function writeSessionLedger(
   const mapGid = (clientId: string | null): string | null =>
     clientId ? (groupIdByClient.get(clientId) ?? null) : null;
 
-  // ④ session_memberships (absent ⇒ null group; a preserved correction keeps leave/made_up)
+  // ④ session_memberships (absent ⇒ null group; a preserved correction keeps leave)
   const insMem = sqlite.prepare(
-    `INSERT INTO session_memberships (id, session_id, student_id, session_group_id, attendance, made_up) VALUES (?,?,?,?,?,?)`,
+    `INSERT INTO session_memberships (id, session_id, student_id, session_group_id, attendance) VALUES (?,?,?,?,?)`,
   );
   for (const m of input.memberships) {
     let attendance = m.attendance;
-    let madeUp = 0;
     let sgid = m.attendance === 'absent' ? null : mapGid(m.clientGroupId);
     const corr = m.attendance !== 'present' ? corrections?.get(m.studentId) : undefined;
     if (corr) {
       attendance = corr.attendance; // 'leave' or 'absent'
-      madeUp = corr.madeUp;
       // Restore the seat the 考勤 correction preserved (setAttendance keeps the
       // group when flipping present→leave), remapped onto the freshly re-inserted
       // session_groups; null if that group no longer exists in this payload.
       sgid = corr.groupId ? mapGid(corr.groupId) : null;
     }
-    insMem.run(nanoid(), sessionId, m.studentId, sgid, attendance, madeUp);
+    insMem.run(nanoid(), sessionId, m.studentId, sgid, attendance);
   }
 
   // ⑤ score_events (group events' target_id resolves to the session group id)
@@ -863,15 +899,14 @@ export function overwriteSession(sqlite: DB, sessionId: string, input: CommitInp
       (
         sqlite
           .prepare(
-            `SELECT student_id sid, attendance, made_up, session_group_id FROM session_memberships
-             WHERE session_id=? AND (attendance='leave' OR made_up=1)`,
+            `SELECT student_id sid, attendance, session_group_id FROM session_memberships
+             WHERE session_id=? AND attendance='leave'`,
           )
           .all(sessionId) as any[]
       ).map((r) => [
         r.sid as string,
         {
           attendance: r.attendance as string,
-          madeUp: r.made_up as number,
           groupId: (r.session_group_id as string) ?? null,
         },
       ]),
@@ -896,6 +931,8 @@ export function overwriteSession(sqlite: DB, sessionId: string, input: CommitInp
       );
 
     writeSessionLedger(sqlite, sessionId, input, corrections); // ③-⑦ against the preserved id
+    sqlite.prepare(`DELETE FROM makeup_record_sessions WHERE session_id=? AND student_id IN
+      (SELECT student_id FROM session_memberships WHERE session_id=? AND attendance='present')`).run(sessionId, sessionId);
   });
   tx();
 }

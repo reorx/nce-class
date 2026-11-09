@@ -1,5 +1,5 @@
 import { hashKey, type Query, type QueryClient, type QueryKey } from '@tanstack/react-query';
-import type { AttendanceRecord, ClassAttendance } from '../api/attendance';
+import type { AttendanceRecord, AttendanceUpdateResult, ClassAttendance, MakeupRecord } from '../api/attendance';
 import type { Me } from '../api/auth';
 import type { BillingBatchDetail, BillingBatchItem, InvoiceItem, InvoiceLessons } from '../api/billing';
 import type { ClassDetail } from '../api/classes';
@@ -258,8 +258,9 @@ export async function sessionHomeworkUpdated(client: QueryClient, detail: Sessio
 // ---- 考勤 -------------------------------------------------------------------
 
 export function upsertAttendanceRecord(data: ClassAttendance, record: AttendanceRecord): ClassAttendance {
+  const cell: AttendanceRecord = { sessionId: record.sessionId, studentId: record.studentId, status: record.status };
   const same = (r: AttendanceRecord) => r.sessionId === record.sessionId && r.studentId === record.studentId;
-  const records = data.records.some(same) ? data.records.map((r) => (same(r) ? record : r)) : [...data.records, record];
+  const records = data.records.some(same) ? data.records.map((r) => (same(r) ? cell : r)) : [...data.records, cell];
   return { ...data, records };
 }
 
@@ -268,7 +269,7 @@ export function upsertAttendanceRecord(data: ClassAttendance, record: Attendance
  * 若这张表正有请求在途（可能是写入前的快照），重启它以免旧快照覆盖本格。
  * 收费只刷新展示（出勤明细、批次详情），绝不触发重算。
  */
-export async function attendanceUpdated(client: QueryClient, record: AttendanceRecord, classId?: string) {
+export async function attendanceUpdated(client: QueryClient, record: AttendanceUpdateResult, classId?: string) {
   const cid = classId ?? classIdOfSession(client, record.sessionId);
   const tables = cid
     ? [attendanceKeys.byClass(cid)]
@@ -278,7 +279,18 @@ export async function attendanceUpdated(client: QueryClient, record: AttendanceR
     if (client.isFetching({ queryKey: key, exact: true }) > 0) {
       restart.push(client.invalidateQueries({ queryKey: key, exact: true }));
     }
-    client.setQueryData<ClassAttendance>(key, (old) => old && upsertAttendanceRecord(old, record));
+    client.setQueryData<ClassAttendance>(key, (old) => {
+      if (!old) return old;
+      const updated = upsertAttendanceRecord(old, record);
+      return {
+        ...updated,
+        makeups: updated.makeups.map((r) =>
+          r.id === record.unlinkedMakeupId
+            ? { ...r, sessionIds: r.sessionIds.filter((id) => id !== record.sessionId) }
+            : r,
+        ),
+      };
+    });
   }
   await all(
     ...restart,
@@ -289,6 +301,44 @@ export async function attendanceUpdated(client: QueryClient, record: AttendanceR
     invalidate(client, billingKeys.invoiceLessonsAll(), invoiceLessonsOfStudent(record.studentId)),
     invalidate(client, billingKeys.details(), batchesOfClass(cid)),
   );
+}
+
+export function upsertMakeup(data: ClassAttendance, record: MakeupRecord): ClassAttendance {
+  const makeups = data.makeups.some((r) => r.id === record.id)
+    ? data.makeups.map((r) => (r.id === record.id ? record : r))
+    : [record, ...data.makeups];
+  return { ...data, makeups };
+}
+
+export function removeMakeup(data: ClassAttendance, id: string): ClassAttendance {
+  return { ...data, makeups: data.makeups.filter((r) => r.id !== id) };
+}
+
+async function makeupChanged(
+  client: QueryClient,
+  classId: string,
+  studentId: string,
+  update: (data: ClassAttendance) => ClassAttendance,
+) {
+  const key = attendanceKeys.byClass(classId);
+  const restart =
+    client.isFetching({ queryKey: key, exact: true }) > 0
+      ? client.invalidateQueries({ queryKey: key, exact: true })
+      : Promise.resolve();
+  client.setQueryData<ClassAttendance>(key, (old) => old && update(old));
+  await all(
+    restart,
+    invalidate(client, billingKeys.invoiceLessonsAll(), invoiceLessonsOfStudent(studentId)),
+    invalidate(client, billingKeys.details(), batchesOfClass(classId)),
+  );
+}
+
+export function makeupSaved(client: QueryClient, classId: string, record: MakeupRecord) {
+  return makeupChanged(client, classId, record.studentId, (data) => upsertMakeup(data, record));
+}
+
+export function makeupDeleted(client: QueryClient, classId: string, makeupId: string, studentId: string) {
+  return makeupChanged(client, classId, studentId, (data) => removeMakeup(data, makeupId));
 }
 
 // ---- 排班 -------------------------------------------------------------------
@@ -372,7 +422,7 @@ export async function invoiceDeleted(client: QueryClient, detail: BillingBatchDe
   client.setQueryData(billingKeys.detail(detail.id), detail);
   const { invoices: _invoices, ...item } = detail;
   client.setQueryData<BillingBatchItem[]>(billingKeys.lists(), (old) =>
-    old?.map((batch) => batch.id === detail.id ? item : batch),
+    old?.map((batch) => (batch.id === detail.id ? item : batch)),
   );
   await all(invalidate(client, billingKeys.lists()), invalidate(client, adminKeys.all));
 }

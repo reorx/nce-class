@@ -517,7 +517,7 @@ function LessonRow({ r, idx }: { r: InvoiceLessonRow; idx: number }) {
       <td style={tdSm}>
         {r.kind === 'session' ? (
           r.attendance == null ? (
-            <span style={{ color: '#aab1bc' }}>未入班</span>
+            <><span style={{ color: '#aab1bc' }}>未入班</span>{r.madeUp && <span style={{ fontSize: 11, color: '#2c7a48', marginLeft: 5 }}>已补课</span>}</>
           ) : r.attendance === 'present' ? (
             <span style={{ color: '#2c7a48' }}>✓ 到堂</span>
           ) : (

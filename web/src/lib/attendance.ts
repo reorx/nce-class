@@ -1,16 +1,16 @@
-import type { AttendanceSession, AttendanceStatus, ClassAttendance } from '../api/attendance';
+import type { AttendanceSession, AttendanceStatus, ClassAttendance, MakeupRecord } from '../api/attendance';
+import { coverageMap } from './makeup';
 import type { StudentStatus } from '../api/students';
 
 /** One grid cell: status null = no membership row that day (未入班/已停课). */
 export interface CellState {
   status: AttendanceStatus | null;
-  madeUp: boolean;
+  makeup: MakeupRecord | null;
 }
 
 /** What the lookup map needs per record — the page keeps live edits in this shape. */
 export interface CellRecord {
   status: AttendanceStatus;
-  madeUp: boolean;
 }
 
 export interface RowStats {
@@ -25,10 +25,18 @@ export interface RowStats {
 
 export const recordKey = (sessionId: string, studentId: string) => `${sessionId}:${studentId}`;
 
-export function rowCells(studentId: string, sessions: AttendanceSession[], map: Map<string, CellRecord>): CellState[] {
+export function rowCells(
+  studentId: string,
+  sessions: AttendanceSession[],
+  map: Map<string, CellRecord>,
+  coverage: Map<string, MakeupRecord> = new Map(),
+): CellState[] {
   return sessions.map((s) => {
     const r = map.get(recordKey(s.id, studentId));
-    return r ? { status: r.status, madeUp: r.madeUp } : { status: null, madeUp: false };
+    return {
+      status: r?.status ?? null,
+      makeup: r?.status === 'present' ? null : (coverage.get(recordKey(s.id, studentId)) ?? null),
+    };
   });
 }
 
@@ -39,12 +47,12 @@ export function rowStats(cells: CellState[]): RowStats {
     leave = 0,
     madeUp = 0;
   for (const c of cells) {
-    if (c.status == null) continue;
+    if (c.status == null && !c.makeup) continue;
     sched++;
-    if (c.status === 'present' || c.madeUp) pres++;
+    if (c.status === 'present' || c.makeup) pres++;
     if (c.status === 'absent') absent++;
     if (c.status === 'leave') leave++;
-    if (c.madeUp) madeUp++;
+    if (c.makeup) madeUp++;
   }
   const rate = sched ? Math.round((pres / sched) * 100) : null;
   return { sched, pres, absent, leave, madeUp, rate, full: sched > 0 && pres === sched };
@@ -82,11 +90,14 @@ const CSV_MARK: Record<AttendanceStatus, string> = { present: '出勤', absent: 
 
 export function buildAttendanceCsv(data: ClassAttendance): string {
   const map = new Map(data.records.map((r) => [recordKey(r.sessionId, r.studentId), r]));
+  const coverage = coverageMap(data.makeups);
   const head = ['学生', ...data.sessions.map((s) => `${dateParts(s.date).mm}/${dateParts(s.date).dd}`), '出勤率'];
   const rows = data.students.map((st) => {
-    const cells = rowCells(st.id, data.sessions, map);
+    const cells = rowCells(st.id, data.sessions, map, coverage);
     const stats = rowStats(cells);
-    const marks = cells.map((c) => (c.status == null ? '—' : CSV_MARK[c.status] + (c.madeUp ? '（已补课）' : '')));
+    const marks = cells.map(
+      (c) => (c.status == null ? (c.makeup ? '未在班' : '—') : CSV_MARK[c.status]) + (c.makeup ? '（已补课）' : ''),
+    );
     return [st.name, ...marks, stats.rate == null ? '—' : `${stats.rate}%`];
   });
   return [head, ...rows].map((r) => r.join(',')).join('\n');

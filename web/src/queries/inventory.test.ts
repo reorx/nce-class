@@ -48,6 +48,9 @@ const hooks = [
   'useOverwriteSessionMutation',
   'useClassAttendanceQuery',
   'useUpdateAttendanceMutation',
+  'useCreateMakeupMutation',
+  'useUpdateMakeupMutation',
+  'useDeleteMakeupMutation',
   'useJoinRequestsQuery',
   'useSchedulesQuery',
   'useScheduleQuery',
@@ -68,8 +71,8 @@ const hooks = [
 const exported = Object.values(modules).flatMap((m) => Object.keys(m));
 
 describe('query layer inventory', () => {
-  it('has one hook per old api method (47)', () => {
-    expect(new Set(hooks).size).toBe(47);
+  it('has one hook per old api method plus makeup writes (50)', () => {
+    expect(new Set(hooks).size).toBe(50);
     for (const name of hooks) expect(exported, name).toContain(name);
   });
 

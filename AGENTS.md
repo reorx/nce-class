@@ -33,6 +33,7 @@ miniapp/ Taro 4 + React（weapp 正式产物 / h5 开发调试）
 路由以 `web/src/App.tsx` 为准，这里只列 query 参数：
 
 - `/classes?is_archived=true` 已归档班级
+- `/classes/:id/attendance?view=makeups` 补课记录视图（默认出勤表）
 - `/classes/:id?tab=students|groups|notes|homework|invite|schedule|sessions`
 - `/classes/:id/sessions/:sid?tab=overview|homework|recap|info`
 - `/classes/:id/setup?backfill=1` 补录过去的课
@@ -71,7 +72,7 @@ push master → GitHub Actions 构建镜像 → hookploy 部署，迁移随服�
 
 - `kb/docs/classroom-session-lifecycle.md` — 课堂数据从开课到落库的流转：进入判定、结束课堂、补录、编辑上课记录、兼容纪律的由来。改 Classroom、classroomStore、commit 接口前读。
 - `kb/docs/web-data-layer.md` — React SPA 的 HTTP / Query 开发指南：分层、缓存一致性、草稿、身份与离线边界、重构流程和验收；含两次重构的实际调整与证据。设计同类 SPA 数据层、改 Web 请求或新增接口前读。
-- `kb/docs/business-rules.md` — 学生姓名与状态、班级归档、账户邀请、出勤作业、教材、管理员、排班收费的业务口径。改这些功能前读对应小节。
+- `kb/docs/business-rules.md` — 学生姓名与状态、班级归档、账户邀请、出勤作业与补课记录、教材、管理员、排班收费的业务口径。改这些功能前读对应小节。
 - `kb/docs/verification-guide.md` — curl 冒烟、agent-browser 流程与坑、小程序 h5 切角色、微信开发者工具。做端到端验证时读。
 - `kb/docs/miniapp-h5-three-role-e2e.md` — 小程序 h5 三角色流程（生成邀请 → 注册 → 关联 → recap）。改邀请、账户、小程序后跑回归时读。
 - `kb/docs/deploy-and-ops.md` — 发版流水线、环境变量、账号 CLI、小程序上传。
@@ -88,7 +89,7 @@ push master → GitHub Actions 构建镜像 → hookploy 部署，迁移随服�
 - **学生姓名**：`students.name` 存的是英文名（主显示名），`cn_name` 是中文名（可空）。`PUT /api/students/:id` 缺 `cnName` key 时不动该列，传空串才清空，勿改成按值判断。
 - **学生状态** active / suspended / archived：非 active 不进课前配置、课堂与 session 快照。与班级归档无关。
 - **班级归档**：首页列表分流，禁止新建课程周期和收款项；历史排班与收款记录可继续维护，其他功能不联动。详见业务口径。
-- **出勤**：commit payload 只有 present / absent，`leave` 只由考勤更正产生。读侧一律用 `!== 'present'` 判定未到堂。
+- **出勤**：commit payload 只有 present / absent，`leave` 只由考勤更正产生。补课由 `makeup_records` 通过 `makeup_record_sessions` 按 (session, student) 抵扣，可覆盖无快照行的课；任何改成 present 的写入都在同一事务里解除抵扣，记录本身保留。原课未到堂用 `!== 'present'` 判定，考勤与收费的到堂参考还计入补课抵扣；不改战报或小程序。补课读取并入 attendance 的 `makeups`，旧 `made_up` 仅在迁移里处理。
 - **教材 key 是字符串**（`'1'`-`'4'`、`starterA`、`starterB`）。前端下拉值一律过 `parseBook`，勿 `Number()`。课数表在 `server/src/app.ts` 与 `web/src/lib/homework.ts` 两处镜像，要同步改。
 - **计费**：应收 = 单价 × 课程次数 + 附加费，全班一致、不按到堂扣减，例外由老师改最终金额（2026-10 口径变更，勿改回）。`billing.ts` 的 `today` 是显式参数，生产传真实当天，**不要用 `REFERENCE_TODAY`**。金额在库里和 API 里一律整数分，字段名带 `Cents`。
 - **删除学生收款条目**：仅允许 pending，按 invoice ID 删除并在同一事务写入 `billing_exclusions`（batch + student）；重置跳过排除项。禁止借删除触发重算其他条目；删除批次、学生、班级均清理相关排除项。

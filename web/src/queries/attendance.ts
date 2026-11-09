@@ -3,12 +3,17 @@ import { useCallback, useMemo } from 'react';
 import {
   getClassAttendance,
   updateAttendance,
+  createMakeup,
+  updateMakeup,
+  deleteMakeup,
+  type MakeupInput,
   type AttendanceInput,
   type AttendanceRecord,
   type ClassAttendance,
 } from '../api/attendance';
 import { recordKey } from '../lib/attendance';
-import { attendanceUpdated, upsertAttendanceRecord } from './cache-effects';
+import { attendanceUpdated, upsertAttendanceRecord, makeupSaved, makeupDeleted } from './cache-effects';
+import { ApiError } from '../api/client';
 import { enabledWith, type QueryHookOptions } from './client';
 import { attendanceKeys } from './keys';
 import { useAppMutation } from './mutation';
@@ -30,7 +35,6 @@ export const pendingRecordOf = (v: AttendanceUpdateVariables): AttendanceRecord 
   sessionId: v.sessionId,
   studentId: v.studentId,
   status: v.input.status,
-  madeUp: v.input.status !== 'present' && v.input.madeUp === true,
 });
 
 export class AttendanceCellBusyError extends Error {
@@ -38,6 +42,38 @@ export class AttendanceCellBusyError extends Error {
     super('这一格正在保存，请稍候');
     this.name = 'AttendanceCellBusyError';
   }
+}
+
+const refreshMakeupConflict = (client: QueryClient, error: Error, v: { classId: string }) => {
+  if (error instanceof ApiError && error.status === 409)
+    void client.invalidateQueries({ queryKey: attendanceKeys.byClass(v.classId), exact: true });
+};
+
+export function useCreateMakeupMutation() {
+  return useAppMutation({
+    mutationKey: attendanceKeys.makeup(),
+    mutationFn: (v: { classId: string; input: MakeupInput }) => createMakeup(v.classId, v.input),
+    onSuccess: (client, record, v) => makeupSaved(client, v.classId, record),
+    onError: refreshMakeupConflict,
+  });
+}
+
+export function useUpdateMakeupMutation() {
+  return useAppMutation({
+    mutationKey: attendanceKeys.makeup(),
+    mutationFn: (v: { classId: string; makeupId: string; input: MakeupInput }) => updateMakeup(v.makeupId, v.input),
+    onSuccess: (client, record, v) => makeupSaved(client, v.classId, record),
+    onError: refreshMakeupConflict,
+  });
+}
+
+export function useDeleteMakeupMutation() {
+  return useAppMutation({
+    mutationKey: attendanceKeys.makeup(),
+    mutationFn: (v: { classId: string; makeupId: string; studentId: string }) => deleteMakeup(v.makeupId),
+    onSuccess: (client, _result, v) => makeupDeleted(client, v.classId, v.makeupId, v.studentId),
+    onError: refreshMakeupConflict,
+  });
 }
 
 const busyCells = new WeakMap<QueryClient, Set<string>>();

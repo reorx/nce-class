@@ -13,6 +13,184 @@ beforeAll(async () => {
 });
 beforeEach(() => reseed());
 
+describe('makeup records（补课台账）', () => {
+  const input = (over: Record<string, unknown> = {}) => ({
+    studentId: 's4',
+    date: '2026-11-09',
+    durationMinutes: 60,
+    note: '复习',
+    sessionIds: ['sess1'],
+    ...over,
+  });
+  const extraSessions = () =>
+    sqlite.exec(`
+    INSERT INTO class_sessions (id,class_id,date,status,started_at) VALUES
+      ('early','c1','2026-06-20','ended','2026-06-20 19:00:00'),
+      ('live','c1','2026-11-09','ongoing',NULL),
+      ('foreign','c-out','2026-06-21','ended',NULL);
+  `);
+
+  it('creates complete payload, sorts coverage dates, includes off-roster and archived history', async () => {
+    extraSessions();
+    const { agent } = await login();
+    const res = await agent.post('/api/classes/c1/makeups').send(input({ sessionIds: ['sess1', 'early'] }));
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      studentId: 's4',
+      studentName: '浩浩',
+      studentStatus: 'active',
+      date: '2026-11-09',
+      durationMinutes: 60,
+      note: '复习',
+      createdByName: '王莉',
+      sessionIds: ['early', 'sess1'],
+    });
+    expect(res.body.id).toEqual(expect.any(String));
+    expect(res.body.createdAt).toEqual(expect.any(String));
+    await agent.put('/api/students/s4/status').send({ status: 'archived' });
+    const data = (await agent.get('/api/classes/c1/attendance')).body;
+    expect(data.makeups[0]).toMatchObject({ id: res.body.id, studentStatus: 'archived' });
+    expect(data.records.some((r: any) => r.sessionId === 'early' && r.studentId === 's4')).toBe(false);
+  });
+
+  it.each([
+    { studentId: 's1' },
+    { studentId: 'so1' },
+    { studentId: 'missing' },
+    { sessionIds: [] },
+    { sessionIds: ['sess1', 'sess1'] },
+    { sessionIds: ['live'] },
+    { sessionIds: ['foreign'] },
+    { sessionIds: ['missing'] },
+    { sessionIds: [1] },
+    { durationMinutes: undefined },
+    { durationMinutes: null },
+    { durationMinutes: 0 },
+    { durationMinutes: 601 },
+    { durationMinutes: 1.5 },
+    { durationMinutes: '60' },
+    { date: undefined },
+    { date: 'invalid' },
+    { date: '2026-13-01' },
+    { note: 42 },
+  ])('rejects invalid creation %j', async (over) => {
+    extraSessions();
+    const { agent } = await login();
+    expect((await agent.post('/api/classes/c1/makeups').send(input(over))).status).toBe(400);
+  });
+
+  it('rejects archived students; accepts suspended students; guards authentication and org on all writes', async () => {
+    const { agent } = await login();
+    await agent.put('/api/students/s4/status').send({ status: 'archived' });
+    expect((await agent.post('/api/classes/c1/makeups').send(input())).status).toBe(400);
+    await agent.put('/api/students/s4/status').send({ status: 'suspended' });
+    const created = await agent.post('/api/classes/c1/makeups').send(input());
+    expect(created.status).toBe(201);
+    const out = (await login('waiguo')).agent;
+    expect((await out.post('/api/classes/c1/makeups').send(input())).status).toBe(404);
+    expect((await out.put(`/api/makeups/${created.body.id}`).send(input())).status).toBe(404);
+    expect((await out.delete(`/api/makeups/${created.body.id}`)).status).toBe(404);
+    expect((await request(app).post('/api/classes/c1/makeups').send(input())).status).toBe(401);
+    expect((await request(app).put(`/api/makeups/${created.body.id}`).send(input())).status).toBe(401);
+    expect((await request(app).delete(`/api/makeups/${created.body.id}`)).status).toBe(401);
+  });
+
+  it('updates fields and replaces coverage, ignores studentId, and rejects competing records atomically', async () => {
+    extraSessions();
+    const { agent } = await login();
+    const first = (await agent.post('/api/classes/c1/makeups').send(input())).body;
+    const second = (await agent.post('/api/classes/c1/makeups').send(input({ sessionIds: ['early'] }))).body;
+    const conflict = await agent.put(`/api/makeups/${second.id}`).send(input());
+    expect(conflict.status).toBe(409);
+    expect(conflict.body.error).toBe('有课程已被其他补课记录抵扣，请重新选择');
+    expect((await agent.post('/api/classes/c1/makeups').send(input())).status).toBe(409);
+    expect((await agent.put(`/api/makeups/${first.id}`).send(input())).status).toBe(200);
+    await agent.delete(`/api/makeups/${second.id}`);
+    const updated = await agent
+      .put(`/api/makeups/${first.id}`)
+      .send(input({ studentId: 's1', date: '2026-11-08', durationMinutes: 90, note: '新备注', sessionIds: ['early'] }));
+    expect(updated.status).toBe(200);
+    expect(updated.body).toMatchObject({
+      studentId: 's4',
+      date: '2026-11-08',
+      durationMinutes: 90,
+      note: '新备注',
+      sessionIds: ['early'],
+    });
+    expect(sqlite.prepare('SELECT session_id FROM makeup_record_sessions WHERE makeup_id=?').all(first.id)).toEqual([
+      { session_id: 'early' },
+    ]);
+    expect((await agent.delete(`/api/makeups/${first.id}`)).body).toEqual({ ok: true });
+    expect(sqlite.prepare('SELECT * FROM makeup_records').all()).toEqual([]);
+    expect(sqlite.prepare('SELECT * FROM makeup_record_sessions').all()).toEqual([]);
+  });
+
+  it('allows legacy null duration only until it has been filled', async () => {
+    const { agent } = await login();
+    const record = (await agent.post('/api/classes/c1/makeups').send(input())).body;
+    sqlite.prepare('UPDATE makeup_records SET duration_minutes=NULL WHERE id=?').run(record.id);
+    expect((await agent.put(`/api/makeups/${record.id}`).send(input({ durationMinutes: null }))).status).toBe(200);
+    expect((await agent.put(`/api/makeups/${record.id}`).send(input({ durationMinutes: 30 }))).status).toBe(200);
+    expect((await agent.put(`/api/makeups/${record.id}`).send(input({ durationMinutes: null }))).status).toBe(400);
+  });
+
+  it('keeps coverage for leave, unlinks for present, and undo does not restore it', async () => {
+    const { agent } = await login();
+    const record = (await agent.post('/api/classes/c1/makeups').send(input())).body;
+    expect(
+      (await agent.put('/api/sessions/sess1/attendance/s4').send({ status: 'leave' })).body.unlinkedMakeupId,
+    ).toBeNull();
+    expect((await agent.get('/api/classes/c1/attendance')).body.makeups[0].sessionIds).toEqual(['sess1']);
+    expect(
+      (await agent.put('/api/sessions/sess1/attendance/s4').send({ status: 'present' })).body.unlinkedMakeupId,
+    ).toBe(record.id);
+    await agent.put('/api/sessions/sess1/attendance/s4').send({ status: 'leave' });
+    expect((await agent.get('/api/classes/c1/attendance')).body.makeups[0].sessionIds).toEqual([]);
+  });
+
+  it.each(['student', 'class', 'session'])('cleans coverage on %s deletion', async (kind) => {
+    const { agent } = await login();
+    expect((await agent.post('/api/classes/c1/makeups').send(input())).status).toBe(201);
+    const res =
+      kind === 'class'
+        ? await agent.delete('/api/admin/classes/c1').send({ adminPassword: 'demo1234' })
+        : await agent.delete(kind === 'student' ? '/api/students/s4' : '/api/sessions/sess1');
+    expect(res.status).toBe(200);
+    expect(sqlite.prepare('SELECT * FROM makeup_record_sessions').all()).toEqual([]);
+    expect(sqlite.prepare('SELECT * FROM makeup_records').all()).toHaveLength(kind === 'session' ? 1 : 0);
+  });
+
+  it('counts covered absence and off-roster lessons in billing only on creation/reset', async () => {
+    extraSessions();
+    const { agent } = await login();
+    const schedule = (
+      await agent.post('/api/classes/c1/schedules').send({
+        name: '补课周期',
+        lessons: [
+          { date: '2026-06-20', startTime: '19:00', endTime: '20:00' },
+          { date: '2026-06-26', startTime: '19:00', endTime: '20:00' },
+        ],
+      })
+    ).body;
+    const batch = (await agent.post('/api/billing/batches').send({ scheduleId: schedule.id, unitPriceCents: 10000 }))
+      .body;
+    await agent.post('/api/classes/c1/makeups').send(input({ sessionIds: ['early', 'sess1'] }));
+    const before = (await agent.get(`/api/billing/batches/${batch.id}`)).body.invoices.find(
+      (r: any) => r.studentId === 's4',
+    );
+    expect(before.attendedCount).toBe(0);
+    const reset = await agent.post(`/api/billing/batches/${batch.id}/recalculate`).send({});
+    const invoice = reset.body.invoices.find((r: any) => r.studentId === 's4');
+    expect(invoice).toMatchObject({ attendedCount: 2, computedAmountCents: 20000 });
+    const detail = (await agent.get(`/api/invoices/${invoice.id}/lessons`)).body;
+    expect(detail.rows.filter((r: any) => r.kind === 'session').map((r: any) => [r.attendance, r.madeUp])).toEqual([
+      [null, true],
+      ['absent', true],
+    ]);
+    expect((await agent.get('/api/sessions/sess1/recap')).body.attendancePresent).toBe(3);
+  });
+});
+
 /** A supertest agent already logged in as 王莉 (org-1 owner). */
 async function login(username = 'wangli', password = 'demo1234') {
   const agent = request.agent(app);
@@ -1159,8 +1337,8 @@ describe('class attendance (考勤)', () => {
     expect(a.students.map((s: any) => s.id)).toEqual(['s1', 's2', 's3', 's4']);
     expect(a.students[0]).toMatchObject({ name: '小明', status: 'active' });
     const rec = (sid: string, stid: string) => a.records.find((r: any) => r.sessionId === sid && r.studentId === stid);
-    expect(rec('sess1', 's4')).toMatchObject({ status: 'absent', madeUp: false });
-    expect(rec('sess1', 's1')).toMatchObject({ status: 'present', madeUp: false });
+    expect(rec('sess1', 's4')).toMatchObject({ status: 'absent' });
+    expect(rec('sess1', 's1')).toMatchObject({ status: 'present' });
     expect(rec('sess2', 's4')).toBeUndefined(); // no membership row → 未入班 cell
   });
 
@@ -1183,23 +1361,22 @@ describe('class attendance (考勤)', () => {
     expect((await out.agent.get('/api/classes/c1/attendance')).status).toBe(404);
   });
 
-  it('corrects a record to 请假 with makeup and reflects it in the matrix', async () => {
+  it('ignores the legacy makeup flag while correcting attendance', async () => {
     const { agent } = await login();
     const res = await agent.put('/api/sessions/sess1/attendance/s4').send({ status: 'leave', madeUp: true });
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ sessionId: 'sess1', studentId: 's4', status: 'leave', madeUp: true });
+    expect(res.body).toEqual({ sessionId: 'sess1', studentId: 's4', status: 'leave', unlinkedMakeupId: null });
     const a = (await agent.get('/api/classes/c1/attendance')).body;
     const r = a.records.find((x: any) => x.sessionId === 'sess1' && x.studentId === 's4');
-    expect(r).toMatchObject({ status: 'leave', madeUp: true });
+    expect(r).toEqual({ sessionId: 'sess1', studentId: 's4', status: 'leave' });
+    expect(a.makeups).toEqual([]);
   });
 
-  it('switching back to 到勤 clears the makeup flag', async () => {
+  it('switching back to 到勤 ignores the legacy flag', async () => {
     const { agent } = await login();
     await agent.put('/api/sessions/sess1/attendance/s4').send({ status: 'absent', madeUp: true });
     const res = await agent.put('/api/sessions/sess1/attendance/s4').send({ status: 'present', madeUp: true });
-    expect(res.body).toMatchObject({ status: 'present', madeUp: false });
-    const row = sqlite.prepare(`SELECT made_up FROM session_memberships WHERE id='sm-s4'`).get() as any;
-    expect(row.made_up).toBe(0);
+    expect(res.body).toMatchObject({ status: 'present', unlinkedMakeupId: null });
   });
 
   it('keeps the group snapshot intact when toggling status', async () => {
@@ -2039,20 +2216,26 @@ describe('session overwrite (PUT /api/sessions/:id/commit — 编辑上课记录
     expect(mem.map((r) => `${r.gid}:${r.sid}`)).toEqual(['g1:s1', 'g1:s2', 'g2:s3']);
   });
 
-  it('preserves leave / 补课 corrections for students who stay absent', async () => {
+  it('preserves leave and makeup coverage for students who stay absent', async () => {
     const { agent, sid } = await commitBefore('cs-leave');
-    await agent.put(`/api/sessions/${sid}/attendance/s3`).send({ status: 'leave', madeUp: true });
+    await agent.put(`/api/sessions/${sid}/attendance/s3`).send({ status: 'leave' });
+    await agent
+      .post('/api/classes/c1/makeups')
+      .send({ studentId: 's3', date: '2026-11-09', durationMinutes: 60, sessionIds: [sid] });
     await agent.put(`/api/sessions/${sid}/commit`).send(body()); // body keeps s3 absent
     const s3 = sqlite
-      .prepare(`SELECT attendance, made_up FROM session_memberships WHERE session_id=? AND student_id='s3'`)
+      .prepare(`SELECT attendance FROM session_memberships WHERE session_id=? AND student_id='s3'`)
       .get(sid) as any;
     expect(s3.attendance).toBe('leave'); // survives the overwrite
-    expect(s3.made_up).toBe(1);
+    expect((await agent.get('/api/classes/c1/attendance')).body.makeups[0].sessionIds).toEqual([sid]);
   });
 
   it('drops a correction when the edit marks that student present again', async () => {
     const { agent, sid } = await commitBefore('cs-leave2');
-    await agent.put(`/api/sessions/${sid}/attendance/s3`).send({ status: 'leave', madeUp: true });
+    await agent.put(`/api/sessions/${sid}/attendance/s3`).send({ status: 'leave' });
+    await agent
+      .post('/api/classes/c1/makeups')
+      .send({ studentId: 's3', date: '2026-11-09', durationMinutes: 60, sessionIds: [sid] });
     await agent.put(`/api/sessions/${sid}/commit`).send(
       body({
         memberships: [
@@ -2064,10 +2247,10 @@ describe('session overwrite (PUT /api/sessions/:id/commit — 编辑上课记录
       }),
     );
     const s3 = sqlite
-      .prepare(`SELECT attendance, made_up FROM session_memberships WHERE session_id=? AND student_id='s3'`)
+      .prepare(`SELECT attendance FROM session_memberships WHERE session_id=? AND student_id='s3'`)
       .get(sid) as any;
     expect(s3.attendance).toBe('present');
-    expect(s3.made_up).toBe(0);
+    expect((await agent.get('/api/classes/c1/attendance')).body.makeups[0].sessionIds).toEqual([]);
   });
 
   it('preserves the group placement of a 请假 student across an overwrite', async () => {

@@ -1,0 +1,26 @@
+.makeup-list{margin:14px 26px 24px;background:#fff;border:1px solid #d7e2cf;border-radius:16px;min-height:0;overflow:auto;color:#2c3340}
+.makeup-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:20px;border-bottom:1px solid #e4ebe0;flex-wrap:wrap}
+.makeup-toolbar label{display:flex;gap:12px;align-items:center;font-size:14px;font-weight:700}
+.makeup-list select,.makeup-form select,.makeup-form input:not([type=checkbox]),.makeup-form textarea{box-sizing:border-box;font:inherit;font-size:14px;color:#2c3340;background:#fff;border:1px solid #bcc9b6;border-radius:9px;padding:10px 12px;caret-color:#258c45}
+.makeup-list button,.makeup-form button,.att-view-tabs button{font:inherit;font-size:14px;font-weight:700;border:1px solid #c7d5c0;border-radius:9px;background:#fff;padding:10px 14px;color:#40563b;cursor:pointer}
+.makeup-list button:hover,.makeup-form button:hover{background:#f1f7ed}
+.makeup-list .makeup-primary,.makeup-form .makeup-primary{background:#258c45;border-color:#258c45;color:#fff}
+.makeup-list .makeup-primary:hover,.makeup-form .makeup-primary:hover{background:#1e7538}
+.makeup-list button:focus-visible,.makeup-form button:focus-visible,.makeup-form input:focus-visible,.makeup-form select:focus-visible,.makeup-form textarea:focus-visible,.makeup-list select:focus-visible,.att-view-tabs button:focus-visible{outline:3px solid #2a75be;outline-offset:3px}
+.makeup-list ::selection,.makeup-form ::selection{background:#d3e9ca;color:#243c20}
+.makeup-empty{text-align:center;padding:70px 24px}
+.makeup-empty h2{font-size:21px;margin:0 0 12px}.makeup-empty p{color:#596953;margin:0 0 24px;font-size:14px}
+.makeup-table-scroll{overflow:auto}.makeup-table{width:100%;border-collapse:collapse;text-align:left;font-size:14px;font-variant-numeric:tabular-nums}
+.makeup-table th{padding:14px 20px;background:#f6f9f2;color:#596953;font-size:12px;white-space:nowrap}.makeup-table td{padding:18px 20px;border-top:1px solid #e4ebe0;line-height:1.7;vertical-align:top}
+.makeup-table tbody tr{cursor:pointer}.makeup-table tbody tr:hover{background:#f6f9f2}.makeup-table .makeup-row-link{border:none;padding:0;background:transparent;text-align:left;white-space:nowrap}.makeup-row-link span{font-weight:400;color:#596953;margin-left:5px}
+.makeup-table small{display:block;color:#596953}.makeup-note{min-width:100px;max-width:280px;white-space:pre-wrap;overflow-wrap:anywhere}
+.makeup-form{font-size:14px;line-height:1.6;color:#2c3340}.makeup-form fieldset{border:0;padding:0;margin:0;min-width:0}.makeup-form fieldset>label:not(.makeup-check){display:block;font-weight:700;margin:18px 0 7px}.makeup-form fieldset>label:first-child{margin-top:0}
+.makeup-form select,.makeup-form input:not([type=checkbox]),.makeup-form textarea{width:100%}.makeup-form textarea{resize:vertical}.makeup-form input::placeholder,.makeup-form textarea::placeholder{color:#657260}
+.makeup-presets{display:flex;gap:8px;margin-top:9px}.makeup-presets button{flex:1;padding:7px}.makeup-presets button[aria-pressed=true]{background:#e8f4e2;border-color:#258c45;color:#246c36}
+.makeup-candidate-heading{display:flex;justify-content:space-between;font-weight:700;margin:24px 0 10px}.makeup-candidate-heading span+span{color:#596953;font-weight:400;font-size:13px}
+.makeup-check{display:flex;align-items:center;gap:10px;font-size:14px;cursor:pointer}.makeup-check input{width:17px;height:17px;accent-color:#258c45;flex-shrink:0}.makeup-candidates{max-height:220px;overflow:auto;border:1px solid #d7e2cf;border-radius:9px;margin-top:8px;scrollbar-color:#bcc9b6 #f6f9f2;scrollbar-width:thin}
+.makeup-candidate{padding:11px 12px;border-bottom:1px solid #e4ebe0}.makeup-candidate:last-child{border-bottom:0}.makeup-candidate:hover{background:#f6f9f2}.makeup-candidate strong{display:block;font-weight:500}.makeup-candidate small{margin-left:auto;white-space:nowrap;color:#596953;background:#f1f3ef;padding:2px 7px;border-radius:5px}
+.makeup-error{color:#a52f33;margin:5px 0;font-size:13px}.makeup-warning{color:#966010;font-weight:700}.makeup-hint{color:#596953;padding:14px;background:#f6f9f2;border-radius:9px}
+.makeup-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:10px;margin-top:24px}.makeup-actions .makeup-delete{margin-right:auto;border:0;color:#a52f33;padding-left:0}.makeup-actions .makeup-danger{background:#a52f33;color:#fff;border-color:#a52f33}.makeup-form button:disabled,.makeup-form fieldset:disabled button{opacity:.55;cursor:default}
+.att-view-tabs{display:flex;gap:3px;padding:3px;background:#dce9d5;border-radius:12px}.att-view-tabs button{border:0;background:transparent;white-space:nowrap}.att-view-tabs button[aria-pressed=true]{background:#fff;color:#246c36;box-shadow:0 2px 5px #30492714}
+@media(max-width:760px){.makeup-list{margin:10px 12px}.makeup-toolbar{padding:14px}.makeup-table th,.makeup-table td{padding:12px}.att-view-tabs button{font-size:12px;padding:8px}.makeup-actions .makeup-delete{width:100%;text-align:left}}

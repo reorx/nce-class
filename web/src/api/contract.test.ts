@@ -175,14 +175,17 @@ const cases: Case[] = [
     '/api/sessions/x1/commit',
     JSON.stringify(payload),
   ],
+  ['createMakeup', () => attendance.createMakeup('c1', { studentId: 's1', date: '2026-11-09', durationMinutes: 60, note: null, sessionIds: ['x1'] }), 'POST', '/api/classes/c1/makeups', '{"studentId":"s1","date":"2026-11-09","durationMinutes":60,"note":null,"sessionIds":["x1"]}'],
+  ['updateMakeup', () => attendance.updateMakeup('mk1', { date: '2026-11-09', durationMinutes: 60, note: null, sessionIds: ['x1'] }), 'PUT', '/api/makeups/mk1', '{"date":"2026-11-09","durationMinutes":60,"note":null,"sessionIds":["x1"]}'],
+  ['deleteMakeup', () => attendance.deleteMakeup('mk1'), 'DELETE', '/api/makeups/mk1'],
   // attendance / invites
   ['getClassAttendance', () => attendance.getClassAttendance('c1'), 'GET', '/api/classes/c1/attendance'],
   [
     'updateAttendance',
-    () => attendance.updateAttendance('x1', 's1', { status: 'leave', madeUp: true }),
+    () => attendance.updateAttendance('x1', 's1', { status: 'leave' }),
     'PUT',
     '/api/sessions/x1/attendance/s1',
-    '{"status":"leave","madeUp":true}',
+    '{"status":"leave"}',
   ],
   ['listJoinRequests', () => invites.listJoinRequests('c1'), 'GET', '/api/classes/c1/join-requests'],
   // schedules
@@ -296,6 +299,6 @@ describe('domain API wire contract', () => {
       .sort();
     const tested = [...new Set(cases.map(([name]) => name.split(' ')[0]))].sort();
     expect(exported).toEqual(tested);
-    expect(exported).toHaveLength(48);
+    expect(exported).toHaveLength(51);
   });
 });

@@ -31,9 +31,9 @@ const table = (records?: AttendanceRecord[]): ClassAttendance =>
       { id: 's2', name: 'Ann', cnName: null, status: 'active' },
     ],
     records: records ?? [
-      { sessionId: 'x1', studentId: 's1', status: 'present', madeUp: false },
-      { sessionId: 'x2', studentId: 's1', status: 'present', madeUp: false },
-      { sessionId: 'x1', studentId: 's2', status: 'present', madeUp: false },
+      { sessionId: 'x1', studentId: 's1', status: 'present' },
+      { sessionId: 'x2', studentId: 's1', status: 'present' },
+      { sessionId: 'x1', studentId: 's2', status: 'present' },
     ],
   });
 
@@ -65,11 +65,11 @@ function renderGrid() {
   });
 }
 
-const vars = (sessionId: string, studentId: string, status: AttendanceRecord['status'], madeUp?: boolean) => ({
+const vars = (sessionId: string, studentId: string, status: AttendanceRecord['status']) => ({
   classId: 'c1',
   sessionId,
   studentId,
-  input: { status, madeUp },
+  input: { status },
 });
 
 describe('attendance grid', () => {
@@ -81,35 +81,32 @@ describe('attendance grid', () => {
 
     let write!: Promise<unknown>;
     act(() => {
-      write = result.current.update.mutateAsync(vars('x1', 's1', 'absent', true));
+      write = result.current.update.mutateAsync(vars('x1', 's1', 'absent'));
     });
     await waitFor(() => expect(cell(result.current.data, 'x1', 's1')?.status).toBe('absent'));
-    expect(cell(result.current.data, 'x1', 's1')?.madeUp).toBe(true);
     expect(result.current.pending.has(recordKey('x1', 's1'))).toBe(true);
 
-    put.resolve(json({ sessionId: 'x1', studentId: 's1', status: 'absent', madeUp: true }));
+    put.resolve(json({ sessionId: 'x1', studentId: 's1', status: 'absent' }));
     await act(() => write);
     await waitFor(() => expect(result.current.pending.size).toBe(0));
     expect(cell(result.current.data, 'x1', 's1')).toEqual({
       sessionId: 'x1',
       studentId: 's1',
       status: 'absent',
-      madeUp: true,
     });
     expect(server.count('GET', '/api/classes/c1/attendance')).toBe(1);
   });
 
-  it('mirrors the server rule: going back to present clears 补课', async () => {
+  it('shows a pending present status', async () => {
     const put = deferred<Response>();
     server.on('PUT', '/api/sessions/x1/attendance/s1', () => put.promise);
     const { result } = renderGrid();
     await waitFor(() => expect(result.current.grid.isSuccess).toBe(true));
     act(() => {
-      void result.current.update.mutateAsync(vars('x1', 's1', 'present', true));
+      void result.current.update.mutateAsync(vars('x1', 's1', 'present'));
     });
     await waitFor(() => expect(result.current.pending.size).toBe(1));
-    expect(cell(result.current.data, 'x1', 's1')?.madeUp).toBe(false);
-    put.resolve(json({ sessionId: 'x1', studentId: 's1', status: 'present', madeUp: false }));
+    put.resolve(json({ sessionId: 'x1', studentId: 's1', status: 'present' }));
   });
 
   it('two cells change in parallel; only the failed one reverts', async () => {
@@ -134,7 +131,7 @@ describe('attendance grid', () => {
     expect(cell(result.current.data, 'x2', 's1')?.status).toBe('present');
     expect(cell(result.current.data, 'x1', 's1')?.status).toBe('leave');
 
-    ok.resolve(json({ sessionId: 'x1', studentId: 's1', status: 'leave', madeUp: false }));
+    ok.resolve(json({ sessionId: 'x1', studentId: 's1', status: 'leave' }));
     await act(() => a);
     await waitFor(() => expect(result.current.pending.size).toBe(0));
     expect(cell(result.current.data, 'x1', 's1')?.status).toBe('leave');
@@ -160,14 +157,13 @@ describe('attendance grid', () => {
     expect(server.count('PUT', '/api/sessions/x1/attendance/s1')).toBe(1);
     expect(cell(result.current.data, 'x1', 's1')?.status).toBe('absent');
 
-    put.resolve(json({ sessionId: 'x1', studentId: 's1', status: 'absent', madeUp: false }));
+    put.resolve(json({ sessionId: 'x1', studentId: 's1', status: 'absent' }));
     await act(() => first);
     // 释放后同一格可以再改（例如撤销）。
     server.on('PUT', '/api/sessions/x1/attendance/s1', {
       sessionId: 'x1',
       studentId: 's1',
       status: 'present',
-      madeUp: false,
     });
     await act(() => result.current.update.mutateAsync(vars('x1', 's1', 'present')));
     expect(server.count('PUT', '/api/sessions/x1/attendance/s1')).toBe(2);
@@ -188,15 +184,15 @@ describe('attendance grid', () => {
       'GET',
       '/api/classes/c1/attendance',
       table([
-        { sessionId: 'x1', studentId: 's1', status: 'present', madeUp: false },
-        { sessionId: 'x2', studentId: 's1', status: 'present', madeUp: false },
-        { sessionId: 'x1', studentId: 's2', status: 'leave', madeUp: false },
+        { sessionId: 'x1', studentId: 's1', status: 'present' },
+        { sessionId: 'x2', studentId: 's1', status: 'present' },
+        { sessionId: 'x1', studentId: 's2', status: 'leave' },
       ]),
     );
     await act(() => client.refetchQueries({ queryKey: attendanceKeys.byClass('c1') }));
     await waitFor(() => expect(cell(result.current.data, 'x1', 's2')?.status).toBe('leave'));
     expect(cell(result.current.data, 'x1', 's1')?.status).toBe('absent');
-    put.resolve(json({ sessionId: 'x1', studentId: 's1', status: 'absent', madeUp: false }));
+    put.resolve(json({ sessionId: 'x1', studentId: 's1', status: 'absent' }));
   });
 
   it('a snapshot taken before the write lands cannot overwrite the confirmed cell', async () => {
@@ -219,9 +215,9 @@ describe('attendance grid', () => {
 
     // 写入完成时表正在重取 → 重启重取；随后的新快照已包含本次写入。
     server.on('GET', '/api/classes/c1/attendance', () =>
-      json(table([{ sessionId: 'x1', studentId: 's1', status: 'absent', madeUp: false }])),
+      json(table([{ sessionId: 'x1', studentId: 's1', status: 'absent' }])),
     );
-    put.resolve(json({ sessionId: 'x1', studentId: 's1', status: 'absent', madeUp: false }));
+    put.resolve(json({ sessionId: 'x1', studentId: 's1', status: 'absent' }));
     await act(() => write);
     staleGet.resolve(json(table()));
     await act(async () => {});

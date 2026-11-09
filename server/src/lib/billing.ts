@@ -18,7 +18,6 @@ export interface MembershipRecord {
   sessionId: string;
   studentId: string;
   attendance: string; // present | absent | leave
-  madeUp: number; // 0 | 1
 }
 
 export interface BatchCounts {
@@ -28,7 +27,7 @@ export interface BatchCounts {
 }
 
 export interface StudentCounts {
-  attendedCount: number; // 已上到堂（present || madeUp），仅展示
+  attendedCount: number; // 已上到堂（present || 已补课抵扣），仅展示
   plannedCount: number; // 未上计划节数（= 批次 futureCount）
   billableCount: number; // 计费节数（= 批次 lessonCount）
 }
@@ -82,20 +81,23 @@ export function computeBatchCounts(p: {
 }
 
 /**
- * 周期内该生已上到堂节数：范围内实际 session 逐节按快照行 present || madeUp=1
- * 计 1；无快照行（中途入班前的课）计 0。只做展示，不参与应收。
+ * 周期内该生已上到堂节数：范围内实际 session 逐节按 present 或补课抵扣计 1；包括无快照行的抵扣。只做展示，不参与应收。
  */
 export function computeAttendedCount(p: {
   studentId: string;
   lessons: LessonPlan[];
   sessions: EndedSession[];
   memberships: MembershipRecord[];
+  makeups: { sessionId: string; studentId: string }[];
 }): number {
   const attendedSessionIds = new Set(
     p.memberships
-      .filter((m) => m.studentId === p.studentId && (m.attendance === 'present' || m.madeUp === 1))
+      .filter((m) => m.studentId === p.studentId && m.attendance === 'present')
       .map((m) => m.sessionId),
   );
+  for (const makeup of p.makeups) {
+    if (makeup.studentId === p.studentId) attendedSessionIds.add(makeup.sessionId);
+  }
   return sessionsInRange(p.lessons, p.sessions).filter((s) => attendedSessionIds.has(s.id)).length;
 }
 
@@ -105,6 +107,7 @@ export function computeStudentCounts(p: {
   lessons: LessonPlan[];
   sessions: EndedSession[];
   memberships: MembershipRecord[];
+  makeups: { sessionId: string; studentId: string }[];
   today: string; // YYYY-MM-DD
   lessonCountOverride?: number | null;
 }): StudentCounts {
@@ -129,6 +132,7 @@ export function buildBatchSnapshot(p: {
   lessons: LessonPlan[];
   sessions: EndedSession[];
   memberships: MembershipRecord[];
+  makeups: { sessionId: string; studentId: string }[];
   today: string;
   lessonCountOverride?: number | null;
 }): ({ studentId: string } & StudentCounts)[] {

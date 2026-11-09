@@ -52,10 +52,19 @@ function insertSession(id: string, date: string, atts: Record<string, { attendan
   for (const [sid, a] of Object.entries(atts)) {
     sqlite
       .prepare(
-        `INSERT INTO session_memberships (id, session_id, student_id, session_group_id, attendance, made_up)
-         VALUES (?,?,?,NULL,?,?)`,
+        `INSERT INTO session_memberships (id, session_id, student_id, session_group_id, attendance)
+         VALUES (?,?,?,NULL,?)`,
       )
-      .run(`bm-${id}-${sid}`, id, sid, a.attendance, a.madeUp ?? 0);
+      .run(`bm-${id}-${sid}`, id, sid, a.attendance);
+    if (a.madeUp) {
+      const makeupId = `mk-${id}-${sid}`;
+      sqlite
+        .prepare('INSERT INTO makeup_records (id,class_id,student_id,date,duration_minutes) VALUES (?,?,?,?,60)')
+        .run(makeupId, 'c1', sid, date);
+      sqlite
+        .prepare('INSERT INTO makeup_record_sessions (makeup_id,session_id,student_id) VALUES (?,?,?)')
+        .run(makeupId, id, sid);
+    }
   }
 }
 
@@ -119,7 +128,9 @@ describe('schedules API', () => {
     expect((await agent.get(`/api/billing/batches/${batch.body.id}`)).status).toBe(200);
     expect((await agent.post(`/api/billing/batches/${batch.body.id}/recalculate`).send({})).status).toBe(200);
     const { agent: outsider } = await login('waiguo');
-    expect((await outsider.post('/api/classes/c1/schedules').send({ name: '新周期', lessons: LESSONS })).status).toBe(404);
+    expect((await outsider.post('/api/classes/c1/schedules').send({ name: '新周期', lessons: LESSONS })).status).toBe(
+      404,
+    );
     expect((await createBatch(outsider, existing.id)).status).toBe(404);
     sqlite.prepare('UPDATE classes SET is_archived=0 WHERE id=?').run('c1');
     await createSchedule(agent);
@@ -267,7 +278,12 @@ describe('billing batches API', () => {
     const res = await createBatch(agent, sched.id);
     expect(res.status).toBe(201);
     for (const r of res.body.invoices) {
-      expect(r).toMatchObject({ attendedCount: 0, billableCount: 1, computedAmountCents: 13000, finalAmountCents: 13000 });
+      expect(r).toMatchObject({
+        attendedCount: 0,
+        billableCount: 1,
+        computedAmountCents: 13000,
+        finalAmountCents: 13000,
+      });
     }
   });
 
@@ -390,8 +406,12 @@ describe('invoices API', () => {
   }
 
   function databaseSnapshot() {
-    const tables = sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as { name: string }[];
-    return Object.fromEntries(tables.map(({ name }) => [name, sqlite.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all()]));
+    const tables = sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as {
+      name: string;
+    }[];
+    return Object.fromEntries(
+      tables.map(({ name }) => [name, sqlite.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all()]),
+    );
   }
 
   it('deletes only the selected pending invoice, preserving every other row in a mixed-payment database', async () => {
@@ -410,7 +430,13 @@ describe('invoices API', () => {
       expect(after[table], table).toEqual(before[table]);
     }
     expect(after.billing_exclusions).toEqual([{ batch_id: batch.id, student_id: 's3' }]);
-    const expected = { invoiceCount: 3, paidCount: 1, paidAmountCents: 53000, pendingAmountCents: 83000, totalAmountCents: 136000 };
+    const expected = {
+      invoiceCount: 3,
+      paidCount: 1,
+      paidAmountCents: 53000,
+      pendingAmountCents: 83000,
+      totalAmountCents: 136000,
+    };
     expect(res.body).toMatchObject({ id: batch.id, ...expected });
     expect((await agent.get(`/api/billing/batches/${batch.id}`)).body).toMatchObject(expected);
     expect((await agent.get('/api/billing/batches')).body.find((b: any) => b.id === batch.id)).toMatchObject(expected);
@@ -448,13 +474,22 @@ describe('invoices API', () => {
     for (const inv of batch.invoices) expect((await agent.delete(`/api/invoices/${inv.id}`)).status).toBe(200);
     const detail = await agent.get(`/api/billing/batches/${batch.id}`);
     expect(detail.status).toBe(200);
-    expect(detail.body).toMatchObject({ invoices: [], invoiceCount: 0, paidCount: 0, paidAmountCents: 0, pendingAmountCents: 0, totalAmountCents: 0 });
+    expect(detail.body).toMatchObject({
+      invoices: [],
+      invoiceCount: 0,
+      paidCount: 0,
+      paidAmountCents: 0,
+      pendingAmountCents: 0,
+      totalAmountCents: 0,
+    });
   });
 
   it('rolls back invoice deletion if recording the exclusion fails', async () => {
     const { invOf } = await scene();
     const { deleteInvoice } = await import('../src/db/mutations.js');
-    sqlite.exec("CREATE TEMP TRIGGER fail_exclusion BEFORE INSERT ON billing_exclusions BEGIN SELECT RAISE(ABORT, 'test failure'); END");
+    sqlite.exec(
+      "CREATE TEMP TRIGGER fail_exclusion BEFORE INSERT ON billing_exclusions BEGIN SELECT RAISE(ABORT, 'test failure'); END",
+    );
     const before = databaseSnapshot();
     expect(() => deleteInvoice(sqlite, invOf('s2').id)).toThrow('test failure');
     expect(databaseSnapshot()).toEqual(before);
@@ -535,7 +570,7 @@ describe('invoices API', () => {
       s3: { attendance: 'present' },
       [s6]: { attendance: 'present' },
     });
-    sqlite.prepare(`UPDATE session_memberships SET attendance='absent', made_up=0 WHERE id='bm-bA-s4'`).run();
+    sqlite.prepare(`UPDATE session_memberships SET attendance='absent' WHERE id='bm-bA-s4'`).run();
 
     const res = await agent.post(`/api/billing/batches/${batch.id}/recalculate`);
     expect(res.status).toBe(200);
@@ -638,7 +673,11 @@ describe('invoices API', () => {
       note: '优惠',
       adjusted: 1,
     });
-    expect(inv.get('s4')).toMatchObject({ unitPriceCents: 8000, billableCount: 6, computedAmountCents: 8000 * 6 + 1000 });
+    expect(inv.get('s4')).toMatchObject({
+      unitPriceCents: 8000,
+      billableCount: 6,
+      computedAmountCents: 8000 * 6 + 1000,
+    });
   });
 
   it('reset validates its optional fields like creation', async () => {

@@ -231,6 +231,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_makeup_session_student
     3. 插入对应的 `makeup_record_sessions`。
     4. 最后执行 `UPDATE session_memberships SET made_up=0 WHERE made_up=1`。
   - 表 DDL 由 `sqlite.exec(DDL)` 先建好。
+  - 实施补充（2026-11-09）：回滚旧版后可能再次标记已被抵扣的同一格，按原步骤插入会违反唯一约束并阻止启动；已用失败测试复现，因此转换时跳过已有抵扣的格子、保留原记录，仍在同一事务里清零全部旧标记。
 - **API 契约**：
   - `records[].madeUp` 删除。旧页面读不到这个字段时当作 false，不会报错。
   - `PUT attendance` 的 body 里如果带 `madeUp`，静默忽略。
@@ -374,14 +375,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_makeup_session_student
 
 ### 实施步骤
 
-- [ ] 1. **服务端测试先行**：在 `server/tests/api.test.ts` 和 `provision.test.ts` 里写下文「测试与验证」里服务端的全部用例，确认它们失败。`billing.test.ts` 的 madeUp 用例改成 makeups 参数。
-- [ ] 2. **DDL / schema / 迁移**：新表；去掉 made_up；转换块。`pnpm --filter server test` 里的 provision 用例通过。
-- [ ] 3. **mutations、billing.ts、app.ts**：按「逻辑变动」实现，服务端测试全部通过，`pnpm --filter server exec tsc --noEmit` 通过。
-- [ ] 4. **Web 数据层**：api / lib(makeup、attendance) / queries / cache-effects，以及对应测试（先写 lib 和矩阵用例）。`pnpm --filter web test` 和 tsc 通过。
-- [ ] 5. **Web UI**：视图切换、MakeupList、MakeupFormModal、格子弹窗、网格显示、BillingBatch 明细；页面级测试见下文。
-- [ ] 6. **端到端验收**：`pnpm db:reset && pnpm dev`，用 agent-browser 走完下文的人工流程，截图存到 `tmp/2026-11-09-makeup-lesson-records/`。弹窗表单要用 `eval` 写法，见 `kb/docs/verification-guide.md`。
-- [ ] 7. **文档**：business-rules、classroom-session-lifecycle、AGENTS.md。在 `kb/next-up.md` 加一条部署后核对（见「风险与待定」），写 session 总结。
-- [ ] 8. **提交**：一个提交包含代码和文档，commit message 按 AGENTS.md 的格式写。**不要 push**，push master 即上线，要先问用户。
+- [x] 1. **服务端测试先行**：在 `server/tests/api.test.ts` 和 `provision.test.ts` 里写下文「测试与验证」里服务端的全部用例，确认它们失败。`billing.test.ts` 的 madeUp 用例改成 makeups 参数。
+- [x] 2. **DDL / schema / 迁移**：新表；去掉 made_up；转换块。`pnpm --filter server test` 里的 provision 用例通过。
+- [x] 3. **mutations、billing.ts、app.ts**：按「逻辑变动」实现，服务端测试全部通过，`pnpm --filter server exec tsc --noEmit` 通过。
+- [x] 4. **Web 数据层**：api / lib(makeup、attendance) / queries / cache-effects，以及对应测试（先写 lib 和矩阵用例）。`pnpm --filter web test` 和 tsc 通过。
+- [x] 5. **Web UI**：视图切换、MakeupList、MakeupFormModal、格子弹窗、网格显示、BillingBatch 明细；页面级测试见下文。
+- [x] 6. **端到端验收**：`pnpm db:reset && pnpm dev`，用 agent-browser 走完下文的人工流程，截图存到 `tmp/2026-11-09-makeup-lesson-records/`。弹窗表单要用 `eval` 写法，见 `kb/docs/verification-guide.md`。
+- [x] 7. **文档**：business-rules、classroom-session-lifecycle、AGENTS.md。在 `kb/next-up.md` 加一条部署后核对（见「风险与待定」），写 session 总结。
+- [x] 8. **提交**：一个提交包含代码和文档，commit message 按 AGENTS.md 的格式写。**不要 push**，push master 即上线，要先问用户。
 
 ### 测试与验证
 

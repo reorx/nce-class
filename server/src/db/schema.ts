@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 // ---- Organization (school) — data-isolation unit; M1 runs a single one, but every model carries orgId ----
 export const organizations = sqliteTable('organizations', {
@@ -216,10 +216,48 @@ export const sessionMemberships = sqliteTable('session_memberships', {
   // present | absent | leave — commits only ever write present/absent; leave
   // (请假) enters via post-hoc 考勤 corrections. Non-present ⇒ 未到堂 everywhere.
   attendance: text('attendance').notNull().default('present'),
-  // 补课 flag (考勤 page): counts toward attendance-rate stats only, never
-  // rewrites the day's recap. Meaningful only with absent/leave.
-  madeUp: integer('made_up').notNull().default(0),
 });
+
+// 补课台账：一条记录对应一个学生，时长仅旧标记迁移时允许为空。
+export const makeupRecords = sqliteTable(
+  'makeup_records',
+  {
+    id: text('id').primaryKey(),
+    classId: text('class_id')
+      .notNull()
+      .references(() => classes.id),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => students.id),
+    date: text('date').notNull(),
+    durationMinutes: integer('duration_minutes'),
+    note: text('note'),
+    createdBy: text('created_by').references(() => teachers.id),
+    createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+    updatedAt: text('updated_at').notNull().default(sql`(datetime('now'))`),
+  },
+  (t) => [index('idx_makeup_records_class').on(t.classId)],
+);
+
+// 抵扣不依赖快照行，支持未在班课程；同一学生的一节课只能抵扣一次。
+export const makeupRecordSessions = sqliteTable(
+  'makeup_record_sessions',
+  {
+    makeupId: text('makeup_id')
+      .notNull()
+      .references(() => makeupRecords.id),
+    sessionId: text('session_id')
+      .notNull()
+      .references(() => classSessions.id),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => students.id),
+  },
+  (t) => [
+    primaryKey({ columns: [t.makeupId, t.sessionId] }),
+    uniqueIndex('uq_makeup_session_student').on(t.sessionId, t.studentId),
+  ],
+);
 
 // ---- ScoreEvent — ledger; single source of truth for all derived scores ----
 export const scoreEvents = sqliteTable('score_events', {
@@ -323,10 +361,18 @@ export const billingBatches = sqliteTable('billing_batches', {
 // batch standard (单价 × 课程次数 + 附加费), the same for everyone; attendance is
 // recorded for display only, exceptions go through final_amount_cents.
 // 当前批次手动移除的学生，重算不能自动补回；不影响其他批次。
-export const billingExclusions = sqliteTable('billing_exclusions', {
-  batchId: text('batch_id').notNull().references(() => billingBatches.id),
-  studentId: text('student_id').notNull().references(() => students.id),
-}, (t) => [primaryKey({ columns: [t.batchId, t.studentId] })]);
+export const billingExclusions = sqliteTable(
+  'billing_exclusions',
+  {
+    batchId: text('batch_id')
+      .notNull()
+      .references(() => billingBatches.id),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => students.id),
+  },
+  (t) => [primaryKey({ columns: [t.batchId, t.studentId] })],
+);
 
 export const invoices = sqliteTable(
   'invoices',
@@ -338,7 +384,7 @@ export const invoices = sqliteTable(
     studentId: text('student_id')
       .notNull()
       .references(() => students.id),
-    attendedCount: integer('attended_count').notNull().default(0), // 已上到堂 (present||madeUp), display only
+    attendedCount: integer('attended_count').notNull().default(0), // 已上到堂 (present ‖ 已补课抵扣), display only
     plannedCount: integer('planned_count').notNull().default(0), // 未上计划节数 (batch-wide)
     billableCount: integer('billable_count').notNull().default(0), // 计费节数 = 批次课程次数 (batch-wide)
     unitPriceCents: integer('unit_price_cents').notNull(), // = batch unit price at snapshot

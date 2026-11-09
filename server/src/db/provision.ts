@@ -62,10 +62,29 @@ export function migrate(sqlite: DB): void {
   if (!batchCols.some((c) => c.name === 'lesson_count_override')) {
     sqlite.exec(`ALTER TABLE billing_batches ADD COLUMN lesson_count_override INTEGER`);
   }
-  // 考勤 corrections: 补课 flag on session memberships.
+  // 转换旧补课标记；清零但保留旧列，回滚镜像仍能启动。
   const memberCols = sqlite.prepare(`PRAGMA table_info(session_memberships)`).all() as { name: string }[];
-  if (!memberCols.some((c) => c.name === 'made_up')) {
-    sqlite.exec(`ALTER TABLE session_memberships ADD COLUMN made_up INTEGER NOT NULL DEFAULT 0`);
+  if (memberCols.some((c) => c.name === 'made_up')) {
+    sqlite.transaction(() => {
+      const legacy = sqlite
+        .prepare(`SELECT sm.session_id, sm.student_id, cs.class_id, cs.date, cs.teacher_id
+        FROM session_memberships sm JOIN class_sessions cs ON cs.id=sm.session_id
+        WHERE sm.made_up=1 AND sm.attendance!='present'
+          AND NOT EXISTS (SELECT 1 FROM makeup_record_sessions ms
+            WHERE ms.session_id=sm.session_id AND ms.student_id=sm.student_id)`)
+        .all() as any[];
+      const insert = sqlite.prepare(`INSERT INTO makeup_records
+        (id,class_id,student_id,date,duration_minutes,note,created_by) VALUES (?,?,?,?,NULL,?,?)`);
+      const link = sqlite.prepare(
+        `INSERT INTO makeup_record_sessions (makeup_id,session_id,student_id) VALUES (?,?,?)`,
+      );
+      for (const row of legacy) {
+        const id = `mk-${nanoid(10)}`;
+        insert.run(id, row.class_id, row.student_id, row.date, '由旧版「已补课」标记转换', row.teacher_id);
+        link.run(id, row.session_id, row.student_id);
+      }
+      sqlite.exec(`UPDATE session_memberships SET made_up=0 WHERE made_up=1`);
+    })();
   }
   // 管理员 flag. No backfill on purpose: after deploy nobody is an admin until the
   // set-admin CLI grants it (an existing owner is never promoted implicitly).

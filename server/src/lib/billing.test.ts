@@ -19,11 +19,10 @@ const LESSONS = [
 ];
 const TODAY = '2026-07-08';
 
-const mem = (sessionId: string, studentId: string, attendance = 'present', madeUp = 0): MembershipRecord => ({
+const mem = (sessionId: string, studentId: string, attendance = 'present'): MembershipRecord => ({
   sessionId,
   studentId,
   attendance,
-  madeUp,
 });
 
 describe('scheduleRange', () => {
@@ -84,9 +83,9 @@ describe('computeBatchCounts（批次级节数，全班一致）', () => {
 });
 
 describe('computeAttendedCount（已上到堂，仅展示）', () => {
-  const base = { studentId: 's1', lessons: LESSONS };
+  const base = { makeups: [], studentId: 's1', lessons: LESSONS };
 
-  it('counts present and absent-but-madeUp; leave/absent without makeup do not count', () => {
+  it('counts present and covered absences; leave/absent without makeup do not count', () => {
     const n = computeAttendedCount({
       ...base,
       sessions: [
@@ -95,9 +94,10 @@ describe('computeAttendedCount（已上到堂，仅展示）', () => {
         { id: 'x3', date: '2026-07-05' },
         { id: 'x4', date: '2026-07-02' }, // 临时加课
       ],
+      makeups: [{ sessionId: 'x2', studentId: 's1' }],
       memberships: [
         mem('x1', 's1'),
-        mem('x2', 's1', 'absent', 1),
+        mem('x2', 's1', 'absent'),
         mem('x3', 's1', 'leave'),
         mem('x4', 's1', 'absent'),
       ],
@@ -131,7 +131,7 @@ describe('computeAttendedCount（已上到堂，仅展示）', () => {
 });
 
 describe('computeStudentCounts（收款单快照：计费节数不看出勤）', () => {
-  const base = { studentId: 's1', lessons: LESSONS, today: TODAY };
+  const base = { makeups: [], studentId: 's1', lessons: LESSONS, today: TODAY };
   const sessions = [
     { id: 'x1', date: '2026-07-01' },
     { id: 'x2', date: '2026-07-03' },
@@ -168,6 +168,7 @@ describe('buildBatchSnapshot (建单学生范围)', () => {
 
   it('includes every active student and non-active only with attended>0, all at the batch lesson count', () => {
     const rows = buildBatchSnapshot({
+      makeups: [],
       students: [
         { id: 's-active', status: 'active' }, // 没上过也建
         { id: 's-susp-in', status: 'suspended' }, // 停课但周期内上过 → 建
@@ -187,6 +188,7 @@ describe('buildBatchSnapshot (建单学生范围)', () => {
 
   it('carries the override through', () => {
     const rows = buildBatchSnapshot({
+      makeups: [],
       students: [{ id: 's1', status: 'active' }],
       lessons: LESSONS,
       sessions,
@@ -199,6 +201,7 @@ describe('buildBatchSnapshot (建单学生范围)', () => {
 
   it('keeps input student order for the created invoices', () => {
     const rows = buildBatchSnapshot({
+      makeups: [],
       students: [
         { id: 'b', status: 'active' },
         { id: 'a', status: 'active' },
@@ -210,4 +213,13 @@ describe('buildBatchSnapshot (建单学生范围)', () => {
     });
     expect(rows.map((r) => r.studentId)).toEqual(['b', 'a']);
   });
+});
+
+it('counts covered lessons before joining, deduplicates present, and isolates students and ranges', () => {
+  expect(computeAttendedCount({
+    studentId: 's1', lessons: LESSONS,
+    sessions: [{ id: 'x1', date: '2026-07-01' }, { id: 'x2', date: '2026-07-03' }, { id: 'pre', date: '2026-06-20' }],
+    memberships: [mem('x2', 's1')],
+    makeups: [{ sessionId: 'x1', studentId: 's1' }, { sessionId: 'x2', studentId: 's1' }, { sessionId: 'pre', studentId: 's1' }],
+  })).toBe(2);
 });

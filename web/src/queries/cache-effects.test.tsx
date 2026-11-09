@@ -16,7 +16,12 @@ import {
   useDeleteAdminClassMutation,
   useResetAdminTeacherPasswordMutation,
 } from './admin';
-import { useUpdateAttendanceMutation } from './attendance';
+import {
+  useUpdateAttendanceMutation,
+  useCreateMakeupMutation,
+  useUpdateMakeupMutation,
+  useDeleteMakeupMutation,
+} from './attendance';
 import { useVerifyPasswordMutation } from './auth';
 import {
   useBillingBatchesQuery,
@@ -38,7 +43,7 @@ import {
 } from './classes';
 import { createQueryClient, setBackgroundErrorHandler } from './client';
 import { invoiceDeleted } from './cache-effects';
-import { authKeys, billingKeys, classKeys, scheduleKeys, sessionKeys, teacherKeys } from './keys';
+import { attendanceKeys, authKeys, billingKeys, classKeys, scheduleKeys, sessionKeys, teacherKeys } from './keys';
 import { useCreateScheduleMutation, useDeleteScheduleMutation, useUpdateScheduleMutation } from './schedules';
 import {
   sessionQueryOptions,
@@ -70,8 +75,16 @@ it('invoice deletion cancels stale reads, updates cached totals and leaves other
   client.setQueryData(billingKeys.invoiceLessons('i1'), f.invoiceLessons());
   const oldDetailRead = deferred<BillingBatchDetail>();
   const oldListRead = deferred<BillingBatchItem[]>();
-  const detailRead = client.fetchQuery({ queryKey: billingKeys.detail('b1'), queryFn: () => oldDetailRead.promise, staleTime: 0 });
-  const listRead = client.fetchQuery({ queryKey: billingKeys.lists(), queryFn: () => oldListRead.promise, staleTime: 0 });
+  const detailRead = client.fetchQuery({
+    queryKey: billingKeys.detail('b1'),
+    queryFn: () => oldDetailRead.promise,
+    staleTime: 0,
+  });
+  const listRead = client.fetchQuery({
+    queryKey: billingKeys.lists(),
+    queryFn: () => oldListRead.promise,
+    staleTime: 0,
+  });
   const reads = Promise.allSettled([detailRead, listRead]);
   await invoiceDeleted(client, deleted, 'i1');
   oldDetailRead.resolve(oldDetail);
@@ -132,6 +145,74 @@ const c1SessionFallout = [
 
 describe('write → cache matrix (c2 is the untouched control)', () => {
   beforeEach(() => seedUniverse(client));
+
+  it.each(['create', 'update', 'delete'] as const)(
+    'makeup %s updates one attendance cache and invalidates only related billing displays',
+    async (action) => {
+      const record = {
+        id: 'mk1',
+        studentId: 's1',
+        studentName: 'Tom',
+        studentStatus: 'active' as const,
+        date: '2026-11-09',
+        durationMinutes: 60,
+        note: null,
+        createdByName: '王莉',
+        createdAt: '2026-11-09 10:00:00',
+        sessionIds: ['x1'],
+      };
+      const input = { date: record.date, durationMinutes: 60, note: null, sessionIds: ['x1'] };
+      if (action !== 'create')
+        client.setQueryData(attendanceKeys.byClass('c1'), f.attendance({ makeups: [{ ...record, note: 'old' }] }));
+      // 重建基准以便只计算本次写操作的影响。
+      const other = client.getQueryData(attendanceKeys.byClass('c2'));
+      if (action === 'create') {
+        server.on('POST', '/api/classes/c1/makeups', record);
+        await mutate(useCreateMakeupMutation, { classId: 'c1', input: { ...input, studentId: 's1' } });
+      } else if (action === 'update') {
+        server.on('PUT', '/api/makeups/mk1', record);
+        await mutate(useUpdateMakeupMutation, { classId: 'c1', makeupId: 'mk1', input });
+      } else {
+        server.on('DELETE', '/api/makeups/mk1', { ok: true });
+        await mutate(useDeleteMakeupMutation, { classId: 'c1', makeupId: 'mk1', studentId: 's1' });
+      }
+      expect(client.getQueryData<ClassAttendance>(attendanceKeys.byClass('c1'))?.makeups).toEqual(
+        action === 'delete' ? [] : [record],
+      );
+      expect(client.getQueryData(attendanceKeys.byClass('c2'))).toEqual(other);
+      expectSnapshot({ changed: ['attendance/c1'], invalidated: ['billing/b1', 'invoice-lessons/i1'] });
+      expect(server.calls).toHaveLength(1);
+    },
+  );
+
+  it('attendance present removes only the returned coverage and retains the makeup record', async () => {
+    const record = {
+      id: 'mk1',
+      studentId: 's1',
+      studentName: 'Tom',
+      studentStatus: 'active' as const,
+      date: '2026-11-09',
+      durationMinutes: 60,
+      note: null,
+      createdByName: '王莉',
+      createdAt: '2026-11-09 10:00:00',
+      sessionIds: ['x1', 'x2'],
+    };
+    client.setQueryData(attendanceKeys.byClass('c1'), f.attendance({ makeups: [record] }));
+    server.on('PUT', '/api/sessions/x1/attendance/s1', {
+      sessionId: 'x1',
+      studentId: 's1',
+      status: 'present',
+      unlinkedMakeupId: 'mk1',
+    });
+    await mutate(useUpdateAttendanceMutation, {
+      classId: 'c1',
+      sessionId: 'x1',
+      studentId: 's1',
+      input: { status: 'present' },
+    });
+    expect(client.getQueryData<ClassAttendance>(attendanceKeys.byClass('c1'))?.makeups[0].sessionIds).toEqual(['x2']);
+  });
 
   describe('classes', () => {
     it('create: full detail written; class lists + admin stats invalidated', async () => {
@@ -314,16 +395,15 @@ describe('write → cache matrix (c2 is the untouched control)', () => {
       sessionId: 'x1',
       studentId: 's1',
       status: 'leave',
-      madeUp: true,
     });
     await mutate(useUpdateAttendanceMutation, {
       classId: 'c1',
       sessionId: 'x1',
       studentId: 's1',
-      input: { status: 'leave', madeUp: true },
+      input: { status: 'leave' },
     });
     expect(client.getQueryData<ClassAttendance>(['attendance', 'class', 'c1'])?.records).toEqual([
-      { sessionId: 'x1', studentId: 's1', status: 'leave', madeUp: true },
+      { sessionId: 'x1', studentId: 's1', status: 'leave' },
     ]);
     expect(server.calls.map((c) => `${c.method} ${c.url}`)).toEqual(['PUT /api/sessions/x1/attendance/s1']);
     expectSnapshot({

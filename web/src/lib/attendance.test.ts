@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ClassAttendance } from '../api/attendance';
+import type { ClassAttendance, MakeupRecord } from '../api/attendance';
 import {
   buildAttendanceCsv,
   classAttendanceStats,
@@ -12,7 +12,9 @@ import {
   weekdayCN,
 } from './attendance';
 
+const makeup: MakeupRecord = { id: 'mk1', studentId: 's1', studentName: '小明', studentStatus: 'active', date: '2026-11-09', durationMinutes: 60, note: null, createdByName: '王莉', createdAt: '2026-11-09', sessionIds: ['k3'] };
 const FIX: ClassAttendance = {
+  makeups: [makeup],
   classId: 'c1',
   className: '三年级A班',
   sessions: [
@@ -26,29 +28,29 @@ const FIX: ClassAttendance = {
     { id: 's3', name: '婷婷', cnName: null, status: 'active' },
   ],
   records: [
-    { sessionId: 'k1', studentId: 's1', status: 'present', madeUp: false },
-    { sessionId: 'k2', studentId: 's1', status: 'present', madeUp: false },
-    { sessionId: 'k3', studentId: 's1', status: 'absent', madeUp: true },
-    { sessionId: 'k1', studentId: 's2', status: 'present', madeUp: false },
-    { sessionId: 'k2', studentId: 's2', status: 'leave', madeUp: false },
+    { sessionId: 'k1', studentId: 's1', status: 'present' },
+    { sessionId: 'k2', studentId: 's1', status: 'present' },
+    { sessionId: 'k3', studentId: 's1', status: 'absent' },
+    { sessionId: 'k1', studentId: 's2', status: 'present' },
+    { sessionId: 'k2', studentId: 's2', status: 'leave' },
     // s2 dropped out before k3 → no record (off cell)
     // s3 joined late → no record for k1
-    { sessionId: 'k2', studentId: 's3', status: 'present', madeUp: false },
-    { sessionId: 'k3', studentId: 's3', status: 'present', madeUp: false },
+    { sessionId: 'k2', studentId: 's3', status: 'present' },
+    { sessionId: 'k3', studentId: 's3', status: 'present' },
   ],
 };
 
 const map = new Map(FIX.records.map((r) => [recordKey(r.sessionId, r.studentId), r]));
-const cellsOf = (sid: string) => rowCells(sid, FIX.sessions, map);
+const cellsOf = (sid: string) => rowCells(sid, FIX.sessions, map, new Map([['k3:s1', makeup]]));
 
 describe('rowCells', () => {
   it('maps records into cells and leaves gaps as off (status null)', () => {
     expect(cellsOf('s1')).toEqual([
-      { status: 'present', madeUp: false },
-      { status: 'present', madeUp: false },
-      { status: 'absent', madeUp: true },
+      { status: 'present', makeup: null },
+      { status: 'present', makeup: null },
+      { status: 'absent', makeup },
     ]);
-    expect(cellsOf('s3')[0]).toEqual({ status: null, madeUp: false });
+    expect(cellsOf('s3')[0]).toEqual({ status: null, makeup: null });
   });
 });
 

@@ -133,9 +133,9 @@ const table = (records?: AttendanceRecord[]): ClassAttendance =>
       { id: 's2', name: 'Ann', cnName: null, status: 'active' },
     ],
     records: records ?? [
-      { sessionId: 'x1', studentId: 's1', status: 'present', madeUp: false },
-      { sessionId: 'x2', studentId: 's1', status: 'present', madeUp: false },
-      { sessionId: 'x1', studentId: 's2', status: 'present', madeUp: false },
+      { sessionId: 'x1', studentId: 's1', status: 'present' },
+      { sessionId: 'x2', studentId: 's1', status: 'present' },
+      { sessionId: 'x1', studentId: 's2', status: 'present' },
     ],
   });
 
@@ -143,7 +143,6 @@ const rec = (sessionId: string, studentId: string, status: AttendanceRecord['sta
   sessionId,
   studentId,
   status,
-  madeUp: false,
 });
 
 describe('attendance grid', () => {
@@ -159,7 +158,7 @@ describe('attendance grid', () => {
   function setCell(row: number, label: '缺勤' | '请假' | '到勤') {
     fireEvent.click(oct1(row));
     fireEvent.click(screen.getByRole('button', { name: new RegExp(`${label}$`) }));
-    fireEvent.click(screen.getByRole('button', { name: '✕' }));
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }));
   }
 
   const undoBtn = () => screen.getByRole('button', { name: /撤销/ }) as HTMLButtonElement;
@@ -181,7 +180,7 @@ describe('attendance grid', () => {
     const leave = screen.getByRole('button', { name: /请假$/ }) as HTMLButtonElement;
     expect(leave.disabled).toBe(true);
     fireEvent.click(leave);
-    fireEvent.click(screen.getByRole('button', { name: '✕' }));
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }));
     expect(server.count('PUT', '/api/sessions/x1/attendance/s1')).toBe(1);
 
     slowTom.resolve(json(rec('x1', 's1', 'absent')));
@@ -208,7 +207,7 @@ describe('attendance grid', () => {
     server.on('PUT', '/api/sessions/x1/attendance/s1', rec('x1', 's1', 'present'));
     fireEvent.click(undoBtn());
     await waitFor(() => expect(oct1(0).title).toBe('10/1 · 出勤'));
-    expect(server.last('PUT', '/api/sessions/x1/attendance/s1')!.body).toEqual({ status: 'present', madeUp: false });
+    expect(server.last('PUT', '/api/sessions/x1/attendance/s1')!.body).toEqual({ status: 'present' });
     await waitFor(() => expect(undoBtn().disabled).toBe(true));
   });
 
